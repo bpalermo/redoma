@@ -812,15 +812,28 @@ and no Containerfile, for linux/amd64 and linux/arm64:
 
 ## Pull requests
 
-- `main` is protected: squash merges only.
+- `main` is protected: squash merges only, and the `ci` check must pass.
+  `ci` (`.github/workflows/ci.yml`) aggregates `lint` (the formatter and
+  Gazelle), `gitleaks`, `diff` (bazel-diff's impacted targets) and `build`
+  (builds and tests those, with `--config=ci`); `build` is skipped only when
+  nothing is impacted. The runtime image is built there when its inputs
+  change, and never pushed.
+- A tag `v<VERSION>` runs `.github/workflows/release.yml`: it tests
+  `//deb`, then publishes a GitHub Release with
+  `redoma_<version>_{amd64,arm64}.deb` and their `SHA256SUMS`. The tag must
+  match `VERSION`.
+- GitHub Actions are pinned by commit SHA, with the version in a comment.
+  Dependabot keeps those current, but not the `multitool.lock.json` pins:
+  bump bazel-diff by hand, its version in every URL and the sha256s (GitHub's
+  asset digests) together.
 - Every commit is signed off (`git commit -s`, the Developer Certificate of
   Origin).
 - This repository is public. Nothing in it names a real host, network,
   person's machine or account: examples use `example.org`,
   `redoma.internal`, the RFC 5737 documentation addresses (192.0.2.0/24,
   198.51.100.0/24, 203.0.113.0/24) and generic paths.
-- Which targets a change impacts can be computed locally, with a pinned
-  bazel-diff, from the root of a throwaway clone (the script checks
+- What CI's `diff` job decides can be reproduced locally, with the same
+  pinned bazel-diff, from the root of a throwaway clone (the script checks
   revisions out; never run it in the checkout you work in):
   `BASE_SHA=origin/main bazel/ci-impacted-targets.sh`, then read
   `.bazel-diff-out/impacted_{build,test}.txt`. bazel-diff is the prebuilt
