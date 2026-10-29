@@ -1,0 +1,36 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "relay",
+    srcs = ["command.go"],
+    importpath = "github.com/bpalermo/redoma/relay",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/relay/v1:relay",
+        "//common/allowlist",
+        "//common/config",
+        "//common/version",
+        "//relay/internal/hub",
+        "//relay/internal/mtls",
+        "//relay/internal/svid",
+        "@com_github_spf13_cobra//:cobra",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials",
+        "@org_golang_google_grpc//keepalive",
+    ],
+)
+
+# The unit the binary is installed with (AGENTS.md, "redoma-relay").
+exports_files(["redoma-relay.service"])
+
+go_test(
+    name = "relay_test",
+    srcs = [
+        "command_test.go",
+        "unit_test.go",
+    ],
+    # unit_test.go reads the unit's syscall filter.
+    data = ["redoma-relay.service"],
+    embed = [":relay"],
+    deps = ["//common/sockettest"],
+)

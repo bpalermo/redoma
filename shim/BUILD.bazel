@@ -1,0 +1,35 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "shim_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/bpalermo/redoma/shim",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api/relay/v1:relay",
+        "//common/version",
+        "//shim/internal/bridge",
+        "//shim/internal/mcp",
+        "//shim/internal/reaper",
+        "//shim/internal/shim",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//keepalive",
+    ],
+)
+
+go_binary(
+    name = "shim",
+    basename = "redoma-shim",
+    embed = [":shim_lib"],
+    # Pure Go: one static binary, the runtime image's entrypoint.
+    pure = "on",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "shim_test",
+    srcs = ["main_test.go"],
+    embed = [":shim_lib"],
+    deps = ["//common/sockettest"],
+)

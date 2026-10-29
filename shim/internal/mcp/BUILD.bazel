@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mcp",
+    srcs = ["mcp.go"],
+    importpath = "github.com/bpalermo/redoma/shim/internal/mcp",
+    visibility = ["//shim:__subpackages__"],
+    deps = [
+        "//common/mcpserver",
+        "//shim/internal/bridge",
+    ],
+)
+
+go_test(
+    name = "mcp_test",
+    srcs = ["mcp_test.go"],
+    embed = [":mcp"],
+)

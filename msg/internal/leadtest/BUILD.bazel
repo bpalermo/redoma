@@ -1,0 +1,16 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "leadtest",
+    srcs = ["leadtest.go"],
+    importpath = "github.com/bpalermo/redoma/msg/internal/leadtest",
+    visibility = ["//msg:__subpackages__"],
+    deps = [
+        "//api/relay/v1:relay",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_grpc//test/bufconn",
+    ],
+)

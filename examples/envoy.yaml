@@ -1,0 +1,89 @@
+# An example bootstrap for the host Envoy. Everything per agent (its model,
+# egress and relay listeners, its relay cluster, its SVID) comes from
+# redoma xds over ADS; the bootstrap holds only what every agent shares:
+#
+#   redoma_xds  the control plane, /run/redoma-xds/xds.sock (SotW only:
+#               api_type GRPC, never DELTA_GRPC)
+#   anthropic   the model API, which the model listeners forward to
+#   egress_dfp  the CONNECT tunnels of the egress listeners; its DNS cache
+#               must be exactly the egress listeners' ("egress", V4_PREFERRED)
+#
+# Envoy binds each agent's listeners inside the agent's network namespace, so
+# it runs as root on the host (or in a container with the host's /run/netns
+# mounted rslave), with the supplementary groups redoma-sds (961, for
+# xds.sock) and redoma-relay (963, for the relay's socket). The model API
+# credential is the SDS file /etc/redoma/secrets/anthropic-key.yaml, readable
+# by Envoy alone (README.md, "Model API credential").
+#
+# xds/internal/lds/bootstrap_test.go parses this file and holds its names to
+# the ones the control plane uses.
+node:
+  id: redoma-host
+  cluster: redoma
+dynamic_resources:
+  ads_config:
+    api_type: GRPC
+    transport_api_version: V3
+    grpc_services:
+      - envoy_grpc:
+          cluster_name: redoma_xds
+  lds_config:
+    ads: {}
+    resource_api_version: V3
+  cds_config:
+    ads: {}
+    resource_api_version: V3
+static_resources:
+  clusters:
+    - name: redoma_xds
+      type: STATIC
+      connect_timeout: 1s
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: redoma_xds
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    pipe:
+                      path: /run/redoma-xds/xds.sock
+    - name: anthropic
+      type: LOGICAL_DNS
+      dns_lookup_family: V4_PREFERRED
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: anthropic
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: api.anthropic.com
+                      port_value: 443
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          sni: api.anthropic.com
+          common_tls_context:
+            validation_context:
+              trusted_ca:
+                filename: /etc/ssl/certs/ca-certificates.crt
+              match_typed_subject_alt_names:
+                - san_type: DNS
+                  matcher:
+                    exact: api.anthropic.com
+    - name: egress_dfp
+      connect_timeout: 5s
+      lb_policy: CLUSTER_PROVIDED
+      cluster_type:
+        name: envoy.clusters.dynamic_forward_proxy
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+          dns_cache_config:
+            name: egress
+            dns_lookup_family: V4_PREFERRED

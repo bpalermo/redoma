@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "xds",
+    srcs = ["command.go"],
+    importpath = "github.com/bpalermo/redoma/xds",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//common/config",
+        "//common/version",
+        "//xds/internal/activedir",
+        "//xds/internal/agent",
+        "//xds/internal/cds",
+        "//xds/internal/controlplane",
+        "//xds/internal/hooksource",
+        "//xds/internal/identity",
+        "//xds/internal/server",
+        "@com_github_envoyproxy_go_control_plane//pkg/cache/v3:cache",
+        "@com_github_spf13_cobra//:cobra",
+        "@com_github_spiffe_go_spiffe_v2//spiffeid",
+    ],
+)
+
+# The unit `redoma xds` is installed with.
+exports_files(["redoma-xds.service"])
+
+go_test(
+    name = "xds_test",
+    srcs = ["command_test.go"],
+    embed = [":xds"],
+    deps = ["//common/config"],
+)

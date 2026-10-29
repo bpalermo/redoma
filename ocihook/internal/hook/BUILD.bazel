@@ -1,0 +1,35 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "hook",
+    srcs = [
+        "hook.go",
+        "mount_linux.go",
+        "mounts.go",
+        "process.go",
+        "spec.go",
+    ],
+    importpath = "github.com/bpalermo/redoma/ocihook/internal/hook",
+    visibility = ["//ocihook:__subpackages__"],
+    deps = ["//common/register"],
+)
+
+go_test(
+    name = "hook_test",
+    srcs = [
+        "hook_test.go",
+        "mount_linux_test.go",
+        "mounts_test.go",
+        "process_test.go",
+    ],
+    # The sources, which TestSpecKeysCoverWhatIsRead scans for the keys read.
+    data = glob(
+        [
+            "testdata/**",
+            "*.go",
+        ],
+        exclude = ["*_test.go"],
+    ),
+    embed = [":hook"],
+    deps = ["//common/register"],
+)

@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "svid",
+    srcs = ["svid.go"],
+    importpath = "github.com/bpalermo/redoma/relay/internal/svid",
+    visibility = ["//relay:__subpackages__"],
+    deps = [
+        "@com_github_spiffe_go_spiffe_v2//bundle/x509bundle",
+        "@com_github_spiffe_go_spiffe_v2//svid/x509svid",
+        "@com_github_spiffe_go_spiffe_v2//workloadapi",
+    ],
+)
+
+go_test(
+    name = "svid_test",
+    srcs = ["svid_test.go"],
+    deps = [
+        ":svid",
+        "//relay/internal/mtls/mtlstest",
+        "@com_github_spiffe_go_spiffe_v2//proto/spiffe/workload",
+        "@com_github_spiffe_go_spiffe_v2//spiffeid",
+        "@org_golang_google_grpc//:grpc",
+    ],
+)

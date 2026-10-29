@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "bridge",
+    srcs = ["bridge.go"],
+    importpath = "github.com/bpalermo/redoma/shim/internal/bridge",
+    visibility = ["//shim:__subpackages__"],
+)
+
+go_test(
+    name = "bridge_test",
+    srcs = ["bridge_test.go"],
+    embed = [":bridge"],
+    deps = ["//common/sockettest"],
+)

@@ -1,0 +1,26 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "leadmcp",
+    srcs = ["leadmcp.go"],
+    importpath = "github.com/bpalermo/redoma/msg/internal/leadmcp",
+    visibility = ["//msg:__subpackages__"],
+    deps = [
+        "//api/relay/v1:relay",
+        "//common/allowlist",
+        "//common/mcpserver",
+        "//msg/internal/feed",
+        "//msg/internal/lines",
+    ],
+)
+
+go_test(
+    name = "leadmcp_test",
+    srcs = ["leadmcp_test.go"],
+    embed = [":leadmcp"],
+    deps = [
+        "//api/relay/v1:relay",
+        "//msg/internal/feed",
+        "//msg/internal/leadtest",
+    ],
+)

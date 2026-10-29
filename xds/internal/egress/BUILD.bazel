@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "egress",
+    srcs = ["egress.go"],
+    importpath = "github.com/bpalermo/redoma/xds/internal/egress",
+    visibility = ["//xds:__subpackages__"],
+)
+
+go_test(
+    name = "egress_test",
+    srcs = ["egress_test.go"],
+    embed = [":egress"],
+    deps = ["//common/allowlist"],
+)

@@ -1,0 +1,87 @@
+{
+ "resources": [
+  {
+   "@type": "type.googleapis.com/envoy.config.cluster.v3.Cluster",
+   "name": "agent_beta_relay",
+   "type": "STATIC",
+   "connect_timeout": "1s",
+   "load_assignment": {
+    "cluster_name": "agent_beta_relay",
+    "endpoints": [
+     {
+      "lb_endpoints": [
+       {
+        "endpoint": {
+         "address": {
+          "pipe": {
+           "path": "/run/redoma-relay/relay.sock"
+          }
+         }
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "typed_extension_protocol_options": {
+    "envoy.extensions.upstreams.http.v3.HttpProtocolOptions": {
+     "@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+     "common_http_protocol_options": {
+      "idle_timeout": "3600s"
+     },
+     "explicit_http_config": {
+      "http2_protocol_options": {
+       "connection_keepalive": {
+        "interval": "30s",
+        "timeout": "10s"
+       }
+      }
+     }
+    }
+   },
+   "transport_socket": {
+    "name": "envoy.transport_sockets.tls",
+    "typed_config": {
+     "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+     "common_tls_context": {
+      "tls_params": {
+       "tls_minimum_protocol_version": "TLSv1_3",
+       "tls_maximum_protocol_version": "TLSv1_3"
+      },
+      "alpn_protocols": [
+       "h2"
+      ],
+      "tls_certificate_sds_secret_configs": [
+       {
+        "name": "agent/beta",
+        "sds_config": {
+         "ads": {},
+         "resource_api_version": "V3"
+        }
+       }
+      ],
+      "combined_validation_context": {
+       "default_validation_context": {
+        "match_typed_subject_alt_names": [
+         {
+          "san_type": "URI",
+          "matcher": {
+           "exact": "spiffe://redoma.internal/host/relay"
+          }
+         }
+        ]
+       },
+       "validation_context_sds_secret_config": {
+        "name": "spiffe://redoma.internal",
+        "sds_config": {
+         "ads": {},
+         "resource_api_version": "V3"
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ ]
+}

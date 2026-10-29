@@ -1,0 +1,51 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "hub",
+    srcs = [
+        "hub.go",
+        "inbound.go",
+        "limits.go",
+        "services.go",
+        "store.go",
+        "watch.go",
+    ],
+    importpath = "github.com/bpalermo/redoma/relay/internal/hub",
+    visibility = ["//relay:__subpackages__"],
+    deps = [
+        "//api/relay/v1:relay",
+        "//common/allowlist",
+        "//common/atomicfile",
+        "//common/reliable",
+        "//relay/internal/mtls",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//metadata",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_protobuf//proto",
+    ],
+)
+
+go_test(
+    name = "hub_test",
+    srcs = [
+        "broken_test.go",
+        "hub_test.go",
+        "lead_test.go",
+        "store_test.go",
+    ],
+    embed = [":hub"],
+    deps = [
+        "//api/relay/v1:relay",
+        "//common/atomicfile",
+        "//common/reliable",
+        "//relay/internal/mtls",
+        "//relay/internal/mtls/mtlstest",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//credentials",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//metadata",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_grpc//test/bufconn",
+    ],
+)

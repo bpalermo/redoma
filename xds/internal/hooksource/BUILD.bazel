@@ -1,0 +1,27 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "hooksource",
+    srcs = ["hooksource.go"],
+    importpath = "github.com/bpalermo/redoma/xds/internal/hooksource",
+    visibility = ["//xds:__subpackages__"],
+    deps = [
+        "//common/allowlist",
+        "//common/atomicfile",
+        "//common/register",
+        "//xds/internal/activedir",
+        "//xds/internal/agent",
+    ],
+)
+
+go_test(
+    name = "hooksource_test",
+    srcs = ["hooksource_test.go"],
+    embed = [":hooksource"],
+    deps = [
+        "//common/register",
+        "//xds/internal/agent",
+        "//xds/internal/identity/identitytest",
+        "@org_golang_google_grpc//test/bufconn",
+    ],
+)

@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "fakeclaude_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/bpalermo/redoma/shim/internal/fakeclaude",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "fakeclaude",
+    embed = [":fakeclaude_lib"],
+    visibility = ["//shim:__subpackages__"],
+)

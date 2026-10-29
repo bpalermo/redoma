@@ -1,0 +1,45 @@
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@gazelle//:def.bzl", "gazelle")
+load("@rules_go//go:def.bzl", "TOOLS_NOGO", "nogo")
+load("//bazel/nogo:staticcheck.bzl", "STATICCHECK")
+
+# gazelle:prefix github.com/bpalermo/redoma
+# gazelle:go_grpc_compilers @rules_go//proto:go_proto,@rules_go//proto:go_grpc_v2
+
+gazelle(name = "gazelle")
+
+# The analyzers every Go package is compiled with (see go_sdk.nogo in
+# MODULE.bazel): the ones `go vet` runs, the rest of the x/tools set that
+# rules_go recommends, and staticcheck.
+nogo(
+    name = "nogo",
+    visibility = ["//visibility:public"],
+    deps = TOOLS_NOGO + STATICCHECK,
+)
+
+exports_files([
+    ".shellcheckrc",
+    # The release being worked towards; see bazel/workspace_status.sh.
+    "VERSION",
+])
+
+alias(
+    name = "format",
+    actual = "//bazel/format",
+)
+
+alias(
+    name = "format.check",
+    actual = "//bazel/format:format.check",
+)
+
+# Every binary that is installed (AGENTS.md) builds, under `bazel test //...`:
+# a go_binary that Gazelle or a hand edit dropped fails here, rather than
+# only when someone builds it by hand. Add a binary here with its directory.
+build_test(
+    name = "binaries_test",
+    targets = [
+        "//redoma",
+        "//shim",
+    ],
+)

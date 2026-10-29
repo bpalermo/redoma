@@ -1,0 +1,5 @@
+# Examples the docs point at; tests hold them to the code.
+exports_files(
+    glob(["*.yaml"]),
+    visibility = ["//visibility:public"],
+)

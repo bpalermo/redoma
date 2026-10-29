@@ -1,0 +1,59 @@
+module(
+    name = "redoma",
+    version = "0.0.0",
+)
+
+bazel_dep(name = "rules_go", version = "0.64.2")
+bazel_dep(name = "gazelle", version = "0.54.0")
+
+# proto_library for //api, compiled by rules_go's go_proto and go_grpc_v2
+# (protoc-gen-go-grpc is a tool in go.mod). The version the graph already
+# resolves to through rules_go.
+bazel_dep(name = "protobuf", version = "33.4")
+bazel_dep(name = "platforms", version = "1.1.0")
+
+# build_test for //:binaries_test, and already in the graph through rules_go;
+# declared so a bump of it cannot drop it.
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+
+# sh_library and sh_test for the scripts under //bazel.
+bazel_dep(name = "rules_shell", version = "0.8.0")
+
+# Formatting and the linters that are not part of compiling: //bazel/format
+# formats and checks Starlark (buildifier, with its lint warnings), Go and
+# shell; //bazel/lint has the shellcheck and gocognit aspects.
+bazel_dep(name = "aspect_rules_lint", version = "2.9.1")
+bazel_dep(name = "buildifier_prebuilt", version = "10.1.0")
+
+# Prebuilt tools pinned by URL and sha256 in multitool.lock.json, run through
+# Bazel so CI and a developer machine run the same binary: bazel-diff, which
+# bazel/ci-impacted-targets.sh builds as @multitool//tools/bazel-diff.
+# Dependabot does not update these pins: bump the version and the sha256s
+# (GitHub's asset digests) together, by hand.
+bazel_dep(name = "rules_multitool", version = "1.11.1")
+
+multitool = use_extension("@rules_multitool//multitool:extension.bzl", "multitool")
+multitool.hub(lockfile = "//:multitool.lock.json")
+use_repo(multitool, "multitool")
+
+# The Go toolchain, the version of go.mod's `go` line.
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.from_file(go_mod = "//:go.mod")
+
+# Static analysis, run as part of compiling every Go package of this module
+# (and of none of its dependencies): a finding fails the build. //:nogo says
+# which analyzers.
+go_sdk.nogo(nogo = "//:nogo")
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+
+# The SPIRE API SDK commits its generated Go beside the .proto sources, and
+# its .protos import each other by paths Gazelle cannot resolve, so its BUILD
+# files are generated with proto generation off: the .pb.go is the library.
+go_deps.gazelle_override(
+    build_file_generation = "clean",
+    directives = ["gazelle:proto disable_global"],
+    path = "github.com/spiffe/spire-api-sdk",
+)
+use_repo(go_deps, "co_honnef_go_tools", "com_github_envoyproxy_go_control_plane", "com_github_envoyproxy_go_control_plane_envoy", "com_github_google_go_cmp", "com_github_spf13_cobra", "com_github_spiffe_go_spiffe_v2", "com_github_spiffe_spire_api_sdk", "com_github_uudashr_gocognit", "in_gopkg_yaml_v3", "org_golang_google_grpc", "org_golang_google_grpc_cmd_protoc_gen_go_grpc", "org_golang_google_protobuf")

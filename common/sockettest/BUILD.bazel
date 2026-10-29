@@ -1,0 +1,8 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "sockettest",
+    srcs = ["sockettest.go"],
+    importpath = "github.com/bpalermo/redoma/common/sockettest",
+    visibility = ["//visibility:public"],
+)

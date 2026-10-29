@@ -1,0 +1,252 @@
+{
+  "process": {
+    "user": {
+      "uid": 1000,
+      "gid": 1000,
+      "umask": 18,
+      "additionalGids": [
+        1000
+      ]
+    },
+    "noNewPrivileges": true,
+    "capabilities": {}
+  },
+  "mounts": [
+    {
+      "destination": "/dev",
+      "type": "tmpfs",
+      "source": "tmpfs",
+      "options": [
+        "nosuid",
+        "strictatime",
+        "mode=755",
+        "size=65536k"
+      ]
+    },
+    {
+      "destination": "/tmp",
+      "type": "tmpfs",
+      "source": "tmpfs",
+      "options": [
+        "rw",
+        "size=1g",
+        "rprivate",
+        "nosuid",
+        "nodev",
+        "tmpcopyup"
+      ]
+    },
+    {
+      "destination": "/sys",
+      "type": "sysfs",
+      "source": "sysfs",
+      "options": [
+        "nosuid",
+        "noexec",
+        "nodev",
+        "ro"
+      ]
+    },
+    {
+      "destination": "/proc",
+      "type": "proc",
+      "source": "proc",
+      "options": [
+        "nosuid",
+        "noexec",
+        "nodev"
+      ]
+    },
+    {
+      "destination": "/run",
+      "type": "tmpfs",
+      "source": "tmpfs",
+      "options": [
+        "rw",
+        "rprivate",
+        "nosuid",
+        "nodev",
+        "tmpcopyup"
+      ]
+    },
+    {
+      "destination": "/work",
+      "type": "bind",
+      "source": "/srv/redoma/work/beta",
+      "options": [
+        "rw",
+        "rprivate",
+        "rbind"
+      ]
+    },
+    {
+      "destination": "/shared/beta",
+      "type": "bind",
+      "source": "/srv/src/beta",
+      "options": [
+        "ro",
+        "rprivate",
+        "rbind"
+      ]
+    },
+    {
+      "destination": "/dev/mqueue",
+      "type": "mqueue",
+      "source": "mqueue",
+      "options": [
+        "nosuid",
+        "noexec",
+        "nodev"
+      ]
+    },
+    {
+      "destination": "/run/.containerenv",
+      "type": "bind",
+      "source": "/run/containers/storage/overlay-containers/1eafece6792ae4cd09d2987aeae4d20e718947ac29fc9e27b6174d16b283ee3a/userdata/.containerenv",
+      "options": [
+        "bind",
+        "rprivate",
+        "ro",
+        "nosuid",
+        "noexec",
+        "nodev"
+      ]
+    },
+    {
+      "destination": "/etc/agent-name",
+      "type": "bind",
+      "source": "/run/redoma/names/beta",
+      "options": [
+        "ro",
+        "rprivate",
+        "noexec",
+        "nosuid",
+        "nodev",
+        "rbind"
+      ]
+    },
+    {
+      "destination": "/var/tmp",
+      "type": "tmpfs",
+      "source": "tmpfs",
+      "options": [
+        "rw",
+        "rprivate",
+        "nosuid",
+        "nodev",
+        "tmpcopyup"
+      ]
+    },
+    {
+      "destination": "/dev/pts",
+      "type": "devpts",
+      "source": "devpts",
+      "options": [
+        "nosuid",
+        "noexec",
+        "newinstance",
+        "ptmxmode=0666",
+        "mode=0620",
+        "gid=5"
+      ]
+    },
+    {
+      "destination": "/etc/hostname",
+      "type": "bind",
+      "source": "/run/containers/storage/overlay-containers/1eafece6792ae4cd09d2987aeae4d20e718947ac29fc9e27b6174d16b283ee3a/userdata/hostname",
+      "options": [
+        "bind",
+        "rprivate",
+        "ro",
+        "nosuid",
+        "noexec",
+        "nodev"
+      ]
+    },
+    {
+      "destination": "/etc/resolv.conf",
+      "type": "bind",
+      "source": "/run/containers/storage/overlay-containers/1eafece6792ae4cd09d2987aeae4d20e718947ac29fc9e27b6174d16b283ee3a/userdata/resolv.conf",
+      "options": [
+        "bind",
+        "rprivate",
+        "ro",
+        "nosuid",
+        "noexec",
+        "nodev"
+      ]
+    },
+    {
+      "destination": "/etc/hosts",
+      "type": "bind",
+      "source": "/run/containers/storage/overlay-containers/1eafece6792ae4cd09d2987aeae4d20e718947ac29fc9e27b6174d16b283ee3a/userdata/hosts",
+      "options": [
+        "bind",
+        "rprivate",
+        "ro",
+        "nosuid",
+        "noexec",
+        "nodev"
+      ]
+    },
+    {
+      "destination": "/dev/shm",
+      "type": "bind",
+      "source": "/var/lib/containers/storage/overlay-containers/1eafece6792ae4cd09d2987aeae4d20e718947ac29fc9e27b6174d16b283ee3a/userdata/shm",
+      "options": [
+        "bind",
+        "rprivate",
+        "nosuid",
+        "noexec",
+        "nodev"
+      ]
+    },
+    {
+      "destination": "/var/lib/agent",
+      "type": "bind",
+      "source": "/srv/redoma/home/beta",
+      "options": [
+        "rw",
+        "rprivate",
+        "rbind"
+      ]
+    },
+    {
+      "destination": "/sys/fs/cgroup",
+      "type": "cgroup",
+      "source": "cgroup",
+      "options": [
+        "rprivate",
+        "nosuid",
+        "noexec",
+        "nodev",
+        "relatime",
+        "ro"
+      ]
+    }
+  ],
+  "linux": {
+    "devices": null,
+    "namespaces": [
+      {
+        "type": "pid"
+      },
+      {
+        "type": "network",
+        "path": "/run/netns/redoma-beta"
+      },
+      {
+        "type": "ipc"
+      },
+      {
+        "type": "uts"
+      },
+      {
+        "type": "mount"
+      },
+      {
+        "type": "cgroup"
+      }
+    ]
+  }
+}

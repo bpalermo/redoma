@@ -1,0 +1,187 @@
+// The protocol between the lead and the agents in their containers.
+//
+// redoma-shim, in an agent's container, holds ONE long-lived stream,
+// Relay.Connect, to 127.0.0.1:7070 in its network namespace. The host
+// Envoy's listener there forwards it to redoma-relay over mutual TLS with
+// the agent's SVID, so the relay knows the agent from the client certificate
+// alone. The lead talks to redoma-relay's Lead service on a local unix
+// socket (redoma msg). Routing is lead <-> agent only.
+//
+// Delivery is at-least-once. Every envelope but an Ack and a Heartbeat has a
+// seq, numbered from 1 by its sender for each direction of one agent's
+// stream, and kept by the sender on disk until the receiver acks it. An Ack
+// is cumulative: it acks every envelope up to its seq. On a reconnect each
+// side resends everything not acked, in order, and each receiver drops a seq
+// it has already taken (no higher than the last it took).
+//
+// A sender's numbering lives as long as its queue on disk. Each queue has an
+// epoch, a random string made with it: the shim sends its own in the request
+// metadata "redoma-epoch", the relay its own in the response header of the
+// same name. A receiver that sees a new epoch for its peer starts its count
+// again, so a queue made again from nothing (a new workspace, a lost state
+// directory) is not taken for one long acked.
+syntax = "proto3";
+
+package redoma.relay.v1;
+
+option go_package = "github.com/bpalermo/redoma/api/relay/v1;relayv1";
+
+// Relay is the agents' side of redoma-relay.
+service Relay {
+  // Connect is an agent's one stream. A second stream of the same agent
+  // replaces the first, which ends with Aborted.
+  rpc Connect(stream Envelope) returns (stream Envelope);
+}
+
+// Lead is the lead's side of the relay, on its local socket.
+service Lead {
+  // Send queues a Task for an agent, connected or not.
+  rpc Send(SendRequest) returns (SendResponse);
+  // Reply answers a pending Question.
+  rpc Reply(ReplyRequest) returns (ReplyResponse);
+  // Cancel asks an agent to stop a task, running or queued.
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+  // Watch streams what the agents send: first the pending questions and the
+  // messages held while nobody watched, then everything as it arrives.
+  rpc Watch(WatchRequest) returns (stream WatchEvent);
+}
+
+message Envelope {
+  // The sender's sequence number; 0 for an Ack and a Heartbeat, which are
+  // neither queued nor acked.
+  uint64 seq = 1;
+  oneof body {
+    // relay -> agent
+    Task task = 2;
+    Reply reply = 3;
+    Cancel cancel = 4;
+    // both ways
+    Ack ack = 5;
+    // agent -> relay
+    TurnEvent turn_event = 6;
+    Question question = 7;
+    Message message = 8;
+    Heartbeat heartbeat = 9;
+  }
+}
+
+// Task is one prompt for the agent: one claude turn.
+message Task {
+  // "<agent>/<random>", made by the relay.
+  string id = 1;
+  string text = 2;
+}
+
+// Reply answers the agent's Question of that id.
+message Reply {
+  string question_id = 1;
+  string text = 2;
+}
+
+// Cancel stops the task: a running turn is killed, a queued one dropped.
+message Cancel {
+  string task_id = 1;
+}
+
+// Ack acks every envelope up to seq.
+message Ack {
+  uint64 seq = 1;
+}
+
+// TurnEvent is one line of the turn's output (claude's stream-json), or its
+// end.
+message TurnEvent {
+  string task_id = 1;
+  // One line of stream-json, without its newline, or a part of one (see
+  // partial). Empty on the last event. At most 192 KiB: the relay drops a
+  // longer one.
+  bytes chunk = 2;
+  // Set on the turn's last event, after its last chunk.
+  bool done = 3;
+  // On the last event: why the turn failed, was cancelled or interrupted;
+  // empty when claude exited 0.
+  string error = 4;
+  // The line goes on in the next event's chunk: a line over 192 KiB is
+  // sent in parts, every part but the last partial.
+  bool partial = 5;
+}
+
+// Question is the agent asking the lead (ask_lead); its turn waits for the
+// Reply.
+message Question {
+  // Made by the shim, unique within the agent. The lead sees it as
+  // "<agent>/<id>".
+  string id = 1;
+  string text = 2;
+  // The task whose turn asked.
+  string task_id = 3;
+}
+
+// Message is the agent telling the lead something (send_message); no reply
+// is awaited.
+message Message {
+  // Only "lead".
+  string to = 1;
+  string text = 2;
+  // The task whose turn sends it: one the relay gave this agent and has
+  // not closed, or the relay drops the message (so do the question's and the
+  // turn event's).
+  string task_id = 3;
+}
+
+// Heartbeat keeps the stream's hops from timing it out while nothing else
+// moves.
+message Heartbeat {}
+
+message SendRequest {
+  string agent = 1;
+  string text = 2;
+}
+
+message SendResponse {
+  string task_id = 1;
+}
+
+message ReplyRequest {
+  // As Watch shows it: "<agent>/<id>".
+  string question_id = 1;
+  string text = 2;
+}
+
+message ReplyResponse {}
+
+message CancelRequest {
+  string task_id = 1;
+}
+
+message CancelResponse {}
+
+message WatchRequest {
+  // Only this agent's events; empty for every agent's.
+  string agent = 1;
+}
+
+message WatchEvent {
+  string agent = 1;
+  oneof body {
+    TurnEvent turn_event = 2;
+    // Its id is "<agent>/<id>", what Reply takes.
+    Question question = 3;
+    Message message = 4;
+    Dropped dropped = 5;
+  }
+}
+
+// Dropped says the relay dropped some of the agent's envelopes since the
+// last such event: over a limit (a rate, a size, a count), not valid (a task
+// the relay did not give it, an id that is not one), or, for turn output, a
+// watch that fell behind. Counts are since the last Dropped of that agent to
+// this watch.
+message Dropped {
+  uint64 turn_events = 1;
+  uint64 questions = 2;
+  uint64 messages = 3;
+  uint64 invalid = 4;
+  // The last reason, for the log.
+  string reason = 5;
+}

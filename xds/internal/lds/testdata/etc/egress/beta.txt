@@ -1,0 +1,5 @@
+# Hosts the beta agent container may open HTTPS tunnels to (port 443 only),
+# through the host Envoy's CONNECT listener in its namespace. One per line.
+# The pilot is read-and-talk only: git over HTTPS, no builds yet.
+github.com
+codeload.github.com

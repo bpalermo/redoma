@@ -1,0 +1,83 @@
+# redoma-relay: carries tasks, questions and messages between the lead and
+# the agents in their containers. The agents' streams arrive through the host
+# Envoy over mutual TLS on /run/redoma-relay/relay.sock; the lead's API
+# (redoma msg, redoma mcp) is /run/redoma-relay-lead/lead.sock.
+#
+# Installed by the redoma package in /usr/lib/systemd/system. Its SVID comes
+# from the host SPIRE agent's Workload API (spire_workload_api in
+# /etc/redoma/redoma.conf), which attests it by uid 963. The relay waits for
+# its first SVID and redials the SPIRE agent when it restarts, so the unit has
+# no dependency on the SPIRE agent's own unit.
+[Unit]
+Description=redoma relay: the lead's messages to and from the agent containers
+Documentation=https://github.com/bpalermo/redoma
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/redoma relay
+Restart=always
+RestartSec=2
+
+# Its own system user, redoma-relay (uid and gid 963, never 961: that is
+# redoma-sds, the delegate that may mint every agent's identity), so that
+# nothing else on the host holds its SVID's key or its queues. The agents'
+# socket is 0660 in this group, which the host Envoy joins; the lead's socket is 0660 in redoma-lead (964), the
+# group of the users who may task agents (the relay chgrps it, so the group
+# is a supplementary one here). The package makes both (sysusers.d).
+User=redoma-relay
+Group=redoma-relay
+SupplementaryGroups=redoma-lead
+
+# /run/redoma-relay (relay.sock), which a containerized Envoy bind-mounts,
+# and /run/redoma-relay-lead (lead.sock), which it never sees: both 0750,
+# and the relay gives each its socket's group (redoma-relay and
+# redoma-lead) at start. Kept across restarts: a container that bind-mounts
+# the directory would be left looking at a deleted one.
+RuntimeDirectory=redoma-relay redoma-relay-lead
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+# /var/lib/redoma-relay, 0700: the queues, which must outlive a reboot.
+StateDirectory=redoma-relay
+StateDirectoryMode=0700
+# The sockets are 0660 once bound; owner-only before that.
+UMask=0077
+
+# It reads /etc/redoma, dials the Workload API, writes its state
+# directory, and listens on two unix sockets; nothing else.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# Except @chown, which @privileged holds: the relay gives each socket and
+# its directory its group after the bind (fchownat), and without it the
+# filter kills it with SIGSYS right after its start. Lines apply in order,
+# so this one adds back what the line above took away. It opens nothing
+# more: with no capabilities (CapabilityBoundingSet= is empty) a chown can
+# only give a file the relay owns a group the relay is in. relay/unit_test.go
+# checks the filter keeps every syscall the relay makes allowed.
+SystemCallFilter=@chown
+
+[Install]
+WantedBy=multi-user.target

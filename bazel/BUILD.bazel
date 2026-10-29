@@ -1,0 +1,29 @@
+load("@rules_shell//shell:sh_library.bzl", "sh_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+# The git state that stamps the binaries' version (workspace_status.sh).
+exports_files(["workspace_status.sh"])
+
+# For the shellcheck aspect (--config=lint): the workspace status script is
+# run by Bazel itself and ci-impacted-targets.sh by the workflow, so no target
+# would otherwise show them to the aspect.
+sh_library(
+    name = "scripts",
+    srcs = glob(["*.sh"]),
+)
+
+sh_test(
+    name = "workspace_status_test",
+    size = "small",
+    srcs = ["workspace_status_test.sh"],
+    data = ["workspace_status.sh"],
+)
+
+# The decision of ci-impacted-targets.sh (the `diff` job of ci.yml): which
+# impacted targets CI builds and tests, on fixture lists.
+sh_test(
+    name = "ci_impacted_targets_test",
+    size = "small",
+    srcs = ["ci_impacted_targets_test.sh"],
+    data = ["ci-impacted-targets.sh"],
+)
