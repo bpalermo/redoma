@@ -82,7 +82,14 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
   `containers.conf.d/` drop-in).
 - `api/relay/v1`: the relay's protocol (`relay.proto`, the `Relay` and
   `Lead` services), compiled by `go_proto_library`; Gazelle generates its
-  BUILD file.
+  BUILD file. Protos are `edition = "2024"`, and every message, field,
+  service and rpc has a comment. Go code uses the edition's default, the
+  Opaque API: builders (`relayv1.Task_builder{...}.Build()`), getters and
+  setters, and `WhichBody()` for a oneof. `relay.proto` keeps the wire
+  format it had as proto3 (`features.field_presence = IMPLICIT`), so peers
+  of either version interoperate; `//api/relay/v1:relay_test` holds every
+  envelope to bytes captured from the proto3 version (`testdata/wire.txt`).
+  A field never changes its number or its presence.
 - Code private to a subcommand goes under its `internal/`; code shared
   between them under `common/`.
 - `xds/internal/`:

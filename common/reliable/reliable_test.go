@@ -15,7 +15,7 @@ import (
 )
 
 func task(id string) *relayv1.Envelope {
-	return &relayv1.Envelope{Body: &relayv1.Envelope_Task{Task: &relayv1.Task{Id: id, Text: "do " + id}}}
+	return relayv1.Envelope_builder{Task: relayv1.Task_builder{Id: id, Text: "do " + id}.Build()}.Build()
 }
 
 func ids(es []*relayv1.Envelope) []string {

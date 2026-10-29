@@ -29,15 +29,15 @@ func (h *Hub) inbound(a *agentState, e *relayv1.Envelope) {
 	}
 	var kind dropKind
 	var reason string
-	switch b := e.GetBody().(type) {
-	case *relayv1.Envelope_TurnEvent:
-		kind, reason = dropTurn, h.turnEvent(a, b.TurnEvent)
-	case *relayv1.Envelope_Question:
-		kind, reason = dropQuestion, h.question(a, b.Question)
-	case *relayv1.Envelope_Message:
-		kind, reason = dropMessage, h.message(a, b.Message)
+	switch e.WhichBody() {
+	case relayv1.Envelope_TurnEvent_case:
+		kind, reason = dropTurn, h.turnEvent(a, e.GetTurnEvent())
+	case relayv1.Envelope_Question_case:
+		kind, reason = dropQuestion, h.question(a, e.GetQuestion())
+	case relayv1.Envelope_Message_case:
+		kind, reason = dropMessage, h.message(a, e.GetMessage())
 	default:
-		kind, reason = dropInvalid, fmt.Sprintf("an envelope an agent does not send (%T)", e.GetBody())
+		kind, reason = dropInvalid, fmt.Sprintf("an envelope an agent does not send (body field %d)", e.WhichBody())
 	}
 	if reason != "" {
 		h.drop(a, kind, reason)
@@ -49,19 +49,19 @@ func (h *Hub) inbound(a *agentState, e *relayv1.Envelope) {
 func (h *Hub) drop(a *agentState, kind dropKind, reason string) {
 	a.mu.Lock()
 	if a.drops == nil {
-		a.drops = &relayv1.Dropped{}
+		a.drops = relayv1.Dropped_builder{}.Build()
 	}
 	switch kind {
 	case dropTurn:
-		a.drops.TurnEvents++
+		a.drops.SetTurnEvents(a.drops.GetTurnEvents() + 1)
 	case dropQuestion:
-		a.drops.Questions++
+		a.drops.SetQuestions(a.drops.GetQuestions() + 1)
 	case dropMessage:
-		a.drops.Messages++
+		a.drops.SetMessages(a.drops.GetMessages() + 1)
 	default:
-		a.drops.Invalid++
+		a.drops.SetInvalid(a.drops.GetInvalid() + 1)
 	}
-	a.drops.Reason = reason
+	a.drops.SetReason(reason)
 	var d *relayv1.Dropped
 	if now := h.now(); now.Sub(a.lastMarker) >= markerEvery {
 		d, a.drops, a.lastMarker = a.drops, nil, now
@@ -70,7 +70,7 @@ func (h *Hub) drop(a *agentState, kind dropKind, reason string) {
 	if d != nil {
 		a.log.Warn("dropped envelopes from the agent", "turn_events", d.GetTurnEvents(), "questions", d.GetQuestions(),
 			"messages", d.GetMessages(), "invalid", d.GetInvalid(), "reason", d.GetReason())
-		h.broadcast(&relayv1.WatchEvent{Agent: a.name, Body: &relayv1.WatchEvent_Dropped{Dropped: d}}, note, 0)
+		h.broadcast(relayv1.WatchEvent_builder{Agent: a.name, Dropped: d}.Build(), note, 0)
 	}
 }
 
@@ -111,7 +111,7 @@ func (h *Hub) turnEvent(a *agentState, ev *relayv1.TurnEvent) string {
 	if len(ev.GetError()) > maxError {
 		// Cut, not dropped: a task must be able to end, and a last event
 		// dropped would leave it open for good.
-		ev.Error = truncate(ev.GetError(), maxError)
+		ev.SetError(truncate(ev.GetError(), maxError))
 	}
 	a.mu.Lock()
 	if why := a.taskOpen(ev.GetTaskId(), true); why != "" {
@@ -129,7 +129,7 @@ func (h *Hub) turnEvent(a *agentState, ev *relayv1.TurnEvent) string {
 		_ = a.record(record{Op: "close", held: held{ID: ev.GetTaskId()}})
 	}
 	a.mu.Unlock()
-	h.broadcast(&relayv1.WatchEvent{Agent: a.name, Body: &relayv1.WatchEvent_TurnEvent{TurnEvent: ev}}, c, 0)
+	h.broadcast(relayv1.WatchEvent_builder{Agent: a.name, TurnEvent: ev}.Build(), c, 0)
 	return ""
 }
 

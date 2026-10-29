@@ -43,7 +43,7 @@ type wqueue struct {
 
 func (q *wqueue) drops() *relayv1.Dropped {
 	if q.dropped == nil {
-		q.dropped = &relayv1.Dropped{}
+		q.dropped = relayv1.Dropped_builder{}.Build()
 	}
 	return q.dropped
 }
@@ -89,8 +89,8 @@ func (w *watcher) push(ev *relayv1.WatchEvent, c class, msg uint64) {
 		q.notes = append(q.notes, it)
 		q.noteBytes += it.size
 	case c == turnOutput && q.turnBytes+it.size > watchTurnBytes:
-		q.drops().TurnEvents++
-		q.drops().Reason = "the watch fell behind this agent's turn output"
+		q.drops().SetTurnEvents(q.drops().GetTurnEvents() + 1)
+		q.drops().SetReason("the watch fell behind this agent's turn output")
 	default:
 		q.turn = append(q.turn, it)
 		q.turnBytes += it.size
@@ -104,18 +104,18 @@ func (w *watcher) push(ev *relayv1.WatchEvent, c class, msg uint64) {
 
 // countDropped counts ev, dropped, in d.
 func countDropped(d *relayv1.Dropped, ev *relayv1.WatchEvent, reason string) {
-	switch b := ev.GetBody().(type) {
-	case *relayv1.WatchEvent_Question:
-		d.Questions++
-	case *relayv1.WatchEvent_Message:
-		d.Messages++
-	case *relayv1.WatchEvent_Dropped:
-		d.TurnEvents += b.Dropped.GetTurnEvents()
-		d.Questions += b.Dropped.GetQuestions()
-		d.Messages += b.Dropped.GetMessages()
-		d.Invalid += b.Dropped.GetInvalid()
+	switch ev.WhichBody() {
+	case relayv1.WatchEvent_Question_case:
+		d.SetQuestions(d.GetQuestions() + 1)
+	case relayv1.WatchEvent_Message_case:
+		d.SetMessages(d.GetMessages() + 1)
+	case relayv1.WatchEvent_Dropped_case:
+		d.SetTurnEvents(d.GetTurnEvents() + ev.GetDropped().GetTurnEvents())
+		d.SetQuestions(d.GetQuestions() + ev.GetDropped().GetQuestions())
+		d.SetMessages(d.GetMessages() + ev.GetDropped().GetMessages())
+		d.SetInvalid(d.GetInvalid() + ev.GetDropped().GetInvalid())
 	}
-	d.Reason = reason
+	d.SetReason(reason)
 }
 
 func dropsAny(d *relayv1.Dropped) bool {
@@ -136,7 +136,7 @@ func (w *watcher) pop() (witem, bool) {
 		case dropsAny(q.dropped):
 			d := q.dropped
 			q.dropped = nil
-			it = witem{ev: &relayv1.WatchEvent{Agent: agent, Body: &relayv1.WatchEvent_Dropped{Dropped: d}}}
+			it = witem{ev: relayv1.WatchEvent_builder{Agent: agent, Dropped: d}.Build()}
 		case len(q.notes) > 0:
 			it, q.notes = q.notes[0], q.notes[1:]
 			q.noteBytes -= it.size

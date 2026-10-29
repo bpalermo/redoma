@@ -114,12 +114,12 @@ func (r *relay) push(e *relayv1.Envelope) {
 
 func (r *relay) task(id, text string) {
 	r.t.Helper()
-	r.push(&relayv1.Envelope{Body: &relayv1.Envelope_Task{Task: &relayv1.Task{Id: id, Text: text}}})
+	r.push(relayv1.Envelope_builder{Task: relayv1.Task_builder{Id: id, Text: text}.Build()}.Build())
 }
 
 func (r *relay) cancel(id string) {
 	r.t.Helper()
-	r.push(&relayv1.Envelope{Body: &relayv1.Envelope_Cancel{Cancel: &relayv1.Cancel{TaskId: id}}})
+	r.push(relayv1.Envelope_builder{Cancel: relayv1.Cancel_builder{TaskId: id}.Build()}.Build())
 }
 
 // next returns the next envelope the shim sent.
@@ -418,7 +418,7 @@ func TestAskLead(t *testing.T) {
 		t.Fatalf("the turn went on before the reply: %v", ev)
 	case <-time.After(300 * time.Millisecond):
 	}
-	e.relay.push(&relayv1.Envelope{Body: &relayv1.Envelope_Reply{Reply: &relayv1.Reply{QuestionId: q.GetId(), Text: "use main"}}})
+	e.relay.push(relayv1.Envelope_builder{Reply: relayv1.Reply_builder{QuestionId: q.GetId(), Text: "use main"}.Build()}.Build())
 	got = e.relay.until("t1 done", doneOf("a/t1"))
 	if lines := strings.Join(chunks(got), "\n"); !strings.Contains(lines, "use main") {
 		t.Errorf("the turn did not get the reply: %s", lines)
@@ -438,8 +438,8 @@ func TestAskLeadSecondReply(t *testing.T) {
 	e.relay.task("a/t1", "ask which branch?")
 	got := e.relay.until("the question", func(ev *relayv1.Envelope) bool { return ev.GetQuestion() != nil })
 	q := got[len(got)-1].GetQuestion()
-	e.relay.push(&relayv1.Envelope{Body: &relayv1.Envelope_Reply{Reply: &relayv1.Reply{QuestionId: q.GetId(), Text: "use main"}}})
-	e.relay.push(&relayv1.Envelope{Body: &relayv1.Envelope_Reply{Reply: &relayv1.Reply{QuestionId: q.GetId(), Text: "use dev"}}})
+	e.relay.push(relayv1.Envelope_builder{Reply: relayv1.Reply_builder{QuestionId: q.GetId(), Text: "use main"}.Build()}.Build())
+	e.relay.push(relayv1.Envelope_builder{Reply: relayv1.Reply_builder{QuestionId: q.GetId(), Text: "use dev"}.Build()}.Build())
 	got = e.relay.until("t1 done", doneOf("a/t1"))
 	if lines := strings.Join(chunks(got), "\n"); !strings.Contains(lines, "use main") || strings.Contains(lines, "use dev") {
 		t.Errorf("the turn's answers: %s", lines)

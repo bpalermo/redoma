@@ -48,19 +48,19 @@ func (f *Fake) Send(_ context.Context, r *relayv1.SendRequest) (*relayv1.SendRes
 	if r.GetAgent() == "nobody" {
 		return nil, status.Error(codes.NotFound, `agent "nobody" is not in the allowlist`)
 	}
-	return &relayv1.SendResponse{TaskId: r.GetAgent() + "/t1"}, nil
+	return relayv1.SendResponse_builder{TaskId: r.GetAgent() + "/t1"}.Build(), nil
 }
 
 // Reply records.
 func (f *Fake) Reply(_ context.Context, r *relayv1.ReplyRequest) (*relayv1.ReplyResponse, error) {
 	f.record("reply " + r.GetQuestionId() + " " + r.GetText())
-	return &relayv1.ReplyResponse{}, nil
+	return relayv1.ReplyResponse_builder{}.Build(), nil
 }
 
 // Cancel records.
 func (f *Fake) Cancel(_ context.Context, r *relayv1.CancelRequest) (*relayv1.CancelResponse, error) {
 	f.record("cancel " + r.GetTaskId())
-	return &relayv1.CancelResponse{}, nil
+	return relayv1.CancelResponse_builder{}.Build(), nil
 }
 
 // Watch sends what comes on the next of Watches.
@@ -108,15 +108,15 @@ func Client(t testing.TB) (relayv1.LeadClient, *Fake) {
 
 // Turn is a turn event of agent's task with chunk.
 func Turn(agent, task, chunk string) *relayv1.WatchEvent {
-	return &relayv1.WatchEvent{Agent: agent, Body: &relayv1.WatchEvent_TurnEvent{TurnEvent: &relayv1.TurnEvent{TaskId: task, Chunk: []byte(chunk)}}}
+	return relayv1.WatchEvent_builder{Agent: agent, TurnEvent: relayv1.TurnEvent_builder{TaskId: task, Chunk: []byte(chunk)}.Build()}.Build()
 }
 
 // Question is agent's question id (<agent>/<id>) of task.
 func Question(agent, id, task, text string) *relayv1.WatchEvent {
-	return &relayv1.WatchEvent{Agent: agent, Body: &relayv1.WatchEvent_Question{Question: &relayv1.Question{Id: id, TaskId: task, Text: text}}}
+	return relayv1.WatchEvent_builder{Agent: agent, Question: relayv1.Question_builder{Id: id, TaskId: task, Text: text}.Build()}.Build()
 }
 
 // Message is agent's message of task.
 func Message(agent, task, text string) *relayv1.WatchEvent {
-	return &relayv1.WatchEvent{Agent: agent, Body: &relayv1.WatchEvent_Message{Message: &relayv1.Message{To: "lead", TaskId: task, Text: text}}}
+	return relayv1.WatchEvent_builder{Agent: agent, Message: relayv1.Message_builder{To: "lead", TaskId: task, Text: text}.Build()}.Build()
 }

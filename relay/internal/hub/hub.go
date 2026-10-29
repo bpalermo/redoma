@@ -222,9 +222,9 @@ func (h *Hub) open(name string) (*agentState, error) {
 
 // brokenEvent tells the lead an agent's state is unusable.
 func brokenEvent(agent string, err error) *relayv1.WatchEvent {
-	return &relayv1.WatchEvent{Agent: agent, Body: &relayv1.WatchEvent_Dropped{Dropped: &relayv1.Dropped{
+	return relayv1.WatchEvent_builder{Agent: agent, Dropped: relayv1.Dropped_builder{
 		Invalid: 1, Reason: text("the relay's state of this agent is broken, and the agent refused until it is repaired: "+err.Error(), maxError),
-	}}}
+	}.Build()}.Build()
 }
 
 // known is the agent's state if it has any, without making it.
@@ -347,15 +347,15 @@ func (a *agentState) attach(parent context.Context) (context.Context, func(), er
 }
 
 func questionEvent(agent string, q held) *relayv1.WatchEvent {
-	return &relayv1.WatchEvent{Agent: agent, Body: &relayv1.WatchEvent_Question{Question: &relayv1.Question{
+	return relayv1.WatchEvent_builder{Agent: agent, Question: relayv1.Question_builder{
 		Id: agent + "/" + q.ID, Text: q.Text, TaskId: q.TaskID,
-	}}}
+	}.Build()}.Build()
 }
 
 func messageEvent(agent string, m held) *relayv1.WatchEvent {
-	return &relayv1.WatchEvent{Agent: agent, Body: &relayv1.WatchEvent_Message{Message: &relayv1.Message{
+	return relayv1.WatchEvent_builder{Agent: agent, Message: relayv1.Message_builder{
 		To: "lead", Text: m.Text, TaskId: m.TaskID,
-	}}}
+	}.Build()}.Build()
 }
 
 func (h *Hub) watch(agent string) *watcher {

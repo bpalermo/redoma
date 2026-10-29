@@ -1,5 +1,5 @@
 load("@protobuf//bazel:proto_library.bzl", "proto_library")
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 load("@rules_go//proto:def.bzl", "go_proto_library")
 
 proto_library(
@@ -24,4 +24,14 @@ go_library(
     embed = [":relayv1_go_proto"],
     importpath = "github.com/bpalermo/redoma/api/relay/v1",
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "relay_test",
+    srcs = ["wire_test.go"],
+    data = glob(["testdata/**"]),
+    deps = [
+        ":relay",
+        "@org_golang_google_protobuf//proto",
+    ],
 )

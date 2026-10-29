@@ -140,7 +140,7 @@ func TestQuarantine(t *testing.T) {
 	if ev.GetAgent() != "alpha" || !strings.Contains(ev.GetDropped().GetReason(), "quarantined") && !strings.Contains(ev.GetDropped().GetReason(), "broken") {
 		t.Errorf("the watch's first event: %v, want alpha's quarantine", ev)
 	}
-	if _, err := r.lead.Send(context.Background(), &relayv1.SendRequest{Agent: "alpha", Text: "x"}); status.Code(err) != codes.FailedPrecondition {
+	if _, err := r.lead.Send(context.Background(), relayv1.SendRequest_builder{Agent: "alpha", Text: "x"}.Build()); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("a task for the quarantined agent: %v, want FailedPrecondition", err)
 	}
 	if b, err := e.connect(r, "spiffe://"+td+"/agent/alpha", "shim-b"); err == nil {
@@ -156,10 +156,10 @@ func TestQuarantine(t *testing.T) {
 	give(t, r, a, "beta", "still served")
 
 	// Reply and Cancel are refused as Send is, not "not found".
-	if _, err := r.lead.Reply(context.Background(), &relayv1.ReplyRequest{QuestionId: "alpha/q1", Text: "x"}); status.Code(err) != codes.FailedPrecondition {
+	if _, err := r.lead.Reply(context.Background(), relayv1.ReplyRequest_builder{QuestionId: "alpha/q1", Text: "x"}.Build()); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("a reply for the quarantined agent: %v, want FailedPrecondition", err)
 	}
-	if _, err := r.lead.Cancel(context.Background(), &relayv1.CancelRequest{TaskId: "alpha/1"}); status.Code(err) != codes.FailedPrecondition {
+	if _, err := r.lead.Cancel(context.Background(), relayv1.CancelRequest_builder{TaskId: "alpha/1"}.Build()); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("a cancel for the quarantined agent: %v, want FailedPrecondition", err)
 	}
 
@@ -167,10 +167,10 @@ func TestQuarantine(t *testing.T) {
 	if err := os.WriteFile(journal, []byte("{\"op\":\"task\",\"id\":\"alpha/1\"}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.lead.Send(context.Background(), &relayv1.SendRequest{Agent: "alpha", Text: "repaired"}); err != nil {
+	if _, err := r.lead.Send(context.Background(), relayv1.SendRequest_builder{Agent: "alpha", Text: "repaired"}.Build()); err != nil {
 		t.Errorf("a task after the repair: %v", err)
 	}
-	if _, err := r.lead.Cancel(context.Background(), &relayv1.CancelRequest{TaskId: "alpha/1"}); err != nil {
+	if _, err := r.lead.Cancel(context.Background(), relayv1.CancelRequest_builder{TaskId: "alpha/1"}.Build()); err != nil {
 		t.Errorf("a cancel of the journal's task after the repair: %v", err)
 	}
 	e.mustConnect(r, "alpha", "shim-b")
@@ -222,15 +222,15 @@ func TestRuntimeBreak(t *testing.T) {
 	queued := pending(r, "beta")
 	for name, call := range map[string]func() error{
 		"Send": func() error {
-			_, err := r.lead.Send(context.Background(), &relayv1.SendRequest{Agent: "beta", Text: "x"})
+			_, err := r.lead.Send(context.Background(), relayv1.SendRequest_builder{Agent: "beta", Text: "x"}.Build())
 			return err
 		},
 		"Reply": func() error {
-			_, err := r.lead.Reply(context.Background(), &relayv1.ReplyRequest{QuestionId: "beta/q1", Text: "x"})
+			_, err := r.lead.Reply(context.Background(), relayv1.ReplyRequest_builder{QuestionId: "beta/q1", Text: "x"}.Build())
 			return err
 		},
 		"Cancel": func() error {
-			_, err := r.lead.Cancel(context.Background(), &relayv1.CancelRequest{TaskId: task})
+			_, err := r.lead.Cancel(context.Background(), relayv1.CancelRequest_builder{TaskId: task}.Build())
 			return err
 		},
 	} {

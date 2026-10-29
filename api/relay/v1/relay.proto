@@ -20,10 +20,15 @@
 // same name. A receiver that sees a new epoch for its peer starts its count
 // again, so a queue made again from nothing (a new workspace, a lost state
 // directory) is not taken for one long acked.
-syntax = "proto3";
+//
+// The wire format is the proto3 one this file was first written in: every
+// singular scalar field has implicit presence (a zero value is not sent), so
+// a peer built from either version reads the other.
+edition = "2024";
 
 package redoma.relay.v1;
 
+option features.field_presence = IMPLICIT;
 option go_package = "github.com/bpalermo/redoma/api/relay/v1;relayv1";
 
 // Relay is the agents' side of redoma-relay.
@@ -46,21 +51,28 @@ service Lead {
   rpc Watch(WatchRequest) returns (stream WatchEvent);
 }
 
+// Envelope is one unit of an agent's stream, in either direction.
 message Envelope {
   // The sender's sequence number; 0 for an Ack and a Heartbeat, which are
   // neither queued nor acked.
   uint64 seq = 1;
+  // What the envelope carries.
   oneof body {
-    // relay -> agent
+    // A task for the agent (relay to agent).
     Task task = 2;
+    // The answer to the agent's question (relay to agent).
     Reply reply = 3;
+    // A task to stop (relay to agent).
     Cancel cancel = 4;
-    // both ways
+    // What the sender took of the other side's envelopes (both ways).
     Ack ack = 5;
-    // agent -> relay
+    // A line of a turn's output, or its end (agent to relay).
     TurnEvent turn_event = 6;
+    // A question for the lead (agent to relay).
     Question question = 7;
+    // A note for the lead (agent to relay).
     Message message = 8;
+    // A sign of life while nothing else moves (agent to relay).
     Heartbeat heartbeat = 9;
   }
 }
@@ -69,28 +81,34 @@ message Envelope {
 message Task {
   // "<agent>/<random>", made by the relay.
   string id = 1;
+  // The prompt, the turn's standard input.
   string text = 2;
 }
 
 // Reply answers the agent's Question of that id.
 message Reply {
+  // The Question's id, as the shim made it.
   string question_id = 1;
+  // The lead's answer, what ask_lead returns.
   string text = 2;
 }
 
 // Cancel stops the task: a running turn is killed, a queued one dropped.
 message Cancel {
+  // The Task's id.
   string task_id = 1;
 }
 
 // Ack acks every envelope up to seq.
 message Ack {
+  // The highest sequence number taken: every envelope up to it is acked.
   uint64 seq = 1;
 }
 
 // TurnEvent is one line of the turn's output (claude's stream-json), or its
 // end.
 message TurnEvent {
+  // The Task whose turn this is.
   string task_id = 1;
   // One line of stream-json, without its newline, or a part of one (see
   // partial). Empty on the last event. At most 192 KiB: the relay drops a
@@ -112,6 +130,7 @@ message Question {
   // Made by the shim, unique within the agent. The lead sees it as
   // "<agent>/<id>".
   string id = 1;
+  // The question.
   string text = 2;
   // The task whose turn asked.
   string task_id = 3;
@@ -122,6 +141,7 @@ message Question {
 message Message {
   // Only "lead".
   string to = 1;
+  // The note.
   string text = 2;
   // The task whose turn sends it: one the relay gave this agent and has
   // not closed, or the relay drops the message (so do the question's and the
@@ -133,41 +153,61 @@ message Message {
 // moves.
 message Heartbeat {}
 
+// SendRequest queues a task for an agent.
 message SendRequest {
+  // The agent's name.
   string agent = 1;
+  // The prompt.
   string text = 2;
 }
 
+// SendResponse names the task queued.
 message SendResponse {
+  // "<agent>/<random>", what Cancel takes and the turn's events carry.
   string task_id = 1;
 }
 
+// ReplyRequest answers a pending question.
 message ReplyRequest {
   // As Watch shows it: "<agent>/<id>".
   string question_id = 1;
+  // The answer.
   string text = 2;
 }
 
+// ReplyResponse says the answer is queued for the agent.
 message ReplyResponse {}
 
+// CancelRequest stops a task.
 message CancelRequest {
+  // "<agent>/<random>", as Send returned it.
   string task_id = 1;
 }
 
+// CancelResponse says the cancel is queued for the agent.
 message CancelResponse {}
 
+// WatchRequest opens a watch.
 message WatchRequest {
   // Only this agent's events; empty for every agent's.
   string agent = 1;
 }
 
+// WatchEvent is one thing an agent sent, or the relay's note of what it
+// dropped.
 message WatchEvent {
+  // The agent it is from.
   string agent = 1;
+  // What it is.
   oneof body {
+    // A line of a turn's output, or its end; its task id is
+    // "<agent>/<random>".
     TurnEvent turn_event = 2;
-    // Its id is "<agent>/<id>", what Reply takes.
+    // A question; its id is "<agent>/<id>", what Reply takes.
     Question question = 3;
+    // A note for the lead.
     Message message = 4;
+    // What the relay dropped of this agent's envelopes.
     Dropped dropped = 5;
   }
 }
@@ -178,9 +218,13 @@ message WatchEvent {
 // watch that fell behind. Counts are since the last Dropped of that agent to
 // this watch.
 message Dropped {
+  // Turn events dropped.
   uint64 turn_events = 1;
+  // Questions dropped.
   uint64 questions = 2;
+  // Messages dropped.
   uint64 messages = 3;
+  // Envelopes dropped as not valid.
   uint64 invalid = 4;
   // The last reason, for the log.
   string reason = 5;

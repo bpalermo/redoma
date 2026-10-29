@@ -171,12 +171,12 @@ func (s leadService) Send(_ context.Context, req *relayv1.SendRequest) (*relayv1
 	if err := a.st.sync(); err != nil {
 		return nil, status.Error(codes.Internal, "the relay could not record the task")
 	}
-	if err := h.push(a, &relayv1.Envelope{Body: &relayv1.Envelope_Task{Task: &relayv1.Task{Id: id, Text: req.GetText()}}}); err != nil {
+	if err := h.push(a, relayv1.Envelope_builder{Task: relayv1.Task_builder{Id: id, Text: req.GetText()}.Build()}.Build()); err != nil {
 		_ = a.record(record{Op: "close", held: held{ID: id}})
 		return nil, err
 	}
 	a.log.Info("task queued", "task", id)
-	return &relayv1.SendResponse{TaskId: id}, nil
+	return relayv1.SendResponse_builder{TaskId: id}.Build(), nil
 }
 
 // Reply answers a pending question.
@@ -206,11 +206,11 @@ func (s leadService) Reply(_ context.Context, req *relayv1.ReplyRequest) (*relay
 	if _, ok := a.st.question(id); !ok {
 		return nil, status.Errorf(codes.NotFound, "no pending question %q", req.GetQuestionId())
 	}
-	if err := h.push(a, &relayv1.Envelope{Body: &relayv1.Envelope_Reply{Reply: &relayv1.Reply{QuestionId: id, Text: req.GetText()}}}); err != nil {
+	if err := h.push(a, relayv1.Envelope_builder{Reply: relayv1.Reply_builder{QuestionId: id, Text: req.GetText()}.Build()}.Build()); err != nil {
 		return nil, err
 	}
 	_ = a.record(record{Op: "answered", held: held{ID: id}})
-	return &relayv1.ReplyResponse{}, nil
+	return relayv1.ReplyResponse_builder{}.Build(), nil
 }
 
 // Cancel asks the agent to stop a task. The task leaves the open ones: the
@@ -238,11 +238,11 @@ func (s leadService) Cancel(_ context.Context, req *relayv1.CancelRequest) (*rel
 	if !a.st.open(req.GetTaskId(), false) {
 		return nil, status.Errorf(codes.NotFound, "no open task %q", req.GetTaskId())
 	}
-	if err := h.push(a, &relayv1.Envelope{Body: &relayv1.Envelope_Cancel{Cancel: &relayv1.Cancel{TaskId: req.GetTaskId()}}}); err != nil {
+	if err := h.push(a, relayv1.Envelope_builder{Cancel: relayv1.Cancel_builder{TaskId: req.GetTaskId()}.Build()}.Build()); err != nil {
 		return nil, err
 	}
 	_ = a.record(record{Op: "cancel", held: held{ID: req.GetTaskId()}})
-	return &relayv1.CancelResponse{}, nil
+	return relayv1.CancelResponse_builder{}.Build(), nil
 }
 
 // Watch streams what agents send: the pending questions and held messages

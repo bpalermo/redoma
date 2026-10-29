@@ -138,7 +138,7 @@ func (f *Feed) Run(ctx context.Context) {
 func (f *Feed) watch(ctx context.Context) (got bool, err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	st, err := f.lead.Watch(ctx, &relayv1.WatchRequest{})
+	st, err := f.lead.Watch(ctx, relayv1.WatchRequest_builder{}.Build())
 	if err != nil {
 		return false, err
 	}

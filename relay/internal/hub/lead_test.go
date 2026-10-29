@@ -18,7 +18,7 @@ import (
 // agent has it.
 func give(t *testing.T, r *relay, a *agent, agentName, text string) string {
 	t.Helper()
-	sent, err := r.lead.Send(context.Background(), &relayv1.SendRequest{Agent: agentName, Text: text})
+	sent, err := r.lead.Send(context.Background(), relayv1.SendRequest_builder{Agent: agentName, Text: text}.Build())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,19 +46,19 @@ func setClock(r *relay) *clock {
 func (c *clock) add(d time.Duration) { c.t.Add(int64(d)) }
 
 func turn(task, chunk string) *relayv1.Envelope {
-	return &relayv1.Envelope{Body: &relayv1.Envelope_TurnEvent{TurnEvent: &relayv1.TurnEvent{TaskId: task, Chunk: []byte(chunk)}}}
+	return relayv1.Envelope_builder{TurnEvent: relayv1.TurnEvent_builder{TaskId: task, Chunk: []byte(chunk)}.Build()}.Build()
 }
 
 func question(task, id, text string) *relayv1.Envelope {
-	return &relayv1.Envelope{Body: &relayv1.Envelope_Question{Question: &relayv1.Question{Id: id, Text: text, TaskId: task}}}
+	return relayv1.Envelope_builder{Question: relayv1.Question_builder{Id: id, Text: text, TaskId: task}.Build()}.Build()
 }
 
 func message(task, to, text string) *relayv1.Envelope {
-	return &relayv1.Envelope{Body: &relayv1.Envelope_Message{Message: &relayv1.Message{To: to, Text: text, TaskId: task}}}
+	return relayv1.Envelope_builder{Message: relayv1.Message_builder{To: to, Text: text, TaskId: task}.Build()}.Build()
 }
 
 func doneOf(task string) *relayv1.Envelope {
-	return &relayv1.Envelope{Body: &relayv1.Envelope_TurnEvent{TurnEvent: &relayv1.TurnEvent{TaskId: task, Done: true}}}
+	return relayv1.Envelope_builder{TurnEvent: relayv1.TurnEvent_builder{TaskId: task, Done: true}.Build()}.Build()
 }
 
 // dropped is the next event, which must be a Dropped.
@@ -76,7 +76,7 @@ func dropped(t *testing.T, c <-chan *relayv1.WatchEvent) *relayv1.Dropped {
 func TestTaskQueuedThenDelivered(t *testing.T) {
 	e := newEnv(t)
 	r := e.start()
-	sent, err := r.lead.Send(context.Background(), &relayv1.SendRequest{Agent: "beta", Text: "fix the build"})
+	sent, err := r.lead.Send(context.Background(), relayv1.SendRequest_builder{Agent: "beta", Text: "fix the build"}.Build())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,13 +115,13 @@ func TestAgentToLead(t *testing.T) {
 	if m := next(t, events).GetMessage(); m.GetText() != "done soon" {
 		t.Errorf("message: %v", m)
 	}
-	if _, err := r.lead.Reply(context.Background(), &relayv1.ReplyRequest{QuestionId: q.GetId(), Text: "main"}); err != nil {
+	if _, err := r.lead.Reply(context.Background(), relayv1.ReplyRequest_builder{QuestionId: q.GetId(), Text: "main"}.Build()); err != nil {
 		t.Fatal(err)
 	}
 	if got := a.recv().GetReply(); got.GetQuestionId() != "q1" || got.GetText() != "main" {
 		t.Errorf("reply: %v", got)
 	}
-	if _, err := r.lead.Reply(context.Background(), &relayv1.ReplyRequest{QuestionId: q.GetId(), Text: "again"}); status.Code(err) != codes.NotFound {
+	if _, err := r.lead.Reply(context.Background(), relayv1.ReplyRequest_builder{QuestionId: q.GetId(), Text: "again"}.Build()); status.Code(err) != codes.NotFound {
 		t.Errorf("a second reply: %v, want NotFound", err)
 	}
 	a.send(doneOf(task))
@@ -212,7 +212,7 @@ func TestOversize(t *testing.T) {
 	} {
 		a.send(env)
 		if d := dropped(t, events); !strings.Contains(d.GetReason(), "limit") && !strings.Contains(d.GetReason(), "not one") && !strings.Contains(d.GetReason(), "without") {
-			t.Errorf("%v: %v", env.GetBody(), d)
+			t.Errorf("%v: %v", env.WhichBody(), d)
 		}
 		c.add(2 * markerEvery)
 	}
@@ -225,7 +225,7 @@ func TestOversize(t *testing.T) {
 	}
 
 	// Over the server's limit: the stream ends, nothing is handled.
-	big := &relayv1.Envelope{Seq: 999, Body: &relayv1.Envelope_Message{Message: &relayv1.Message{To: "lead", Text: strings.Repeat("x", MaxRecvMsgSize), TaskId: task}}}
+	big := relayv1.Envelope_builder{Seq: 999, Message: relayv1.Message_builder{To: "lead", Text: strings.Repeat("x", MaxRecvMsgSize), TaskId: task}.Build()}.Build()
 	_ = a.st.Send(big)
 	if err := a.endErr(); status.Code(err) != codes.ResourceExhausted {
 		t.Errorf("an envelope over MaxRecvMsgSize: %v, want ResourceExhausted", err)
@@ -461,7 +461,7 @@ func TestCancel(t *testing.T) {
 	events, _ := watch(t, r, "")
 	a := e.mustConnect(r, "alpha", "shim-1")
 	task := give(t, r, a, "alpha", "go")
-	if _, err := r.lead.Cancel(context.Background(), &relayv1.CancelRequest{TaskId: task}); err != nil {
+	if _, err := r.lead.Cancel(context.Background(), relayv1.CancelRequest_builder{TaskId: task}.Build()); err != nil {
 		t.Fatal(err)
 	}
 	if got := a.recv().GetCancel(); got.GetTaskId() != task {
@@ -476,7 +476,7 @@ func TestCancel(t *testing.T) {
 		t.Errorf("the cancelled turn's end: %v", ev)
 	}
 	for _, id := range []string{"abc", "alpha/", "no-such-agent/abc", "alpha/never-sent", task} {
-		if _, err := r.lead.Cancel(context.Background(), &relayv1.CancelRequest{TaskId: id}); err == nil {
+		if _, err := r.lead.Cancel(context.Background(), relayv1.CancelRequest_builder{TaskId: id}.Build()); err == nil {
 			t.Errorf("cancel %q: accepted", id)
 		}
 	}
@@ -487,11 +487,11 @@ func TestOpenTaskCap(t *testing.T) {
 	e := newEnv(t)
 	r := e.start()
 	for range maxOpenTasks {
-		if _, err := r.lead.Send(context.Background(), &relayv1.SendRequest{Agent: "beta", Text: "x"}); err != nil {
+		if _, err := r.lead.Send(context.Background(), relayv1.SendRequest_builder{Agent: "beta", Text: "x"}.Build()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := r.lead.Send(context.Background(), &relayv1.SendRequest{Agent: "beta", Text: "x"}); status.Code(err) != codes.ResourceExhausted {
+	if _, err := r.lead.Send(context.Background(), relayv1.SendRequest_builder{Agent: "beta", Text: "x"}.Build()); status.Code(err) != codes.ResourceExhausted {
 		t.Errorf("one task too many: %v, want ResourceExhausted", err)
 	}
 }
@@ -502,15 +502,15 @@ func TestLeadRefusals(t *testing.T) {
 	e := newEnv(t)
 	r := e.start()
 	for name, req := range map[string]*relayv1.SendRequest{
-		"not in the allowlist": {Agent: "someone-else", Text: "x"},
-		"not a name":           {Agent: "../etc", Text: "x"},
-		"no text":              {Agent: "beta"},
+		"not in the allowlist": relayv1.SendRequest_builder{Agent: "someone-else", Text: "x"}.Build(),
+		"not a name":           relayv1.SendRequest_builder{Agent: "../etc", Text: "x"}.Build(),
+		"no text":              relayv1.SendRequest_builder{Agent: "beta"}.Build(),
 	} {
 		if _, err := r.lead.Send(context.Background(), req); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	if _, err := r.lead.Reply(context.Background(), &relayv1.ReplyRequest{QuestionId: "beta/nope", Text: "x"}); status.Code(err) != codes.NotFound {
+	if _, err := r.lead.Reply(context.Background(), relayv1.ReplyRequest_builder{QuestionId: "beta/nope", Text: "x"}.Build()); status.Code(err) != codes.NotFound {
 		t.Errorf("a reply to no question: %v, want NotFound", err)
 	}
 }
@@ -528,7 +528,7 @@ func TestQueueSurvivesRestart(t *testing.T) {
 	eventually(t, "the question to be saved", func() bool { return st.in.Saved("shim-1") == 1 })
 	// The task is not acked: the restart comes first.
 	a.cancel()
-	second, err := r.lead.Send(context.Background(), &relayv1.SendRequest{Agent: "beta", Text: "two"})
+	second, err := r.lead.Send(context.Background(), relayv1.SendRequest_builder{Agent: "beta", Text: "two"}.Build())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -568,7 +568,7 @@ func TestLongDoneErrorIsCut(t *testing.T) {
 	events, _ := watch(t, r, "")
 	a := e.mustConnect(r, "beta", "shim-1")
 	task := give(t, r, a, "beta", "go")
-	a.send(&relayv1.Envelope{Body: &relayv1.Envelope_TurnEvent{TurnEvent: &relayv1.TurnEvent{TaskId: task, Done: true, Error: strings.Repeat("€", maxError)}}})
+	a.send(relayv1.Envelope_builder{TurnEvent: relayv1.TurnEvent_builder{TaskId: task, Done: true, Error: strings.Repeat("€", maxError)}.Build()}.Build())
 	ev := next(t, events).GetTurnEvent()
 	// 3-byte runes: the cut falls inside one, and backs up to its start.
 	if !ev.GetDone() || len(ev.GetError()) > maxError || !strings.HasSuffix(ev.GetError(), "[cut]") || !utf8.ValidString(ev.GetError()) {
