@@ -1,0 +1,12 @@
+#!/bin/sh
+# The redoma package's prerm: stop the services when the package goes away
+# (not on an upgrade: postinst restarts them).
+set -eu
+case "${1:-}" in
+remove)
+	if [ -d /run/systemd/system ]; then
+		systemctl stop redoma-xds.service redoma-relay.service || true
+	fi
+	;;
+esac
+exit 0

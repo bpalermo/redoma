@@ -128,7 +128,9 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
   the unix-socket test helpers; `common/version`: the stamped version.
 - `examples/`: an Envoy bootstrap and an SDS secret file, held to the code
   by `//xds/internal/lds:lds_test`.
-- `bazel/` holds build rules and CI scripts.
+- `deb/`: the Debian package of the host side (see "The package").
+- `bazel/` holds build rules and CI scripts; `bazel/platforms` the target
+  platforms and `platform_files`, which builds a target for one of them.
 
 ## Configuration
 
@@ -687,11 +689,37 @@ to `--max-backoff` 30s) and heartbeats every 30s.
 - Never touch `/run/redoma`, `/etc/redoma`, systemd, Podman or SPIRE on the
   host from a test or a script.
 
+## The package
+
+`//deb` builds `redoma_amd64.deb` and `redoma_arm64.deb` (rules_pkg's
+`pkg_deb`), each with the binary cross-built for its architecture
+(`platform_files`). `deb/BUILD.bazel` lists what goes in: the binary, the
+units, the hook's definitions and drop-in, `deb/sysusers.conf` as
+`/usr/lib/sysusers.d/redoma.conf`, `redoma/redoma.conf` and the drop-in as
+conffiles, and the docs and examples. Never the shim, a secret, or anything
+of SPIRE or Envoy. The maintainer scripts:
+
+- `postinst` (configure) runs `systemd-sysusers` on the package's file,
+  then fails, naming each, when `redoma-sds`, `redoma-relay` or
+  `redoma-lead` has another id than 961, 963 or 964: the hook refuses those
+  ids to agents and SPIRE attests the services by them, so a package that
+  installs with other ids would leave a host open or broken. It reloads
+  systemd and restarts the services only when they run (an upgrade); it
+  enables nothing and adds no one to `redoma-lead`.
+- `prerm` stops the services on removal; `postrm` reloads systemd. The
+  users, the groups and `/var/lib/redoma-relay` stay.
+
+`//deb:deb_test` holds each package to its exact file list, modes, owners,
+conffiles and control fields, checks that its binary is an ELF of its
+architecture, and runs `postinst` against fake ids. A file added to the
+package is added to that list.
+
 ## Versions
 
 - The binaries are pure Go (`pure = "on"`).
-- `VERSION` is the release being worked towards; the binaries report
-  `git describe` of their commit (`bazel/workspace_status.sh`).
+- `VERSION` is the release being worked towards and the packages' version;
+  the binaries report `git describe` of their commit
+  (`bazel/workspace_status.sh`).
 
 ## Pull requests
 
