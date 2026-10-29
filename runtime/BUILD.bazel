@@ -1,0 +1,214 @@
+# redoma-runtime: what an agent container runs, built here with no
+# Containerfile, for linux/amd64 and linux/arm64. Debian bookworm packages
+# (MODULE.bazel, `apt`), Claude Code's native binary (MODULE.bazel,
+# `claude_code`) and redoma-shim, its entrypoint.
+#
+# It bundles Claude Code, which is proprietary: the image is built by its
+# user, loaded into their own Podman (:image_load) or pushed to a registry of
+# their own, and never published from this repository. There is no push
+# target here, and CI only builds it.
+#
+# /etc/claude-code (managed settings) is left out: a host adds its own in an
+# image FROM this one.
+
+load("@rules_distroless//distroless:defs.bzl", "cacerts", "flatten", "group", "passwd")
+load("@rules_img//img:image.bzl", "image_index", "image_manifest")
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer", "layer_from_tar")
+load("@rules_img//img:load.bzl", "image_load")
+load("@rules_img//img:test.bzl", "image_structure_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+PLATFORMS = {
+    "amd64": "//bazel/platforms:linux_amd64",
+    "arm64": "//bazel/platforms:linux_arm64",
+}
+
+# The packages and their dependencies, one tar, files of several packages
+# kept once; the target platform's architecture.
+layer_from_tar(
+    name = "packages_layer",
+    src = "@bookworm//:flat",
+    compress = "zstd",
+)
+
+# What the packages' maintainer scripts would have made: the CA bundle
+# (update-ca-certificates), root's and nobody's entries (base-passwd), and
+# dpkg's database, for scanners to see what is installed.
+cacerts(
+    name = "cacerts",
+    package = "@bookworm//ca-certificates:data",
+)
+
+passwd(
+    name = "passwd",
+    entries = [
+        {
+            "gid": 0,
+            "home": "/root",
+            "shell": "/bin/bash",
+            "uid": 0,
+            "username": "root",
+        },
+        {
+            "gid": 65534,
+            "home": "/nonexistent",
+            "shell": "/usr/sbin/nologin",
+            "uid": 65534,
+            "username": "nobody",
+        },
+    ],
+)
+
+group(
+    name = "group",
+    entries = [
+        {
+            "gid": 0,
+            "name": "root",
+        },
+        {
+            "gid": 65534,
+            "name": "nogroup",
+        },
+    ],
+)
+
+flatten(
+    name = "system",
+    tars = [
+        ":cacerts",
+        ":group",
+        ":passwd",
+        "@bookworm//:dpkg_status",
+    ],
+)
+
+layer_from_tar(
+    name = "system_layer",
+    src = ":system",
+    compress = "zstd",
+)
+
+# What base-files' postinst would also have made, /etc/nsswitch.conf, without
+# which glibc's lookup order is its built-in one (DNS before /etc/hosts);
+# and /etc/hosts with localhost, the base Podman writes a container's hosts
+# file from (without it Podman takes the host's).
+image_layer(
+    name = "etc_layer",
+    srcs = {
+        "/etc/hosts": "hosts",
+        "/etc/nsswitch.conf": "nsswitch.conf",
+    },
+    compress = "zstd",
+    default_metadata = file_metadata(
+        gid = 0,
+        mode = "0644",
+        uid = 0,
+    ),
+)
+
+# Claude Code, as the package of the target platform's architecture has it.
+image_layer(
+    name = "claude_layer",
+    srcs = {"/usr/local/bin/claude": "@claude_code//:claude"},
+    compress = "zstd",
+    default_metadata = file_metadata(
+        gid = 0,
+        mode = "0755",
+        uid = 0,
+    ),
+    include_runfiles = False,
+)
+
+image_layer(
+    name = "shim_layer",
+    srcs = {"/usr/local/bin/redoma-shim": "//shim"},
+    compress = "zstd",
+    default_metadata = file_metadata(
+        gid = 0,
+        mode = "0755",
+        uid = 0,
+    ),
+    include_runfiles = False,
+)
+
+image_manifest(
+    name = "image_manifest",
+    entrypoint = ["/usr/local/bin/redoma-shim"],
+    env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
+    labels = {
+        "org.opencontainers.image.revision": "{{.STABLE_GIT_COMMIT}}",
+        "org.opencontainers.image.source": "https://github.com/bpalermo/redoma",
+    },
+    layers = [
+        ":packages_layer",
+        ":system_layer",
+        ":etc_layer",
+        ":claude_layer",
+        ":shim_layer",
+    ],
+)
+
+image_index(
+    name = "image_index",
+    manifests = [":image_manifest"],
+    platforms = PLATFORMS.values(),
+    visibility = ["//visibility:public"],
+)
+
+# Loads the image of the host's own architecture into the local Podman or
+# Docker: `bazel run //runtime:image_load`.
+image_load(
+    name = "image_load",
+    image = ":image_index",
+    tag = "localhost/redoma-runtime:dev",
+)
+
+# One index per architecture, for the structure tests: a test of a
+# multi-platform index applies every config to every platform, and the
+# dynamic loader's path is each architecture's own.
+[image_index(
+    name = "image_index_" + arch,
+    manifests = [":image_manifest"],
+    platforms = [platform],
+) for arch, platform in PLATFORMS.items()]
+
+[image_structure_test(
+    name = "image_test_" + arch,
+    configs = [
+        "image_test.yaml",
+        "image_test_%s.yaml" % arch,
+    ],
+    image = ":image_index_" + arch,
+) for arch in PLATFORMS]
+
+sh_test(
+    name = "etc_test",
+    srcs = ["etc_test.sh"],
+    args = [
+        "$(rlocationpath nsswitch.conf)",
+        "$(rlocationpath hosts)",
+    ],
+    data = [
+        "hosts",
+        "nsswitch.conf",
+    ],
+)
+
+# Each Claude Code tarball is the version MODULE.bazel pins and the
+# architecture it is fetched for: the sha256s there pin the bytes, and this
+# what they are, so the lines cannot drift apart.
+sh_test(
+    name = "claude_code_test",
+    srcs = ["claude_code_test.sh"],
+    args = [
+        "$(rlocationpath @claude_code//:version.bzl)",
+        "$(rlocationpath @claude_code//x64:package.json)",
+        "$(rlocationpath @claude_code//arm64:package.json)",
+    ],
+    data = [
+        "@claude_code//:version.bzl",
+        "@claude_code//arm64:package.json",
+        "@claude_code//x64:package.json",
+    ],
+)

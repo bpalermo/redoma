@@ -12,6 +12,9 @@ bazel_dep(name = "gazelle", version = "0.54.0")
 bazel_dep(name = "protobuf", version = "33.4")
 bazel_dep(name = "platforms", version = "1.1.0")
 
+# The runtime image (//runtime), built with no Containerfile.
+bazel_dep(name = "rules_img", version = "0.3.23")
+
 # build_test for //:binaries_test, and already in the graph through rules_go;
 # declared so a bump of it cannot drop it.
 bazel_dep(name = "bazel_skylib", version = "1.9.2")
@@ -60,3 +63,84 @@ go_deps.gazelle_override(
     path = "github.com/spiffe/spire-api-sdk",
 )
 use_repo(go_deps, "co_honnef_go_tools", "com_github_envoyproxy_go_control_plane", "com_github_envoyproxy_go_control_plane_envoy", "com_github_google_go_cmp", "com_github_spf13_cobra", "com_github_spiffe_go_spiffe_v2", "com_github_spiffe_spire_api_sdk", "com_github_uudashr_gocognit", "in_gopkg_yaml_v3", "org_golang_google_grpc", "org_golang_google_grpc_cmd_protoc_gen_go_grpc", "org_golang_google_protobuf")
+
+# The runtime image's Debian packages (//runtime): bookworm, for amd64 and
+# arm64, from snapshot.debian.org at one instant, so a resolution never
+# moves; every .deb is pinned by its sha256 from that snapshot's index. The packages and
+# their whole dependency closure are resolved by rules_distroless; Bazel
+# records what it resolved in MODULE.bazel.lock (the extension's facts), so
+# a build fetches only those .debs. To move to newer packages, change the
+# snapshot (all three lines) and run `bazel mod tidy`.
+bazel_dep(name = "rules_distroless", version = "0.9.4")
+
+apt = use_extension("@rules_distroless//apt:extensions.bzl", "apt")
+apt.sources_list(
+    architectures = [
+        "amd64",
+        "arm64",
+    ],
+    components = ["main"],
+    suites = [
+        "bookworm",
+        "bookworm-updates",
+    ],
+    types = ["deb"],
+    uris = ["https://snapshot.debian.org/archive/debian/20261020T000000Z"],
+)
+apt.sources_list(
+    architectures = [
+        "amd64",
+        "arm64",
+    ],
+    components = ["main"],
+    suites = ["bookworm-security"],
+    types = ["deb"],
+    uris = ["https://snapshot.debian.org/archive/debian-security/20261020T000000Z"],
+)
+apt.install(
+    dependency_set = "bookworm",
+    packages = [
+        # What agents use.
+        "ca-certificates",
+        "git",
+        "jq",
+        "python3",
+        "ripgrep",
+        # A shell and the tools any script expects: Claude Code's Bash tool
+        # runs commands under bash, and git and hooks call sh.
+        "base-files",
+        "bash",
+        "coreutils",
+        "dash",
+        "diffutils",
+        "findutils",
+        "grep",
+        "gzip",
+        "procps",
+        "sed",
+        "tar",
+    ],
+    suites = [
+        "bookworm",
+        "bookworm-security",
+        "bookworm-updates",
+    ],
+)
+use_repo(apt, "bookworm")
+
+# Claude Code in the runtime image (//runtime): the native binaries of the npm
+# packages @anthropic-ai/claude-code-linux-x64 and -linux-arm64, unmodified,
+# each pinned by the sha256 of its tarball. To bump it, change the version
+# and both hashes (each tarball's `sha256sum`; npm publishes its sha512 as
+# dist.integrity). //runtime:claude_code_test checks that each tarball is
+# that version and that architecture.
+claude_code = use_repo_rule("//bazel/claude_code:repo.bzl", "claude_code")
+
+claude_code(
+    name = "claude_code",
+    sha256 = {
+        "arm64": "3aa8e624d35e8a77a851e7009b83ae95d3168f24f1afdb0a1ed580a2313d9e5c",
+        "x64": "f1c3d923ff3ac7e7080b8b9c638833dde72feab15e46940a65a0122d728c6bfd",
+    },
+    version = "2.1.312",
+)

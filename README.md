@@ -92,7 +92,7 @@ The package installs:
 | `/usr/share/doc/redoma/examples/` | an Envoy bootstrap and the model key's SDS file |
 
 It holds no secret and installs neither SPIRE nor Envoy, nor the agents'
-image.
+image (see "The runtime image").
 
 The services run as system users with fixed ids, which the hook refuses to
 any agent container and SPIRE's entries attest the services by:
@@ -179,6 +179,23 @@ point Claude Code at the model listener with any placeholder key:
 Workload identity federation (an agent's own JWT-SVID exchanged for a
 short-lived API token, so no static key is held on the host) is the next
 credential mode; it is not implemented yet.
+
+## The runtime image
+
+The agents run `redoma-runtime`: Debian bookworm with git, a shell and the
+usual tools, Claude Code's native binary, and `redoma-shim` as the
+entrypoint. It bundles Claude Code, which is proprietary, so it is not
+published: build it yourself, for your host's architecture, and load it
+into the rootful Podman that runs the agents:
+
+```sh
+bazel run --@rules_img//img/settings:load_daemon=tar //runtime:image_load -- \
+  --platform linux/amd64 | sudo podman load     # localhost/redoma-runtime:dev
+```
+
+or push `//runtime:image_index` (amd64 and arm64) to a registry of your own.
+To give the agents Claude Code's managed settings, build an image FROM it
+that adds `/etc/claude-code/managed-settings.json`.
 
 ## Running
 
