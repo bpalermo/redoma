@@ -778,8 +778,10 @@ and no Containerfile, for linux/amd64 and linux/arm64:
   the architecture it was fetched for.
 - **It is never published from here.** Claude Code is proprietary: whoever
   runs redoma builds the image (`//runtime:image_load`, README.md) or pushes
-  it to a registry of their own. There is no push target, and CI only
-  builds it, when its inputs change.
+  it to a private registry of their own, never a public one: it carries
+  Claude Code's binary. There is no push target, `//runtime:image_index` is
+  private to its package so none can be added elsewhere, and CI only builds
+  it, when its inputs change.
 - **Bumping Claude Code** is one change to `claude_code(...)` in
   MODULE.bazel: `version`, and the `sha256` of each tarball. A wrong hash
   fails the fetch; a tarball of another version or architecture fails

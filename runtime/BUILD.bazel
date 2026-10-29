@@ -4,9 +4,10 @@
 # `claude_code`) and redoma-shim, its entrypoint.
 #
 # It bundles Claude Code, which is proprietary: the image is built by its
-# user, loaded into their own Podman (:image_load) or pushed to a registry of
-# their own, and never published from this repository. There is no push
-# target here, and CI only builds it.
+# user, loaded into their own Podman (:image_load) or pushed to a private
+# registry of their own, never a public one, and never published from this
+# repository. There is no push target here, and nothing outside this package
+# can reach the index (private visibility); CI only builds it.
 #
 # /etc/claude-code (managed settings) is left out: a host adds its own in an
 # image FROM this one.
@@ -153,7 +154,9 @@ image_index(
     name = "image_index",
     manifests = [":image_manifest"],
     platforms = PLATFORMS.values(),
-    visibility = ["//visibility:public"],
+    # No consumer outside this package: no push target can be defined on it
+    # elsewhere.
+    visibility = ["//visibility:private"],
 )
 
 # Loads the image of the host's own architecture into the local Podman or

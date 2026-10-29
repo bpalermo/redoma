@@ -193,7 +193,8 @@ bazel run --@rules_img//img/settings:load_daemon=tar //runtime:image_load -- \
   --platform linux/amd64 | sudo podman load     # localhost/redoma-runtime:dev
 ```
 
-or push `//runtime:image_index` (amd64 and arm64) to a registry of your own.
+or push the image (amd64 and arm64) to a private registry of your own, never
+a public one: it carries Claude Code's binary, which is not redistributable.
 To give the agents Claude Code's managed settings, build an image FROM it
 that adds `/etc/claude-code/managed-settings.json`.
 
