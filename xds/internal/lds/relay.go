@@ -18,7 +18,7 @@ import (
 const RelayPort = 7070
 
 // relayPath is the one gRPC method the relay listener forwards: the agent's
-// stream (redoma api/relay/v1, Relay.Connect).
+// stream (redoma api/redoma/relay/v1, Relay.Connect).
 const relayPath = "/redoma.relay.v1.Relay/Connect"
 
 // relayStreamIdle is how long the relay's stream may idle before Envoy ends

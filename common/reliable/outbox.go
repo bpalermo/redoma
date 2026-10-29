@@ -1,7 +1,7 @@
 // Package reliable is the at-least-once delivery both ends of a relay stream
-// share (api/relay/v1): the sender's queue of envelopes not yet acked, on disk
-// (Outbox), the receiver's record of what it has taken (Inbox), and the loop
-// that runs one stream with them (Session).
+// share (api/redoma/relay/v1): the sender's queue of envelopes not yet
+// acked, on disk (Outbox), the receiver's record of what it has taken
+// (Inbox), and the loop that runs one stream with them (Session).
 package reliable
 
 import (
@@ -19,7 +19,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 	"github.com/bpalermo/redoma/common/atomicfile"
 )
 

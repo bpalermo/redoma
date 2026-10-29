@@ -17,7 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 	"github.com/bpalermo/redoma/common/reliable"
 	"github.com/bpalermo/redoma/relay/internal/mtls"
 	"github.com/bpalermo/redoma/relay/internal/mtls/mtlstest"

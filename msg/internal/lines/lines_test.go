@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 )
 
 func turn(chunk string, partial bool) *relayv1.WatchEvent {

@@ -28,7 +28,7 @@ import (
 
 	"google.golang.org/grpc/metadata"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 	"github.com/bpalermo/redoma/common/atomicfile"
 	"github.com/bpalermo/redoma/common/reliable"
 	"github.com/bpalermo/redoma/shim/internal/bridge"

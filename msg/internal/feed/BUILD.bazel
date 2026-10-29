@@ -5,7 +5,7 @@ go_library(
     srcs = ["feed.go"],
     importpath = "github.com/bpalermo/redoma/msg/internal/feed",
     visibility = ["//msg:__subpackages__"],
-    deps = ["//api/relay/v1:relay"],
+    deps = ["//api/redoma/relay/v1:relay"],
 )
 
 go_test(
@@ -13,7 +13,7 @@ go_test(
     srcs = ["feed_test.go"],
     embed = [":feed"],
     deps = [
-        "//api/relay/v1:relay",
+        "//api/redoma/relay/v1:relay",
         "//msg/internal/leadtest",
     ],
 )

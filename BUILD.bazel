@@ -4,6 +4,7 @@ load("@rules_go//go:def.bzl", "TOOLS_NOGO", "nogo")
 load("//bazel/nogo:staticcheck.bzl", "STATICCHECK")
 
 # gazelle:prefix github.com/bpalermo/redoma
+# gazelle:proto_strip_import_prefix /api
 # gazelle:go_grpc_compilers @rules_go//proto:go_proto,@rules_go//proto:go_grpc_v2
 
 gazelle(name = "gazelle")

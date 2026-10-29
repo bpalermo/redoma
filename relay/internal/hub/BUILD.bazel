@@ -13,7 +13,7 @@ go_library(
     importpath = "github.com/bpalermo/redoma/relay/internal/hub",
     visibility = ["//relay:__subpackages__"],
     deps = [
-        "//api/relay/v1:relay",
+        "//api/redoma/relay/v1:relay",
         "//common/allowlist",
         "//common/atomicfile",
         "//common/reliable",
@@ -35,7 +35,7 @@ go_test(
     ],
     embed = [":hub"],
     deps = [
-        "//api/relay/v1:relay",
+        "//api/redoma/relay/v1:relay",
         "//common/atomicfile",
         "//common/reliable",
         "//relay/internal/mtls",

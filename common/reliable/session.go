@@ -7,7 +7,7 @@ import (
 	"io"
 	"time"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 )
 
 // EpochKey is the metadata key that carries a sender's queue epoch: the

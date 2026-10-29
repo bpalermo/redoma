@@ -80,16 +80,24 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
   `relay/redoma-relay.service`), `msg/` (`redoma msg` and `redoma mcp`),
   `ocihook/` (`redoma oci-hook`, with its `hooks.d/` definitions and the
   `containers.conf.d/` drop-in).
-- `api/relay/v1`: the relay's protocol (`relay.proto`, the `Relay` and
-  `Lead` services), compiled by `go_proto_library`; Gazelle generates its
-  BUILD file. Protos are `edition = "2024"`, and every message, field,
-  service and rpc has a comment. Go code uses the edition's default, the
-  Opaque API: builders (`relayv1.Task_builder{...}.Build()`), getters and
-  setters, and `WhichBody()` for a oneof. `relay.proto` keeps the wire
-  format it had as proto3 (`features.field_presence = IMPLICIT`), so peers
-  of either version interoperate; `//api/relay/v1:relay_test` holds every
-  envelope to bytes captured from the proto3 version (`testdata/wire.txt`).
-  A field never changes its number or its presence.
+- `api/redoma/relay/v1`: the relay's protocol (`relay.proto`, package
+  `redoma.relay.v1`, the `Relay` and `Lead` services), compiled by
+  `go_proto_library`; Gazelle generates its BUILD file. Protos live under
+  `api/<proto package path>` and are imported without the `api/` prefix
+  (`gazelle:proto_strip_import_prefix /api`). They are `edition = "2024"`.
+  Go code uses the edition's default, the Opaque API: builders
+  (`relayv1.Task_builder{...}.Build()`), getters and setters, and
+  `WhichBody()` for a oneof. `relay.proto` keeps the wire format it had as
+  proto3 (`features.field_presence = IMPLICIT`), so peers of either version
+  interoperate; `//api/redoma/relay/v1:relay_test` holds every envelope to
+  bytes captured from the proto3 version (`testdata/wire.txt`). A field
+  never changes its number or its presence.
+- Every message, field, oneof, enum, enum value, service and rpc of a proto
+  has a leading comment, the source of the protocol's documentation: what
+  it means, its units and range, what its zero value means, and when it is
+  set. `//api/redoma/relay/v1:relay_test` (`doc_test.go`) fails on an
+  element without one, reading the descriptors with their comments
+  (`:relay_source_info`, `protoc --include_source_info`).
 - Code private to a subcommand goes under its `internal/`; code shared
   between them under `common/`.
 - `xds/internal/`:
@@ -472,7 +480,7 @@ documents; the launcher Source stays for hosts that run one.
 
 The lead talks to the agents through it, and only through it; agents never
 talk to each other. In each container, `redoma-shim` holds one long-lived
-bidi stream, `Relay.Connect` (`api/relay/v1/relay.proto`), to 127.0.0.1:7070
+bidi stream, `Relay.Connect` (`api/redoma/relay/v1/relay.proto`), to 127.0.0.1:7070
 in its namespace; the host Envoy's per-agent relay listener forwards it to
 `/run/redoma-relay/relay.sock` over mutual TLS with the agent's own SVID
 (the container never sees it). The lead uses the `Lead` service on

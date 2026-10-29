@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 )
 
 func task(id string) *relayv1.Envelope {
