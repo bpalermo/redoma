@@ -1,0 +1,46 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "shim",
+    srcs = [
+        "shim.go",
+        "turn.go",
+    ],
+    importpath = "github.com/bpalermo/redoma/shim/internal/shim",
+    visibility = ["//shim:__subpackages__"],
+    deps = [
+        "//api/relay/v1:relay",
+        "//common/atomicfile",
+        "//common/reliable",
+        "//shim/internal/bridge",
+        "//shim/internal/reaper",
+        "@org_golang_google_grpc//metadata",
+    ],
+)
+
+go_test(
+    name = "shim_test",
+    srcs = ["shim_test.go"],
+    # The real MCP server (redoma-shim mcp), and a claude that drives it.
+    data = [
+        "//shim",
+        "//shim/internal/fakeclaude",
+    ],
+    embed = [":shim"],
+    env = {
+        "REDOMA_SHIM": "$(rootpath //shim)",
+        "FAKECLAUDE": "$(rootpath //shim/internal/fakeclaude)",
+    },
+    deps = [
+        "//api/relay/v1:relay",
+        "//common/reliable",
+        "//shim/internal/reaper",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//metadata",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_grpc//test/bufconn",
+        "@org_golang_google_protobuf//proto",
+    ],
+)

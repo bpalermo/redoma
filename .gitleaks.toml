@@ -1,0 +1,7 @@
+title = "redoma"
+
+# gitleaks' default rules, nothing allowlisted: this repository holds no
+# secrets, encrypted or not. Test certificates and keys are generated at test
+# time, never committed.
+[extend]
+useDefault = true

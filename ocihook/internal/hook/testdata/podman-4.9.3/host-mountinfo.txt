@@ -1,0 +1,14 @@
+26 1 259:2 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw,errors=remount-ro
+21 26 0:21 / /sys rw,nosuid,nodev,noexec,relatime shared:7 - sysfs sysfs rw
+22 26 0:22 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw
+23 26 0:5 / /dev rw,nosuid,relatime shared:2 - devtmpfs udev rw,size=24421696k,nr_inodes=6105424,mode=755,inode64
+24 23 0:24 / /dev/pts rw,nosuid,noexec,relatime shared:3 - devpts devpts rw,gid=5,mode=620,ptmxmode=000
+25 26 0:26 / /run rw,nosuid,nodev,noexec,relatime shared:5 - tmpfs tmpfs rw,size=4900552k,mode=755,inode64
+27 23 0:27 / /dev/shm rw,nosuid,nodev shared:4 - tmpfs tmpfs rw,inode64
+28 21 0:30 / /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime shared:9 - cgroup2 cgroup2 rw,nsdelegate,memory_recursiveprot
+41 23 0:20 / /dev/mqueue rw,nosuid,nodev,noexec,relatime shared:14 - mqueue mqueue rw
+42 23 0:43 / /dev/hugepages rw,relatime shared:15 - hugetlbfs hugetlbfs rw,pagesize=2M
+512 25 0:4 net:[4026533001] /run/netns/redoma-beta rw shared:300 - nsfs nsfs rw
+600 26 0:62 / /var/lib/containers/storage/overlay-containers/1eafece6792ae4cd09d2987aeae4d20e718947ac29fc9e27b6174d16b283ee3a/userdata/shm rw,nosuid,nodev,noexec,relatime shared:310 - tmpfs shm rw,size=64000k,inode64
+601 26 0:63 / /var/lib/containers/storage/overlay/6176b7e5647558a594044462b2696daf92cf863ccc6f2eab7c4652d0a11f2c7c/merged rw,relatime shared:311 - overlay overlay rw
+602 26 0:70 / /var/lib/containers/storage/overlay-containers/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee/userdata/shm rw,nosuid,nodev,noexec,relatime shared:320 - tmpfs shm rw,size=64000k,inode64

@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "reliable",
+    srcs = [
+        "inbox.go",
+        "outbox.go",
+        "session.go",
+    ],
+    importpath = "github.com/bpalermo/redoma/common/reliable",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api/relay/v1:relay",
+        "//common/atomicfile",
+        "@org_golang_google_protobuf//proto",
+    ],
+)
+
+go_test(
+    name = "reliable_test",
+    srcs = ["reliable_test.go"],
+    embed = [":reliable"],
+    deps = ["//api/relay/v1:relay"],
+)

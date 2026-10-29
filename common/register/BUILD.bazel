@@ -1,0 +1,17 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "register",
+    srcs = [
+        "netns.go",
+        "register.go",
+    ],
+    importpath = "github.com/bpalermo/redoma/common/register",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "register_test",
+    srcs = ["register_test.go"],
+    embed = [":register"],
+)

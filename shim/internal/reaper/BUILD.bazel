@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "reaper",
+    srcs = ["reaper.go"],
+    importpath = "github.com/bpalermo/redoma/shim/internal/reaper",
+    visibility = ["//shim:__subpackages__"],
+)
+
+go_test(
+    name = "reaper_test",
+    srcs = ["reaper_test.go"],
+    embed = [":reaper"],
+)

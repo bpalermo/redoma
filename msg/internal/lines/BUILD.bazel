@@ -1,0 +1,16 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "lines",
+    srcs = ["lines.go"],
+    importpath = "github.com/bpalermo/redoma/msg/internal/lines",
+    visibility = ["//msg:__subpackages__"],
+    deps = ["//api/relay/v1:relay"],
+)
+
+go_test(
+    name = "lines_test",
+    srcs = ["lines_test.go"],
+    embed = [":lines"],
+    deps = ["//api/relay/v1:relay"],
+)

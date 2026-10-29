@@ -1,0 +1,8 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mcpserver",
+    srcs = ["mcpserver.go"],
+    importpath = "github.com/bpalermo/redoma/common/mcpserver",
+    visibility = ["//visibility:public"],
+)

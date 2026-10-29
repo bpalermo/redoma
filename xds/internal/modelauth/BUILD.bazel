@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "modelauth",
+    srcs = ["modelauth.go"],
+    importpath = "github.com/bpalermo/redoma/xds/internal/modelauth",
+    visibility = ["//xds:__subpackages__"],
+)
+
+go_test(
+    name = "modelauth_test",
+    srcs = ["modelauth_test.go"],
+    embed = [":modelauth"],
+)

@@ -1,0 +1,27 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mtls",
+    srcs = ["mtls.go"],
+    importpath = "github.com/bpalermo/redoma/relay/internal/mtls",
+    visibility = ["//relay:__subpackages__"],
+    deps = [
+        "//common/allowlist",
+        "//relay/internal/svid",
+        "@com_github_spiffe_go_spiffe_v2//spiffeid",
+        "@com_github_spiffe_go_spiffe_v2//spiffetls/tlsconfig",
+        "@com_github_spiffe_go_spiffe_v2//svid/x509svid",
+        "@org_golang_google_grpc//credentials",
+        "@org_golang_google_grpc//peer",
+    ],
+)
+
+go_test(
+    name = "mtls_test",
+    srcs = ["mtls_test.go"],
+    embed = [":mtls"],
+    deps = [
+        "//relay/internal/mtls/mtlstest",
+        "//relay/internal/svid",
+    ],
+)

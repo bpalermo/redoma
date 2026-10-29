@@ -1,0 +1,39 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ocihook",
+    srcs = ["command.go"],
+    importpath = "github.com/bpalermo/redoma/ocihook",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//common/config",
+        "//ocihook/internal/hook",
+        "@com_github_spf13_cobra//:cobra",
+    ],
+)
+
+# The hook definitions installed into /usr/share/containers/oci/hooks.d, and
+# the containers.conf drop-in that keeps Podman reading that directory
+# (AGENTS.md, "The OCI hook").
+exports_files(glob([
+    "hooks.d/*.json",
+    "containers.conf.d/*.conf",
+]))
+
+go_test(
+    name = "ocihook_test",
+    srcs = [
+        "hooksd_test.go",
+        "serviceids_test.go",
+    ],
+    data = glob([
+        "hooks.d/*.json",
+        "containers.conf.d/*.conf",
+    ]),
+    embed = [":ocihook"],
+    deps = [
+        "//common/config",
+        "//common/register",
+        "//ocihook/internal/hook",
+    ],
+)

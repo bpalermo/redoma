@@ -1,0 +1,53 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "controlplane",
+    srcs = [
+        "controlplane.go",
+        "rebind.go",
+        "state.go",
+    ],
+    importpath = "github.com/bpalermo/redoma/xds/internal/controlplane",
+    visibility = ["//xds:__subpackages__"],
+    deps = [
+        "//common/atomicfile",
+        "//xds/internal/agent",
+        "//xds/internal/cds",
+        "//xds/internal/egress",
+        "//xds/internal/identity",
+        "//xds/internal/lds",
+        "//xds/internal/modelauth",
+        "@com_github_envoyproxy_go_control_plane//pkg/cache/types",
+        "@com_github_envoyproxy_go_control_plane//pkg/cache/v3:cache",
+        "@com_github_envoyproxy_go_control_plane//pkg/resource/v3:resource",
+        "@com_github_envoyproxy_go_control_plane_envoy//config/core/v3:core",
+        "@com_github_envoyproxy_go_control_plane_envoy//extensions/transport_sockets/tls/v3:tls",
+    ],
+)
+
+go_test(
+    name = "controlplane_test",
+    srcs = [
+        "bound_test.go",
+        "controlplane_test.go",
+        "rebind_test.go",
+        "relay_test.go",
+        "state_test.go",
+    ],
+    embed = [":controlplane"],
+    deps = [
+        "//xds/internal/activedir",
+        "//xds/internal/agent",
+        "//xds/internal/cds",
+        "//xds/internal/identity",
+        "//xds/internal/identity/identitytest",
+        "//xds/internal/lds",
+        "//xds/internal/modelauth",
+        "@com_github_envoyproxy_go_control_plane//pkg/cache/v3:cache",
+        "@com_github_envoyproxy_go_control_plane//pkg/resource/v3:resource",
+        "@com_github_envoyproxy_go_control_plane_envoy//config/cluster/v3:cluster",
+        "@com_github_envoyproxy_go_control_plane_envoy//config/listener/v3:listener",
+        "@com_github_envoyproxy_go_control_plane_envoy//extensions/transport_sockets/tls/v3:tls",
+        "@org_golang_google_protobuf//proto",
+    ],
+)

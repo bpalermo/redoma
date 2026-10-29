@@ -1,0 +1,70 @@
+# redoma-xds: the host Envoy's control plane for the agent containers. Serves
+# the listeners of every running agent (LDS), their relay clusters (CDS) and
+# each agent's SPIFFE identity (SDS) over ADS on /run/redoma-xds/xds.sock,
+# fetching the identities from SPIRE's Delegated Identity API on the SPIRE
+# agent's admin socket (spire_admin_socket in /etc/redoma/redoma.conf).
+#
+# Installed by the redoma package in /usr/lib/systemd/system. The admin socket
+# is redialled with backoff until it is there, so the unit has no dependency
+# on the SPIRE agent's own unit; order them with a drop-in if you want the
+# first redials saved.
+[Unit]
+Description=redoma xds: LDS, CDS and SDS for the agent containers' host Envoy
+Documentation=https://github.com/bpalermo/redoma
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/redoma xds
+Restart=always
+RestartSec=2
+
+# uid 961 is the one identity SPIRE must let use the admin socket (the
+# agent's authorized_delegates, its entry selected by unix:uid:961). The
+# package makes the user (sysusers.d).
+User=redoma-sds
+Group=redoma-sds
+
+# /run/redoma-xds, 0750 redoma-sds: the socket's directory. Kept across
+# restarts: a containerized Envoy bind-mounts the directory, and one
+# recreated would leave the container looking at the deleted one.
+RuntimeDirectory=redoma-xds
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+# The socket is 0660 once bound (server.SocketMode); owner-only before that.
+UMask=0077
+
+# It reads /etc/redoma, /run/redoma/active and /run/netns, connects
+# to one unix socket and listens on another; nothing else. Connecting to a
+# socket needs no write access to its file system, so the read-only system is
+# no obstacle to the admin socket.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+# Unix sockets are file system objects and reach across network namespaces;
+# this one has no network at all.
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

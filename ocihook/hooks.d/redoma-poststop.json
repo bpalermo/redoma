@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "hook": {
+    "path": "/usr/bin/redoma",
+    "args": ["redoma", "oci-hook", "poststop"],
+    "timeout": 15
+  },
+  "when": {
+    "annotations": {
+      "^redoma/agent$": ".*"
+    }
+  },
+  "stages": ["poststop"]
+}

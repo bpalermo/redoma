@@ -1,0 +1,17 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "agent",
+    srcs = [
+        "agent.go",
+        "merge.go",
+    ],
+    importpath = "github.com/bpalermo/redoma/xds/internal/agent",
+    visibility = ["//xds:__subpackages__"],
+)
+
+go_test(
+    name = "agent_test",
+    srcs = ["merge_test.go"],
+    embed = [":agent"],
+)

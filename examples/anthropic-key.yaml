@@ -1,0 +1,11 @@
+# An example of /etc/redoma/secrets/anthropic-key.yaml, the SDS file the model
+# listeners' credential injector reads: one generic secret holding the
+# complete header value. In api-key mode (the default) that is the API key
+# itself, sent as x-api-key. Install it 0600, owned by the user Envoy runs as;
+# redoma never reads it.
+resources:
+  - "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret
+    name: anthropic-key
+    generic_secret:
+      secret:
+        inline_string: "<the API key>"

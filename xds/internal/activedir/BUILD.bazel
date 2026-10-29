@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "activedir",
+    srcs = ["activedir.go"],
+    importpath = "github.com/bpalermo/redoma/xds/internal/activedir",
+    visibility = ["//xds:__subpackages__"],
+    deps = [
+        "//common/allowlist",
+        "//xds/internal/agent",
+    ],
+)
+
+go_test(
+    name = "activedir_test",
+    srcs = ["activedir_test.go"],
+    embed = [":activedir"],
+    deps = ["//xds/internal/agent"],
+)

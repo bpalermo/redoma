@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/theoremlp/rules_multitool/main/lockfile.schema.json",
+  "bazel-diff": {
+    "binaries": [
+      {
+        "kind": "file",
+        "url": "https://github.com/Tinder/bazel-diff/releases/download/v60.0.0/bazel-diff-rust-linux-amd64",
+        "sha256": "4c1e70c955a7a950fc0ce15d921e976078a5fd1571e423c05016cb6e7c433dac",
+        "os": "linux",
+        "cpu": "x86_64"
+      },
+      {
+        "kind": "file",
+        "url": "https://github.com/Tinder/bazel-diff/releases/download/v60.0.0/bazel-diff-rust-linux-arm64",
+        "sha256": "10031937a8a5831f98cd054bd8ad4bb0ff6ab56dbecb9fb43e6d20a7c504165e",
+        "os": "linux",
+        "cpu": "arm64"
+      },
+      {
+        "kind": "file",
+        "url": "https://github.com/Tinder/bazel-diff/releases/download/v60.0.0/bazel-diff-rust-macos-arm64",
+        "sha256": "41c925e68c25289e437b9c95528ca01ebad72f8b8403f1950a5aeea5765ce55e",
+        "os": "macos",
+        "cpu": "arm64"
+      }
+    ]
+  }
+}

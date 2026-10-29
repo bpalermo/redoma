@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "identitytest",
+    srcs = ["identitytest.go"],
+    importpath = "github.com/bpalermo/redoma/xds/internal/identity/identitytest",
+    visibility = ["//xds:__subpackages__"],
+    deps = [
+        "//common/sockettest",
+        "@com_github_spiffe_spire_api_sdk//proto/spire/api/agent/delegatedidentity/v1:delegatedidentity",
+        "@com_github_spiffe_spire_api_sdk//proto/spire/api/types",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_grpc//test/bufconn",
+    ],
+)
