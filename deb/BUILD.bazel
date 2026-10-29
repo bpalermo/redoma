@@ -89,7 +89,7 @@ genrule(
     name = "deb_version",
     srcs = ["//:VERSION"],
     outs = ["deb_version.txt"],
-    cmd = "$(location deb_version.sh) $(location //:VERSION) bazel-out/stable-status.txt >$@",
+    cmd = "$(execpath deb_version.sh) $(execpath //:VERSION) bazel-out/stable-status.txt >$@",
     stamp = 1,
     tools = ["deb_version.sh"],
 )

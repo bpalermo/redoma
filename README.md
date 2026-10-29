@@ -73,6 +73,12 @@ architecture.
 sudo apt install ./redoma_amd64.deb     # or redoma_arm64.deb
 ```
 
+A package's version is VERSION on a release and `<VERSION>~...` on any
+other build, so a newer build always upgrades an older one. A host that
+installed an early package whose version is a bare `0.1.0` from a snapshot
+build removes it first (`sudo apt remove redoma`), or the snapshots sort
+below it.
+
 The package installs:
 
 | Path | What |

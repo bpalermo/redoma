@@ -93,7 +93,7 @@ check_package "${amd64}" amd64 62
 check_package "${arm64}" arm64 183
 
 # The version is VERSION's, a candidate's or a snapshot's (deb_version.sh).
-[[ ${version} =~ ^[0-9]+\.[0-9]+\.[0-9]+(~rc\.[0-9]+|~git[0-9]{14}\.[0-9a-f]{7}|~dev)?$ ]] || fail "version ${version}"
+[[ ${version} =~ ^[0-9]+\.[0-9]+\.[0-9]+(~rc\.[0-9]+|~(rc\.[0-9]+\.)?git[0-9]{14}\.[0-9a-f]{7}(\.dirty)?|~dev)?$ ]] || fail "version ${version}"
 # The copyright file is machine-readable (DEP-5) with a copyright line.
 grep -qx 'Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/' "${work}/amd64/root/usr/share/doc/redoma/copyright" || fail "copyright: not DEP-5"
 grep -qx 'Copyright: 2026 Bruno Palermo <b@palermo.dev>' "${work}/amd64/root/usr/share/doc/redoma/copyright" || fail "copyright: no copyright line"

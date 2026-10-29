@@ -30,6 +30,8 @@ expect() {
 expect STABLE_RELEASE_TAG none "an untagged commit"
 expect STABLE_GIT_COMMIT_TIME '[0-9]{14}' "the commit time"
 expect STABLE_GIT_SHORT_COMMIT "$(git rev-parse --short=12 HEAD)" "the abbreviated commit"
+expect STABLE_LAST_RC_TAG none "no candidate yet"
+expect STABLE_GIT_DIRTY false "a clean tree"
 
 git tag v0.2.0
 expect STABLE_RELEASE_TAG none "a tag that is not VERSION's"
@@ -42,6 +44,7 @@ expect STABLE_GIT_VERSION 'v0\.1\.0-rc\.10' "candidates"
 echo change >>VERSION.extra
 git add VERSION.extra
 expect STABLE_RELEASE_TAG none "a candidate's commit with uncommitted changes"
+expect STABLE_GIT_DIRTY true "uncommitted changes"
 git reset --quiet --hard
 
 git tag v0.1.0
@@ -50,6 +53,7 @@ expect STABLE_GIT_VERSION 'v0\.1\.0' "a release"
 
 git commit --quiet --allow-empty -m next
 expect STABLE_RELEASE_TAG none "the commit after a release"
+expect STABLE_LAST_RC_TAG 'v0\.1\.0-rc\.10' "a commit after the candidates: the newest it descends from"
 
 [ "${fail}" = 0 ]
 echo "workspace status: snapshot, candidates and release as expected"

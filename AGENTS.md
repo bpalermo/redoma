@@ -42,6 +42,10 @@ bazel mod tidy                  # after changing go.mod or a bazel_dep
 bazel run //redoma -- --version
 ```
 
+Building and testing need Bazel (bazelisk reads `.bazelversion`) on Linux,
+plus `dpkg` and `dpkg-deb` on the host: `//deb:deb_test` and
+`//deb:deb_version_test` read the packages with them and fail without them.
+
 Bazel is the only build. Do not run the host `go` tool, and do not "fix"
 go.mod with `go mod tidy`. Change a Go dependency through rules_go's SDK:
 
@@ -700,12 +704,26 @@ conffiles, and the docs (`deb/copyright`, machine-readable) and examples.
 Never the shim, a secret, or anything of SPIRE or Envoy.
 
 The packages' version is stamped (`deb/deb_version.sh`, from VERSION and
-`bazel/workspace_status.sh`): `<VERSION>` on a commit tagged `v<VERSION>`,
-`<VERSION>~rc.<n>` on a candidate, `<VERSION>~git<commit time>.<sha7>` on any
-other commit, `<VERSION>~dev` without stamping. `~` sorts first, so a
-snapshot upgrades an older snapshot and the release upgrades both; bump
-VERSION right after a release, or the next snapshots sort below it.
+`bazel/workspace_status.sh`):
+
+| Commit | Version |
+|---|---|
+| tagged `v<VERSION>` | `<VERSION>` |
+| tagged `v<VERSION>-rc.<n>` | `<VERSION>~rc.<n>` |
+| after candidate `n` of VERSION | `<VERSION>~rc.<n>.git<commit time>.<sha7>` |
+| any other | `<VERSION>~git<commit time>.<sha7>` |
+| unstamped build | `<VERSION>~dev` |
+
+A snapshot of a tree with uncommitted changes ends in `.dirty`. `~` sorts
+first, so snapshots order by time, a candidate's snapshots sit between it
+and the next candidate, and the release upgrades them all. Bump VERSION
+right after a release, or the next snapshots sort below it.
 `//deb:deb_version_test` holds that order to `dpkg --compare-versions`.
+
+Packages built before the version was stamped are all `0.1.0`, which sorts
+above every `0.1.0~` snapshot: a host that installed one removes it
+(`sudo apt remove redoma`; its conffiles stay) before a snapshot will
+install over it.
 
 The maintainer scripts:
 
