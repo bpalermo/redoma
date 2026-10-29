@@ -36,6 +36,10 @@ var wire = map[string]proto.Message{
 	"watch_request_all":           relayv1.WatchRequest_builder{}.Build(),
 	"watch_event_question":        relayv1.WatchEvent_builder{Agent: "a", Question: relayv1.Question_builder{Id: "a/q1", Text: "which?", TaskId: "a/1"}.Build()}.Build(),
 	"watch_event_dropped":         relayv1.WatchEvent_builder{Agent: "a", Dropped: relayv1.Dropped_builder{TurnEvents: 3, Invalid: 1, Reason: "over its rate"}.Build()}.Build(),
+	"watch_event_turn_event":      relayv1.WatchEvent_builder{Agent: "a", TurnEvent: relayv1.TurnEvent_builder{TaskId: "a/1", Chunk: []byte(`{"type":"assistant"}`), Partial: true}.Build()}.Build(),
+	"watch_event_message":         relayv1.WatchEvent_builder{Agent: "a", Message: relayv1.Message_builder{To: "lead", Text: "done", TaskId: "a/1"}.Build()}.Build(),
+	"watch_event_dropped_all":     relayv1.WatchEvent_builder{Agent: "b", Dropped: relayv1.Dropped_builder{TurnEvents: 1, Questions: 2, Messages: 3, Invalid: 4, Reason: "over a limit"}.Build()}.Build(),
+	"watch_request_agent":         relayv1.WatchRequest_builder{Agent: "a"}.Build(),
 }
 
 // captured reads testdata/wire.txt: one "<name> <hex>" per line.

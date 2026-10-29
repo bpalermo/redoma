@@ -11,12 +11,19 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
+// syntaxPath is the source path of the file's syntax or edition statement
+// (FileDescriptorProto field 12), whose leading comment is the file's own.
+var syntaxPath = protoreflect.SourcePath{12}
+
 // undocumented reports the elements of fd with no leading comment, by full
 // name: the comments are what the protocol's documentation is generated
-// from, so every message, field, oneof, enum, enum value, service and rpc
-// needs one.
+// from, so the file itself and every message, field, oneof, enum, enum
+// value, service and rpc need one.
 func undocumented(fd protoreflect.FileDescriptor) []string {
 	var missing []string
+	if strings.TrimSpace(fd.SourceLocations().ByPath(syntaxPath).LeadingComments) == "" {
+		missing = append(missing, fd.Path()+" (the file comment, before the edition statement)")
+	}
 	check := func(d protoreflect.Descriptor) {
 		if strings.TrimSpace(fd.SourceLocations().ByDescriptor(d).LeadingComments) == "" {
 			missing = append(missing, string(d.FullName()))
