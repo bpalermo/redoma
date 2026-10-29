@@ -696,8 +696,18 @@ to `--max-backoff` 30s) and heartbeats every 30s.
 (`platform_files`). `deb/BUILD.bazel` lists what goes in: the binary, the
 units, the hook's definitions and drop-in, `deb/sysusers.conf` as
 `/usr/lib/sysusers.d/redoma.conf`, `redoma/redoma.conf` and the drop-in as
-conffiles, and the docs and examples. Never the shim, a secret, or anything
-of SPIRE or Envoy. The maintainer scripts:
+conffiles, and the docs (`deb/copyright`, machine-readable) and examples.
+Never the shim, a secret, or anything of SPIRE or Envoy.
+
+The packages' version is stamped (`deb/deb_version.sh`, from VERSION and
+`bazel/workspace_status.sh`): `<VERSION>` on a commit tagged `v<VERSION>`,
+`<VERSION>~rc.<n>` on a candidate, `<VERSION>~git<commit time>.<sha7>` on any
+other commit, `<VERSION>~dev` without stamping. `~` sorts first, so a
+snapshot upgrades an older snapshot and the release upgrades both; bump
+VERSION right after a release, or the next snapshots sort below it.
+`//deb:deb_version_test` holds that order to `dpkg --compare-versions`.
+
+The maintainer scripts:
 
 - `postinst` (configure) runs `systemd-sysusers` on the package's file,
   then fails, naming each, when `redoma-sds`, `redoma-relay` or
@@ -710,15 +720,15 @@ of SPIRE or Envoy. The maintainer scripts:
   users, the groups and `/var/lib/redoma-relay` stay.
 
 `//deb:deb_test` holds each package to its exact file list, modes, owners,
-conffiles and control fields, checks that its binary is an ELF of its
-architecture, and runs `postinst` against fake ids. A file added to the
+conffiles, control fields and stamped version, checks that its binary is an
+ELF of its architecture, and runs the packaged `postinst` against fake ids. A file added to the
 package is added to that list.
 
 ## Versions
 
 - The binaries are pure Go (`pure = "on"`).
-- `VERSION` is the release being worked towards and the packages' version;
-  the binaries report `git describe` of their commit
+- `VERSION` is the release being worked towards, the base of the packages'
+  version (see "The package"); the binaries report `git describe` of their commit
   (`bazel/workspace_status.sh`).
 
 ## Pull requests

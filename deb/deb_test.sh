@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # The redoma packages: their control fields, exactly their files with their
 # modes and owners, the conffiles, a binary of each package's architecture,
-# and the postinst's check of the services' ids.
+# the stamped version, and the packaged postinst's check of the services'
+# ids.
 #
 # Arguments: the runfiles paths of the amd64 and arm64 packages and of the
-# postinst.
+# version file they were built with.
 set -euo pipefail
 
 amd64="${TEST_SRCDIR}/$1"
 arm64="${TEST_SRCDIR}/$2"
-postinst="${TEST_SRCDIR}/$3"
+version="$(cat "${TEST_SRCDIR}/$3")"
 work="${TEST_TMPDIR}/deb"
 mkdir -p "${work}"
 
@@ -68,7 +69,8 @@ check_package() { # <deb> <arch> <e_machine>
 	[[ $(dpkg-deb -f "${deb}" Architecture) == "${arch}" ]] || fail "${arch}: Architecture $(dpkg-deb -f "${deb}" Architecture)"
 	[[ $(dpkg-deb -f "${deb}" Maintainer) == "Bruno Palermo <b@palermo.dev>" ]] || fail "${arch}: Maintainer"
 	[[ $(dpkg-deb -f "${deb}" Depends) == systemd ]] || fail "${arch}: Depends $(dpkg-deb -f "${deb}" Depends)"
-	[[ -n $(dpkg-deb -f "${deb}" Version) ]] || fail "${arch}: no Version"
+	[[ $(dpkg-deb -f "${deb}" Version) == "${version}" ]] || fail "${arch}: Version $(dpkg-deb -f "${deb}" Version), not ${version}"
+	[[ -z $(dpkg-deb -f "${deb}" License) ]] || fail "${arch}: a License control field"
 
 	dpkg-deb -c "${deb}" | awk '{print $1, $2, $6}' | sort >"${dir}/files"
 	want_files | sort >"${dir}/want"
@@ -89,6 +91,15 @@ check_package() { # <deb> <arch> <e_machine>
 
 check_package "${amd64}" amd64 62
 check_package "${arm64}" arm64 183
+
+# The version is VERSION's, a candidate's or a snapshot's (deb_version.sh).
+[[ ${version} =~ ^[0-9]+\.[0-9]+\.[0-9]+(~rc\.[0-9]+|~git[0-9]{14}\.[0-9a-f]{7}|~dev)?$ ]] || fail "version ${version}"
+# The copyright file is machine-readable (DEP-5) with a copyright line.
+grep -qx 'Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/' "${work}/amd64/root/usr/share/doc/redoma/copyright" || fail "copyright: not DEP-5"
+grep -qx 'Copyright: 2026 Bruno Palermo <b@palermo.dev>' "${work}/amd64/root/usr/share/doc/redoma/copyright" || fail "copyright: no copyright line"
+
+# The postinst the package carries.
+postinst="${work}/amd64/control/postinst"
 
 # The postinst against fake ids: getent answers from a passwd and a group
 # file, systemd-sysusers and systemctl do nothing.

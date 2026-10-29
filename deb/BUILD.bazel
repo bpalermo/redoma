@@ -6,7 +6,7 @@
 #   /etc/containers/containers.conf.d/50-redoma-hooks.conf
 #   /usr/lib/sysusers.d/redoma.conf                    its users and groups, 961/963/964
 #   /etc/redoma/redoma.conf                            the settings (a conffile)
-#   /usr/share/doc/redoma/                             copyright, README.md, examples
+#   /usr/share/doc/redoma/                             copyright (DEP-5), NOTICE, README.md, examples
 #
 # Not in it: redoma-shim (the runtime image's), SPIRE, Envoy, any secret. The
 # postinst makes the users and groups and fails when their ids are not the
@@ -74,13 +74,24 @@ pkg_files(
 pkg_files(
     name = "doc",
     srcs = [
-        "//:LICENSE",
+        "copyright",
         "//:NOTICE",
         "//:README.md",
     ],
     attributes = pkg_attributes(mode = "0644"),
     prefix = "usr/share/doc/redoma",
-    renames = {"//:LICENSE": "copyright"},
+)
+
+# The packages' version: VERSION on a release tag, a candidate's or a
+# snapshot's otherwise (deb_version.sh), so a newer build always upgrades an
+# older one. Stamped: --stamp is on by default (.bazelrc).
+genrule(
+    name = "deb_version",
+    srcs = ["//:VERSION"],
+    outs = ["deb_version.txt"],
+    cmd = "$(location deb_version.sh) $(location //:VERSION) bazel-out/stable-status.txt >$@",
+    stamp = 1,
+    tools = ["deb_version.sh"],
 )
 
 pkg_files(
@@ -147,7 +158,6 @@ pkg_mkdirs(
                   " the lead's clients; and redoma oci-hook, which makes an annotated\n" +
                   " rootful Podman container an agent.",
     homepage = "https://github.com/bpalermo/redoma",
-    license = "Apache-2.0",
     maintainer = "Bruno Palermo <b@palermo.dev>",
     package = "redoma",
     package_file_name = "redoma_" + arch + ".deb",
@@ -157,7 +167,7 @@ pkg_mkdirs(
     priority = "optional",
     recommends = ["podman"],
     section = "admin",
-    version_file = "//:VERSION",
+    version_file = ":deb_version",
     visibility = ["//visibility:public"],
 ) for arch in ARCHES]
 
@@ -173,20 +183,28 @@ sh_test(
     args = [
         "$(rlocationpath :redoma_amd64_deb)",
         "$(rlocationpath :redoma_arm64_deb)",
-        "$(rlocationpath postinst)",
+        "$(rlocationpath :deb_version)",
     ],
     data = [
-        "postinst",
         "sysusers.conf",
+        ":deb_version",
         ":redoma_amd64_deb",
         ":redoma_arm64_deb",
     ],
+)
+
+sh_test(
+    name = "deb_version_test",
+    srcs = ["deb_version_test.sh"],
+    args = ["$(rlocationpath deb_version.sh)"],
+    data = ["deb_version.sh"],
 )
 
 # For the shellcheck aspect (--config=lint): the maintainer scripts.
 sh_library(
     name = "maintainer_scripts",
     srcs = [
+        "deb_version.sh",
         "postinst",
         "postrm",
         "prerm",

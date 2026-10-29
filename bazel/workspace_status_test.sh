@@ -28,6 +28,7 @@ expect() {
 }
 
 expect STABLE_RELEASE_TAG none "an untagged commit"
+expect STABLE_GIT_COMMIT_TIME '[0-9]{14}' "the commit time"
 expect STABLE_GIT_SHORT_COMMIT "$(git rev-parse --short=12 HEAD)" "the abbreviated commit"
 
 git tag v0.2.0

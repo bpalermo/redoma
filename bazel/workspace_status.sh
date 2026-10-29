@@ -37,9 +37,12 @@ fi
 version="${release:-$(git describe --tags --always --dirty 2>/dev/null || echo unknown)}"
 
 short="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+# The commit time in UTC, for the packages' snapshot versions (deb/deb_version.sh).
+committed="$(TZ=UTC git show -s --date=format-local:%Y%m%d%H%M%S --format=%cd HEAD 2>/dev/null || echo unknown)"
 
 echo "STABLE_GIT_VERSION ${version}"
 echo "STABLE_RELEASE_TAG ${release:-none}"
 echo "STABLE_GIT_COMMIT ${commit}"
+echo "STABLE_GIT_COMMIT_TIME ${committed}"
 # The commit abbreviated, for an image tag a human reads (redoma-runtime's).
 echo "STABLE_GIT_SHORT_COMMIT ${short}"
