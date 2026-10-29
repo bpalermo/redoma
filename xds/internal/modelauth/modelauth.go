@@ -3,8 +3,7 @@
 // it; this package only reads it.
 //
 // The credential itself is the SDS secret anthropic-key, which holds the
-// complete header value (the raw key, or "Bearer sk-ant-oat01-…"). The mode
-// only says which header Envoy writes it to.
+// complete header value. The mode only says which header Envoy writes it to.
 package modelauth
 
 import (
@@ -26,10 +25,8 @@ const (
 	None Mode = iota
 	// APIKey writes the secret to x-api-key and strips authorization.
 	APIKey
-	// Bearer writes the secret to authorization, replacing the value the
-	// client sent, and strips x-api-key. For Claude Code subscription tokens
-	// only: Anthropic accepts them only on Claude Code's own requests, so
-	// nothing else about the request is touched.
+	// Bearer writes the secret to authorization, as the header's whole
+	// value, replacing the value the client sent, and strips x-api-key.
 	Bearer
 )
 
@@ -52,7 +49,7 @@ func Path(etcDir string) string {
 
 // Read returns the mode in etcDir. A missing file is APIKey, the mode from
 // before the file existed. A file that cannot be read, or whose word (with
-// surrounding whitespace trimmed) is not api-key or bearer, is None and an
+// surrounding whitespace trimmed) is not a known mode, is None and an
 // error. The error never quotes the file: a credential written there by
 // mistake must not reach a log.
 func Read(etcDir string) (Mode, error) {
@@ -70,6 +67,6 @@ func Read(etcDir string) (Mode, error) {
 	case "bearer":
 		return Bearer, nil
 	default:
-		return None, fmt.Errorf("%s: not \"api-key\" or \"bearer\" (%d bytes)", path, len(raw))
+		return None, fmt.Errorf("%s: not a known mode, such as \"api-key\" (%d bytes)", path, len(raw))
 	}
 }

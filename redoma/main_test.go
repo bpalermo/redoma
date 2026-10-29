@@ -74,3 +74,31 @@ func TestShippedConfig(t *testing.T) {
 		t.Errorf("redoma.conf = %+v, the defaults %+v", c, config.Default())
 	}
 }
+
+// TestBadFlagRefused: a flag that overrides the settings file is checked
+// as the file is, and the failure comes before a service starts.
+func TestBadFlagRefused(t *testing.T) {
+	absent := filepath.Join(t.TempDir(), "absent.conf")
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"xds", "--trust-domain", "spiffe://example.org"}, "trust_domain"},
+		{[]string{"xds", "--spire-admin-socket", "admin.sock"}, "spire_admin_socket"},
+		{[]string{"relay", "--trust-domain", "Example.Org"}, "trust_domain"},
+		{[]string{"relay", "--workload-api", "/run/spire/agent.sock"}, "spire_workload_api"},
+		{[]string{"oci-hook", "poststop", "--annotation", "a b"}, "agent_annotation"},
+	} {
+		r := root()
+		// The default path, absent: only the flags are checked.
+		r.SetArgs(tc.args)
+		if err := r.PersistentFlags().Set(config.FlagName, absent); err != nil {
+			t.Fatal(err)
+		}
+		r.PersistentFlags().Lookup(config.FlagName).Changed = false
+		r.SetIn(strings.NewReader("{}"))
+		if err := r.Execute(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("redoma %v: %v, want an error naming %s", tc.args, err, tc.want)
+		}
+	}
+}

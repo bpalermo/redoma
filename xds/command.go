@@ -93,6 +93,11 @@ func (f *flags) settle(cmd *cobra.Command) error {
 	config.Unless(cmd, "trust-domain", &f.cfg.TrustDomain, conf.TrustDomain)
 	config.Unless(cmd, "spire-admin-socket", &f.adminSocket, conf.SpireAdminSocket)
 	config.Unless(cmd, "relay-id", &f.relay.ID, "spiffe://"+f.cfg.TrustDomain+config.RelayPath)
+	// A flag is held to what the file is held to.
+	conf.TrustDomain, conf.SpireAdminSocket = f.cfg.TrustDomain, f.adminSocket
+	if err := conf.Validate(); err != nil {
+		return err
+	}
 	if f.relay.Socket != "" {
 		f.cfg.Relay = &f.relay
 	}

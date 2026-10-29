@@ -318,7 +318,7 @@ func TestModelAuthChanges(t *testing.T) {
 
 	for _, step := range []struct{ content, want string }{
 		{"bearer\n", "bearer"},
-		{"Bearer sk-ant-oat01-x\n", "none"},
+		{"Bearer placeholder-token\n", "none"},
 		{" api-key ", "api-key"},
 		{"bearer", "bearer"},
 	} {

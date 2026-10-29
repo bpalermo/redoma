@@ -52,6 +52,11 @@ func Command() *cobra.Command {
 				return err
 			}
 			config.Unless(cmd, "annotation", &f.annotation, conf.AgentAnnotation)
+			// A flag is held to what the file is held to.
+			conf.AgentAnnotation = f.annotation
+			if err := conf.Validate(); err != nil {
+				return err
+			}
 			return run(cmd.Context(), f, args[0], cmd.InOrStdin())
 		},
 	}

@@ -46,7 +46,7 @@ func TestReadMissingFileIsAPIKey(t *testing.T) {
 func TestReadRefusesAnythingElse(t *testing.T) {
 	for _, content := range []string{
 		"", "\n", "Bearer", "API-KEY", "apikey", "bearer api-key", "bearer\nbearer",
-		"none", "Bearer sk-ant-oat01-not-a-real-token",
+		"none", "Bearer placeholder-token",
 	} {
 		etc := t.TempDir()
 		writeMode(t, etc, content)
@@ -55,7 +55,7 @@ func TestReadRefusesAnythingElse(t *testing.T) {
 			t.Errorf("Read(%q) = %v, %v; want none and an error", content, got, err)
 			continue
 		}
-		if strings.Contains(err.Error(), "sk-ant") {
+		if strings.Contains(err.Error(), "placeholder-token") {
 			t.Errorf("Read(%q): the error quotes the file: %v", content, err)
 		}
 	}

@@ -63,9 +63,8 @@ gocognit threshold (`bazel/lint/linters.bzl`) is 15 and never goes up:
 split a function instead.
 
 `bazel run //:format` formats Starlark (buildifier), Go (gofumpt) and shell
-(shfmt, tabs). CI fails if it would change anything. CI also requires that
-Gazelle leaves no diff and that `MODULE.bazel.lock` is current
-(`--config=ci`).
+(shfmt, tabs). A change must leave nothing for it to format, Gazelle no
+diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
 
 ## Layout
 
@@ -696,15 +695,15 @@ to `--max-backoff` 30s) and heartbeats every 30s.
 
 ## Pull requests
 
-- `main` is protected: squash merges only, and the `ci` check must pass.
+- `main` is protected: squash merges only.
 - Every commit is signed off (`git commit -s`, the Developer Certificate of
   Origin).
 - This repository is public. Nothing in it names a real host, network,
   person's machine or account: examples use `example.org`,
   `redoma.internal`, the RFC 5737 documentation addresses (192.0.2.0/24,
   198.51.100.0/24, 203.0.113.0/24) and generic paths.
-- What CI's `diff` job decides can be reproduced locally, with the same
-  pinned bazel-diff, from the root of a throwaway clone (the script checks
+- Which targets a change impacts can be computed locally, with a pinned
+  bazel-diff, from the root of a throwaway clone (the script checks
   revisions out; never run it in the checkout you work in):
   `BASE_SHA=origin/main bazel/ci-impacted-targets.sh`, then read
   `.bazel-diff-out/impacted_{build,test}.txt`. bazel-diff is the prebuilt

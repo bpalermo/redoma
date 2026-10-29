@@ -79,6 +79,11 @@ func Command() *cobra.Command {
 			}
 			config.Unless(cmd, "trust-domain", &f.trustDomain, conf.TrustDomain)
 			config.Unless(cmd, "workload-api", &f.workloadAPI, conf.WorkloadAPI)
+			// A flag is held to what the file is held to.
+			conf.TrustDomain, conf.WorkloadAPI = f.trustDomain, f.workloadAPI
+			if err := conf.Validate(); err != nil {
+				return err
+			}
 			return run(cmd.Context(), f, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 		},
 	}
