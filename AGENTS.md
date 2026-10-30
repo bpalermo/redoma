@@ -800,7 +800,7 @@ package is added to that list.
 `runtime/` builds two images with rules_img and no Containerfile, each for
 linux/amd64 and linux/arm64 (an index of both):
 
-- `//runtime:base_index`, **redoma-base**, nothing proprietary in it:
+- `//runtime:base_index`, **redoma-base**, with no Claude Code in it:
   - Debian bookworm packages (`ca-certificates`, `git`, `jq`, `python3`,
     `ripgrep`, and a shell with the usual tools; MODULE.bazel, `apt`) and
     their whole dependency closure, for both architectures, resolved by
@@ -826,15 +826,30 @@ linux/amd64 and linux/arm64 (an index of both):
   - `//runtime:base_push` pushes it to `ghcr.io/bpalermo/redoma-base`: both
     architectures' manifests by digest, then the index, tagged with the
     same version with `-` for `~` (`//runtime:base_tag`, `0.1.0-rc.2`), and
-    no other tag. Only the release workflow runs it.
+    no other tag. It is for the release workflow only, which does not
+    run it yet: until it does, nothing publishes the base.
+  - **The package is made public once, by hand.** A package GitHub
+    creates on its first push is private, and a workflow cannot change
+    its visibility. After the first release that pushes the base, the
+    maintainer sets `redoma-base` to public (the package's settings,
+    "Change visibility"); later pushes keep it. Until then a consumer's
+    pull fails without credentials.
+  - It redistributes Debian's binary packages (GPL and LGPL among them):
+    each one's `copyright` and `/usr/share/common-licenses` stay in it
+    (`base_test.yaml` checks a few), and README.md, "Third-party software
+    in the base", says where their sources are. A package added to
+    MODULE.bazel is redistributed too: check its license allows that.
 - `//runtime:image_index`, **redoma-runtime**, the base and Claude Code's
   native binary at `/usr/local/bin/claude` (0755), the `package/claude` of
   `@anthropic-ai/claude-code-linux-x64` or `-arm64`, exactly as the tarball
   has it (Anthropic's terms require it unmodified: never patch or strip
   it). Node is not in the image. It is built `FROM` the base (rules_img's
-  `base`), the example of an image of one's own: the same entrypoint,
-  `PATH` and labels, but `.title` and `.licenses` (`NOASSERTION`: Claude
-  Code is not Apache-2.0).
+  `base`), the example of an image of one's own: the same entrypoint and
+  `PATH`, and its own `.title`, `.description`, `.licenses`
+  (`NOASSERTION`) and an empty `.source`. Inherited, the base's labels
+  would claim Apache-2.0 for an image with Claude Code in it, and link an
+  image pushed to a private registry to this repository; README.md's
+  Containerfile example overrides them the same way.
 - Nothing in `/etc/claude-code` in either.
 - `//runtime:base_test_amd64` and `_arm64`, `//runtime:image_test_amd64`
   and `_arm64` check each image's structure per architecture (paths, modes,
@@ -847,8 +862,10 @@ linux/amd64 and linux/arm64 (an index of both):
   architectures' version label to `deb_version.txt` and the tag to it.
   `//runtime:claude_code_test` checks that each tarball is the version
   pinned and the architecture it was fetched for.
-- **The runtime image is never published from here.** Claude Code is
-  proprietary: whoever runs redoma builds the image
+- **The runtime image is never published from here.** Whoever runs
+  redoma downloads Claude Code under Anthropic's terms and is responsible
+  for complying with them, which is why redoma never publishes an image
+  containing it: they build the image
   (`//runtime:image_load`, or one of their own FROM the base, README.md)
   and pushes it to a private registry of their own, never a public one: it
   carries Claude Code's binary. It has no push target,

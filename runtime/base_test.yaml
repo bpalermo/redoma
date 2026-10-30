@@ -1,5 +1,5 @@
 # //runtime:base_test_<arch>: what only the base has, and what it must not.
-# It is published, public: nothing of Claude Code is in it (base_deps_test
+# It is to be published, public: nothing of Claude Code is in it (base_deps_test
 # holds its build graph to that as well).
 schemaVersion: 2.0.0
 
@@ -9,6 +9,8 @@ metadataTest:
       value: Apache-2.0
     - key: org.opencontainers.image.title
       value: redoma-base
+    - key: org.opencontainers.image.source
+      value: https://github.com/bpalermo/redoma
 
 fileExistenceTests:
   - name: no claude
@@ -23,3 +25,17 @@ fileExistenceTests:
   - name: no Claude Code state
     path: /root/.claude
     shouldExist: false
+  # What README.md, "Third-party software in the base", says the image
+  # carries with the packages it redistributes.
+  - name: the GNU C Library's copyright
+    path: /usr/share/doc/libc6/copyright
+    shouldExist: true
+  - name: git's copyright
+    path: /usr/share/doc/git/copyright
+    shouldExist: true
+  - name: the GPL
+    path: /usr/share/common-licenses/GPL-2
+    shouldExist: true
+  - name: the LGPL
+    path: /usr/share/common-licenses/LGPL-2.1
+    shouldExist: true

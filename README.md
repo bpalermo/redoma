@@ -211,21 +211,86 @@ credential mode; it is not implemented yet.
 
 ## The runtime image
 
-The agents run `redoma-runtime`: Debian bookworm with git, a shell and the
-usual tools, Claude Code's native binary, and `redoma-shim` as the
-entrypoint. It bundles Claude Code, which is proprietary, so it is not
-published: build it yourself, for your host's architecture, and load it
-into the rootful Podman that runs the agents:
+The agents run an image with `redoma-shim` as its entrypoint and Claude
+Code's native binary in it. It comes in two parts:
+
+- **`redoma-base`** will be published, public, with every release from
+  v0.1.0-rc.2 on, once the release workflow pushes it:
+  `ghcr.io/bpalermo/redoma-base:<version>`, for amd64 and arm64. Until
+  then, build it with `//runtime:base_load`. Debian bookworm with git, jq, python3, ripgrep, a shell and the
+  usual tools, the CA bundle, and `redoma-shim` as the entrypoint. No
+  Claude Code. Its `org.opencontainers.image.version` label is the version
+  of the redoma package of the same release (`0.1.0~rc.2` for the image
+  tagged `0.1.0-rc.2`). Each release's notes on GitHub will give the
+  image's digest, and the image will have a build provenance attestation.
+- **Claude Code**, which you download yourself under Anthropic's terms, and
+  you are responsible for complying with them. That is why redoma never
+  publishes an image containing it. You add it in an image of your own
+  built FROM the base, and keep that image local or in a private registry
+  of your own.
+
+Once the base is published, an image of your own, pinned to the base's
+digest from its release's notes, with Claude Code's native binary for the image's architecture (`package/claude`
+of the npm package `@anthropic-ai/claude-code-linux-x64` or `-arm64`,
+unmodified) next to the Containerfile. An image inherits its base's
+labels, so it sets its own: otherwise it would claim the base's Apache-2.0
+license, name and description, and its source label would link it to this
+repository.
+
+```dockerfile
+FROM ghcr.io/bpalermo/redoma-base:<version>@sha256:<digest>
+COPY --chmod=0755 claude /usr/local/bin/claude
+LABEL org.opencontainers.image.title="<your image>" \
+      org.opencontainers.image.description="<your description>" \
+      org.opencontainers.image.licenses="<your license expression>" \
+      org.opencontainers.image.source=""
+```
+
+```sh
+sudo podman build -t localhost/redoma-runtime:dev .
+```
+
+To check the base against the package installed on the host, and its
+provenance by the digest you pinned:
+
+```sh
+sudo podman image inspect localhost/redoma-runtime:dev \
+  --format '{{ index .Labels "org.opencontainers.image.version" }}'
+dpkg-query -W -f '${Version}\n' redoma      # the same version
+gh attestation verify oci://ghcr.io/bpalermo/redoma-base@sha256:<digest> -R bpalermo/redoma
+```
+
+To give the agents Claude Code's managed settings, add
+`/etc/claude-code/managed-settings.json` in the same image.
+
+This repository also builds the whole image from source with Bazel,
+`//runtime:image_index`, the base and Claude Code at the version
+MODULE.bazel pins (amd64 and arm64), with its own title, description and
+`NOASSERTION` license label, and no source label, for the same reason.
+Build it for your host's architecture and load it into the rootful Podman
+that runs the agents:
 
 ```sh
 bazel run --@rules_img//img/settings:load_daemon=tar //runtime:image_load -- \
   --platform linux/amd64 | sudo podman load     # localhost/redoma-runtime:dev
 ```
 
-or push the image (amd64 and arm64) to a private registry of your own, never
-a public one: it carries Claude Code's binary, which is not redistributable.
-To give the agents Claude Code's managed settings, build an image FROM it
-that adds `/etc/claude-code/managed-settings.json`.
+### Third-party software in the base
+
+The base redistributes Debian bookworm's binary packages, unmodified, from
+snapshot.debian.org at the instant MODULE.bazel pins (`apt.sources_list`):
+among them the GNU C Library (LGPL-2.1+), bash, coreutils and git (GPL),
+and python3 (PSF). Each package's license is in the image at
+`/usr/share/doc/<package>/copyright`, and the GPL and LGPL texts in
+`/usr/share/common-licenses`. The exact version of every package, its
+dependencies included, is in `MODULE.bazel.lock` at the image's revision
+(the `org.opencontainers.image.revision` label; the apt extension's
+resolution, per architecture). The source of each is Debian's source
+package of that version, kept on snapshot.debian.org
+(`https://snapshot.debian.org/package/<source package>/<version>/`).
+
+redoma-shim itself is Apache-2.0, built from this repository at the
+revision in the image's `org.opencontainers.image.revision` label.
 
 ## Running
 

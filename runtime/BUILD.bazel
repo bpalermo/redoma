@@ -2,12 +2,15 @@
 # linux/amd64 and linux/arm64:
 #
 # - redoma-base (:base_index): Debian bookworm packages (MODULE.bazel,
-#   `apt`) and redoma-shim, its entrypoint. Nothing in it is proprietary:
-#   the release workflow publishes it, public, as ghcr.io/bpalermo/redoma-base
-#   (:base_push), so an image of one's own can start FROM it.
+#   `apt`) and redoma-shim, its entrypoint. No Claude Code: the release
+#   workflow is to publish it, public, as ghcr.io/bpalermo/redoma-base
+#   (:base_push), so an image of one's own can start FROM it; until it
+#   does, :base_load loads it locally.
 # - redoma-runtime (:image_index): the base and Claude Code's native binary
-#   (MODULE.bazel, `claude_code`), the example of such an image. Claude Code
-#   is proprietary: this image is built by its user, loaded into their own
+#   (MODULE.bazel, `claude_code`), the example of such an image. Its user
+#   downloads Claude Code under Anthropic's terms and is responsible for
+#   complying with them, which is why redoma never publishes an image
+#   containing it: this image is built by its user, loaded into their own
 #   Podman (:image_load) or pushed to a private registry of their own, never
 #   a public one, and never published from this repository. It has no push
 #   target, nothing outside this package can reach its index (private
@@ -146,7 +149,7 @@ genrule(
     cmd = "tr '~' - <$< >$@",
 )
 
-# redoma-base: no Claude Code, nothing proprietary.
+# redoma-base: no Claude Code.
 image_manifest(
     name = "base_manifest",
     entrypoint = ["/usr/local/bin/redoma-shim"],
@@ -173,7 +176,8 @@ image_index(
     platforms = PLATFORMS.values(),
 )
 
-# Run by the release workflow only, on a release tag: pushes both
+# For the release workflow only, on a release tag (it does not run it
+# yet): pushes both
 # architectures' manifests by digest, then the index, tagged with the
 # release's version (:base_tag), and nothing else (no `latest`).
 image_push(
@@ -206,14 +210,17 @@ image_layer(
 )
 
 # redoma-runtime: the base and Claude Code, an image of one's own FROM the
-# base (README.md, "The runtime image"). It keeps the base's entrypoint,
-# PATH and labels, but for the license: Claude Code is not Apache-2.0.
+# base (README.md, "The runtime image"). It keeps the base's entrypoint and
+# PATH, and sets its own labels: inherited, the base's would claim its
+# Apache-2.0 license and name for this image, and its source label would
+# link an image pushed to a private registry to this repository.
 image_manifest(
     name = "image_manifest",
     base = ":base_index",
     labels = {
         "org.opencontainers.image.description": "redoma-shim and Claude Code on Debian bookworm: a redoma agent image",
         "org.opencontainers.image.licenses": "NOASSERTION",
+        "org.opencontainers.image.source": "",
         "org.opencontainers.image.title": "redoma-runtime",
     },
     layers = [":claude_layer"],

@@ -8,6 +8,10 @@ metadataTest:
       value: NOASSERTION
     - key: org.opencontainers.image.title
       value: redoma-runtime
+    # Cleared: the base's would link this image to the repository.
+    - key: org.opencontainers.image.source
+      value: ^$
+      isRegex: true
 
 fileExistenceTests:
   - name: claude
