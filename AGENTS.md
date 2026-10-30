@@ -830,17 +830,16 @@ linux/amd64 and linux/arm64 (an index of both):
     `0.1.0~rc.2` for `v0.1.0-rc.2`; see "The package"). An image and the
     packages of one build always agree, and a host can check its image
     against the package it installed.
-  - `//runtime:base_push` pushes it to `ghcr.io/bpalermo/redoma-base`: both
+  - `//runtime:base_push` pushes it to `quay.io/redoma/redoma-base`: both
     architectures' manifests by digest, then the index, tagged with the
     same version with `-` for `~` (`//runtime:base_tag`, `0.1.0-rc.2`), and
-    no other tag. It is for the release workflow only, which does not
-    run it yet: until it does, nothing publishes the base.
-  - **The package is made public once, by hand.** A package GitHub
-    creates on its first push is private, and a workflow cannot change
-    its visibility. After the first release that pushes the base, the
-    maintainer sets `redoma-base` to public (the package's settings,
-    "Change visibility"); later pushes keep it. Until then a consumer's
-    pull fails without credentials.
+    no other tag. Only the release workflow runs it.
+  - **The registry is set up once, by hand**, before the first release
+    that pushes the base: the Quay organization `redoma`, its public
+    repository `redoma-base`, a robot account with write on it, and that
+    account's name and token as the repository secrets `QUAY_USERNAME` and
+    `QUAY_PASSWORD`. The release workflow fails at its login when either
+    secret is missing.
   - It redistributes Debian's binary packages (GPL and LGPL among them):
     each one's `copyright` and `/usr/share/common-licenses` stay in it
     (`base_test.yaml` checks a few), and README.md, "Third-party software
@@ -902,8 +901,8 @@ linux/amd64 and linux/arm64 (an index of both):
   `ci` (`.github/workflows/ci.yml`) aggregates `lint` (the formatter and
   Gazelle), `gitleaks`, `diff` (bazel-diff's impacted targets) and `build`
   (builds and tests those, with `--config=ci`); `build` is skipped only when
-  nothing is impacted. The runtime image is built there when its inputs
-  change, and never pushed.
+  nothing is impacted. The images are built there when their inputs
+  change, and never pushed: only the release workflow pushes the base.
 - Releases are tagged on a commit of `main` after CI has passed on it.
   A tag `v<VERSION>` runs `.github/workflows/release.yml`.
   - Its `build` job (read-only) fails unless the tagged commit is on `main`
@@ -912,9 +911,31 @@ linux/amd64 and linux/arm64 (an index of both):
     stamped `deb_version.txt` is the tag's version. It then uploads
     `redoma_<asset version>_{amd64,arm64}.deb` and their `SHA256SUMS` as an
     artifact (`bazel/release-assets.sh`).
-  - Its `publish` job, the only one with `contents: write`, checks the sums
-    and that the tag has no release yet, published or draft. It creates the
-    GitHub Release as a draft and checks that GitHub holds exactly the
+  - Its `base` job, after `build` and the only one given the Quay
+    secrets (with `id-token: write` for cosign and the attestation, and
+    `attestations: write`), builds
+    redoma-base from the tagged commit, runs its tests (`base_test_*`,
+    `base_tree_test_*`, `dpkg_status_test_*`, `base_deps_test`,
+    `base_version_test`), and checks that its version is
+    `build`'s and its tag the release tag without the `v`. It pushes it
+    (`//runtime:base_push`), checks that the tag, as `quay.io` serves it,
+    is the index it built (the sha256 of its bytes), signs that digest
+    (never a tag) with cosign, keyless (Fulcio and Rekor, this run's OIDC
+    identity; the installer action and cosign's version pinned), checks
+    that the signature verifies as a consumer's `cosign verify` would
+    (README.md), and attests the index's build provenance
+    (`actions/attest-build-provenance`, kept in GitHub's attestation store,
+    not pushed to the registry). A failure after the push leaves an image with no
+    release; a re-run pushes the same digest again.
+  - Its `publish` job runs only after `base` pushed the base, so no
+    release names a base that is not in the registry. The only one with
+    `contents: write`, it checks the sums and that the tag has no release
+    yet, published or draft. It creates the
+    GitHub Release as a draft, its notes naming the base by digest, how to
+    verify its signature and provenance, and the
+    snapshot.debian.org archives its packages, and their GPL and LGPL
+    sources, come from (MODULE.bazel's, read by `base`), and
+    checks that GitHub holds exactly the
     uploaded assets: each name, and each asset's `digest` against its line
     in `SHA256SUMS` (and `SHA256SUMS`'s own sum). Only then does it publish
     the release.

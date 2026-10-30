@@ -5,9 +5,15 @@ name: release
 # and their SHA256SUMS. A tag v<VERSION>-rc.<n> publishes a release
 # candidate the same way, as a prerelease, its packages versioned
 # <VERSION>~rc.<n> (AGENTS.md, "The package") and named
-# redoma_<VERSION>-rc.<n>_<arch>.deb, a name GitHub keeps. Only the packages: the runtime
-# image bundles Claude Code and is never published (AGENTS.md, "The runtime
-# image").
+# redoma_<VERSION>-rc.<n>_<arch>.deb, a name GitHub keeps.
+#
+# Before the release, the `base` job pushes redoma-base, the image without
+# Claude Code (//runtime:base_index), to quay.io/redoma/redoma-base: both
+# architectures by digest and the index tagged <VERSION> or
+# <VERSION>-rc.<n>. It signs the index's digest with cosign, keyless, and
+# attests its build provenance; the release's notes name the digest and how
+# to verify both. Never the runtime image: it bundles Claude Code and is
+# never published (AGENTS.md, "The runtime image").
 on:
   push:
     tags: ["v*"]
@@ -27,6 +33,7 @@ jobs:
     if: github.repository == 'bpalermo/redoma'
     runs-on: ubuntu-latest
     outputs:
+      deb: ${{ steps.tag.outputs.deb }}
       prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
       # The whole history: the check below needs the path from the tagged
@@ -99,11 +106,170 @@ jobs:
           path: ${{ runner.temp }}/release/
           if-no-files-found: error
 
-  # Publishes what build made. The one job that can write, and it runs no
-  # build: it does not even check the repository out.
+  # Builds redoma-base from the tagged commit once build passed, tests it,
+  # pushes it to Quay with the repository's robot account (the secrets
+  # QUAY_USERNAME and QUAY_PASSWORD), and signs and attests it: the one job
+  # that gets those secrets, and it cannot write the repository. It runs before publish, which needs it, so a
+  # release is never drafted for a base that was not pushed. A failure after
+  # the push leaves the image without a release; a re-run pushes the same
+  # digest again (the build is reproducible) and moves the tag to it.
+  base:
+    name: base
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The OIDC token cosign and the attestation get their Sigstore
+      # certificates with (keyless: no key is held anywhere).
+      id-token: write
+      # The attestation, kept in GitHub's attestation store.
+      attestations: write
+    outputs:
+      digest: ${{ steps.check.outputs.digest }}
+      image: ${{ steps.check.outputs.image }}
+      snapshots: ${{ steps.version.outputs.snapshots }}
+    env:
+      IMAGE: quay.io/redoma/redoma-base
+    steps:
+      # The tags too: the stamp reads the tag from the checkout, as in build.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: bazel-contrib/setup-bazel@104e3eea9447cdaa4b00d0fb46191a3985d26ab3 # 0.19.1
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          cache-save: false
+
+      # Its structure, file tree and build graph (no Claude Code in any),
+      # its dpkg status (every package installed, for scanners) and its
+      # version label (the packages' version).
+      - name: bazel test the base
+        run: |
+          bazel test --config=ci //runtime:base_test_amd64 //runtime:base_test_arm64 \
+            //runtime:base_tree_test_amd64 //runtime:base_tree_test_arm64 \
+            //runtime:dpkg_status_test_amd64 //runtime:dpkg_status_test_arm64 \
+            //runtime:base_deps_test //runtime:base_version_test
+
+      # The same stamp as build's packages: the base's version label and tag
+      # come from it, and base_version_test held the label to this file.
+      - name: the base carries the tag's version
+        id: version
+        env:
+          WANT: ${{ needs.build.outputs.deb }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          bazel build --config=ci --output_groups=+digest //runtime:base_index //runtime:base_tag
+          got="$(cat bazel-bin/deb/deb_version.txt)"
+          if [[ ${got} != "${WANT}" ]]; then
+            echo "::error::the base is version ${got}, not ${WANT}" >&2
+            exit 1
+          fi
+          tag="$(cat bazel-bin/runtime/base_tag.txt)"
+          if [[ ${tag} != "${TAG#v}" ]]; then
+            echo "::error::the base would be tagged ${tag}, not ${TAG#v}" >&2
+            exit 1
+          fi
+          digest="$(cat bazel-bin/runtime/base_index_digest)"
+          if [[ ! ${digest} =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::no digest of the base's index: ${digest}" >&2
+            exit 1
+          fi
+          # The Debian snapshots the base's packages come from, where
+          # their sources (GPL and LGPL among them) are kept.
+          snapshots="$(grep -oE 'https://snapshot\.debian\.org/archive/[a-z-]+/[0-9]{8}T[0-9]{6}Z' MODULE.bazel | sort -u | tr '\n' ' ')"
+          if [[ -z ${snapshots} ]]; then
+            echo "::error::no snapshot.debian.org archive in MODULE.bazel" >&2
+            exit 1
+          fi
+          echo "tag=${tag}" >>"${GITHUB_OUTPUT}"
+          echo "digest=${digest}" >>"${GITHUB_OUTPUT}"
+          echo "snapshots=${snapshots% }" >>"${GITHUB_OUTPUT}"
+
+      # rules_img's pusher and cosign read the registry's credentials from
+      # Docker's config, where docker login writes them. The password goes
+      # through stdin only; neither secret is printed.
+      - name: log in to quay.io
+        env:
+          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
+        run: |
+          if [[ -z ${QUAY_USERNAME} || -z ${QUAY_PASSWORD} ]]; then
+            echo "::error::the secrets QUAY_USERNAME and QUAY_PASSWORD are not set" >&2
+            exit 1
+          fi
+          docker login quay.io --username "${QUAY_USERNAME}" --password-stdin <<<"${QUAY_PASSWORD}"
+
+      # Both architectures' manifests by digest, then the index, tagged with
+      # the version and nothing else.
+      - name: push the base
+        env:
+          WANT: ${{ env.IMAGE }}:${{ steps.version.outputs.tag }}
+        run: |
+          pushed="$(bazel run --config=ci //runtime:base_push -- -print tag -progress log)"
+          if [[ ${pushed} != "${WANT}" ]]; then
+            echo "::error::pushed ${pushed:-nothing}, not ${WANT}" >&2
+            exit 1
+          fi
+
+      # The tag, as the registry serves it, is the index built above: the
+      # sha256 of its bytes is the digest.
+      - name: the registry has the base
+        id: check
+        env:
+          REF: ${{ env.IMAGE }}:${{ steps.version.outputs.tag }}
+          DIGEST: ${{ steps.version.outputs.digest }}
+        run: |
+          got="sha256:$(docker buildx imagetools inspect --raw "${REF}" | sha256sum | cut -d' ' -f1)"
+          if [[ ${got} != "${DIGEST}" ]]; then
+            echo "::error::${REF} is ${got}, not the index built, ${DIGEST}" >&2
+            exit 1
+          fi
+          echo "image=${IMAGE}" >>"${GITHUB_OUTPUT}"
+          echo "digest=${DIGEST}" >>"${GITHUB_OUTPUT}"
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
+
+      # Keyless: Fulcio certifies this run's OIDC identity (this workflow, at
+      # this tag) and Rekor logs the signature. Only the digest is signed,
+      # never a tag, which can move.
+      - name: sign the base
+        env:
+          REF: ${{ steps.check.outputs.image }}@${{ steps.check.outputs.digest }}
+        run: cosign sign --yes "${REF}"
+
+      # The signature verifies as a consumer would verify it: this
+      # repository's release workflow, on a release tag.
+      - name: the signature verifies
+        env:
+          REF: ${{ steps.check.outputs.image }}@${{ steps.check.outputs.digest }}
+          IDENTITY: '^https://github\.com/bpalermo/redoma/\.github/workflows/release\.yml@refs/tags/v.*$'
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          cosign verify "${REF}" --certificate-identity-regexp "${IDENTITY}" \
+            --certificate-oidc-issuer "${ISSUER}" >/dev/null
+          echo "${REF}: signed by ${IDENTITY}"
+
+      # The SLSA build provenance of the index's digest, in GitHub's
+      # attestation store (`gh attestation verify`), not pushed to Quay: it
+      # needs no registry, and cosign's signature is what Quay holds.
+      - name: attest the base
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.check.outputs.image }}
+          subject-digest: ${{ steps.check.outputs.digest }}
+          push-to-registry: false
+
+  # Publishes what build made, naming the base that base pushed. The one
+  # job that can write the repository, and it runs no build: it does not
+  # even check the repository out.
   publish:
     name: publish
-    needs: [build]
+    needs: [build, base]
     runs-on: ubuntu-latest
     permissions:
       # The one permission that creates a release; nothing else is written.
@@ -138,7 +304,8 @@ jobs:
 
       # A draft first: the release is published only once GitHub holds its
       # assets under exactly the names and digests SHA256SUMS lists. A
-      # mismatch fails the run, and the clean-up deletes the draft.
+      # mismatch fails the run, and the clean-up deletes the draft. Its
+      # notes name the base by digest, above GitHub's generated ones.
       - name: draft the release
         id: draft
         env:
@@ -146,13 +313,48 @@ jobs:
           TAG: ${{ github.ref_name }}
           OUT: ${{ runner.temp }}/release
           PRERELEASE: ${{ needs.build.outputs.prerelease }}
+          DEB_VERSION: ${{ needs.build.outputs.deb }}
+          IMAGE: ${{ needs.base.outputs.image }}
+          DIGEST: ${{ needs.base.outputs.digest }}
+          SNAPSHOTS: ${{ needs.base.outputs.snapshots }}
         run: |
+          if [[ ! ${DIGEST} =~ ^sha256:[0-9a-f]{64}$ || -z ${IMAGE} ]]; then
+            echo "::error::base pushed no image: ${IMAGE:-none}@${DIGEST:-none}" >&2
+            exit 1
+          fi
           flags=()
           if [[ ${PRERELEASE} == true ]]; then
             flags+=(--prerelease)
           fi
+          notes="${RUNNER_TEMP}/notes.md"
+          {
+            echo "## redoma-base"
+            echo
+            echo "The base image for an agent image of your own (README.md, \"The runtime image\"), linux/amd64 and linux/arm64, labelled \`org.opencontainers.image.version=${DEB_VERSION}\`:"
+            echo
+            echo '```'
+            echo "${IMAGE}:${TAG#v}@${DIGEST}"
+            echo '```'
+            echo
+            echo "Its signature, made keyless with cosign by this repository's release workflow on a release tag:"
+            echo
+            echo '```sh'
+            echo "cosign verify ${IMAGE}@${DIGEST} \\"
+            echo "  --certificate-identity-regexp '^https://github\.com/bpalermo/redoma/\.github/workflows/release\.yml@refs/tags/v.*\$' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+            echo
+            echo "Its build provenance: \`gh attestation verify oci://${IMAGE}@${DIGEST} -R ${GITHUB_REPOSITORY}\`."
+            echo
+            echo "It redistributes Debian bookworm's binary packages, unmodified, GPL and LGPL among them (README.md, \"Third-party software in the base\"). Each one's source is Debian's source package of the version the image's \`/var/lib/dpkg/status\` names, kept on the snapshots the packages come from:"
+            echo
+            for snapshot in ${SNAPSHOTS}; do
+              echo "- ${snapshot}"
+            done
+            echo
+          } >"${notes}"
           gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --verify-tag \
-            --draft --title "redoma ${TAG}" --generate-notes "${flags[@]}" \
+            --draft --title "redoma ${TAG}" --notes-file "${notes}" --generate-notes "${flags[@]}" \
             "${OUT}"/redoma_*.deb "${OUT}/SHA256SUMS"
 
       # Every asset of the draft, as GitHub holds it, by name and by the
