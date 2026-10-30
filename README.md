@@ -70,12 +70,19 @@ architecture.
 ## Installing
 
 Each release on GitHub has the packages, `redoma_<version>_amd64.deb` and
-`redoma_<version>_arm64.deb`, and their `SHA256SUMS`; or build them as
-above. Then:
+`redoma_<version>_arm64.deb`, and their `SHA256SUMS`; a release candidate,
+tagged `v<VERSION>-rc.<n>`, is a prerelease. With a release's files
+downloaded:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
-sudo apt install ./redoma_<version>_amd64.deb
+sudo apt install ./redoma_<version>_amd64.deb   # or redoma_<version>_arm64.deb
+```
+
+A package built as above has no version in its name:
+
+```sh
+sudo apt install ./bazel-bin/deb/redoma_amd64.deb   # or redoma_arm64.deb
 ```
 
 A package's version is VERSION on a release and `<VERSION>~...` on any

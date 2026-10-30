@@ -818,10 +818,14 @@ and no Containerfile, for linux/amd64 and linux/arm64:
   (builds and tests those, with `--config=ci`); `build` is skipped only when
   nothing is impacted. The runtime image is built there when its inputs
   change, and never pushed.
-- A tag `v<VERSION>` runs `.github/workflows/release.yml`: it tests
-  `//deb`, then publishes a GitHub Release with
-  `redoma_<version>_{amd64,arm64}.deb` and their `SHA256SUMS`. The tag must
-  match `VERSION`.
+- A tag `v<VERSION>` runs `.github/workflows/release.yml`. Its `build` job
+  (read-only) runs `//deb:deb_test` alone, not the rest of CI's build,
+  checks that the stamped `deb_version.txt` is the tag's version, and
+  uploads `redoma_<version>_{amd64,arm64}.deb` and their `SHA256SUMS` as an
+  artifact; its `publish` job, the only one with `contents: write`, checks
+  the sums and publishes them as a GitHub Release. A tag
+  `v<VERSION>-rc.<n>` does the same as a prerelease, its packages versioned
+  `<VERSION>~rc.<n>`. Any other `v*` tag fails the run.
 - GitHub Actions are pinned by commit SHA, with the version in a comment.
   Dependabot keeps those current, but not the `multitool.lock.json` pins:
   bump bazel-diff by hand, its version in every URL and the sha256s (GitHub's

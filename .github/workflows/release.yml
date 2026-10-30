@@ -2,8 +2,11 @@ name: release
 
 # A tag v<VERSION> pushed to this repository publishes a GitHub Release with
 # the Debian packages, redoma_<version>_amd64.deb and redoma_<version>_arm64.deb,
-# and their SHA256SUMS. Only the packages: the runtime image bundles Claude
-# Code and is never published (AGENTS.md, "The runtime image").
+# and their SHA256SUMS. A tag v<VERSION>-rc.<n> publishes a release
+# candidate the same way, as a prerelease, its packages versioned
+# <VERSION>~rc.<n> (AGENTS.md, "The package"). Only the packages: the runtime
+# image bundles Claude Code and is never published (AGENTS.md, "The runtime
+# image").
 on:
   push:
     tags: ["v*"]
@@ -16,13 +19,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: release
+  # Builds and tests the packages from the tagged commit and hands them to
+  # publish as an artifact. Nothing here can write to the repository.
+  build:
+    name: build
     if: github.repository == 'bpalermo/redoma'
     runs-on: ubuntu-latest
-    permissions:
-      # The one permission that creates a release; nothing else is written.
-      contents: write
+    outputs:
+      prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -35,38 +39,96 @@ jobs:
           cache-save: false
 
       # The packages' version is VERSION's: a tag that says otherwise would
-      # publish packages that disagree with their release.
-      - name: the tag is v<VERSION>
+      # publish packages that disagree with their release. Any other tag
+      # matching v* fails here.
+      - name: the tag is v<VERSION> or v<VERSION>-rc.<n>
+        id: tag
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          want="v$(tr -d '[:space:]' <VERSION)"
-          if [ "${TAG}" != "${want}" ]; then
-            echo "::error::tag ${TAG}, but VERSION says ${want}" >&2
+          version="$(tr -d '[:space:]' <VERSION)"
+          if [[ ${TAG} == "v${version}" ]]; then
+            deb="${version}"
+            prerelease=false
+          elif [[ ${TAG} =~ ^v${version//./\\.}-rc\.([0-9]+)$ ]]; then
+            deb="${version}~rc.${BASH_REMATCH[1]}"
+            prerelease=true
+          else
+            echo "::error::tag ${TAG}, but VERSION says v${version} or v${version}-rc.<n>" >&2
             exit 1
           fi
+          echo "deb=${deb}" >>"${GITHUB_OUTPUT}"
+          echo "prerelease=${prerelease}" >>"${GITHUB_OUTPUT}"
 
-      # The same build CI checks, its tests included, from the tagged commit.
+      # Only the packages' own test, from the tagged commit: their file
+      # lists, control fields, stamped version and postinst. Not the rest of
+      # what CI's build runs.
       - name: bazel test //deb:deb_test
         run: bazel test --config=ci //deb:deb_test
+
+      # The stamp reads the tag from the checkout (bazel/workspace_status.sh):
+      # a tree it does not take for the tagged commit stamps a snapshot
+      # version, which this release must not carry. deb_test holds both
+      # packages to this file.
+      - name: the packages carry the tag's version
+        env:
+          WANT: ${{ steps.tag.outputs.deb }}
+        run: |
+          got="$(cat bazel-bin/deb/deb_version.txt)"
+          if [[ ${got} != "${WANT}" ]]; then
+            echo "::error::the packages are version ${got}, not ${WANT}" >&2
+            exit 1
+          fi
 
       - name: the packages and their sums
         env:
           OUT: ${{ runner.temp }}/release
+          DEB_VERSION: ${{ steps.tag.outputs.deb }}
         run: |
-          version="$(tr -d '[:space:]' <VERSION)"
           mkdir -p "${OUT}"
           for arch in amd64 arm64; do
-            cp "bazel-bin/deb/redoma_${arch}_deb.deb" "${OUT}/redoma_${version}_${arch}.deb"
+            cp "bazel-bin/deb/redoma_${arch}_deb.deb" "${OUT}/redoma_${DEB_VERSION}_${arch}.deb"
           done
           (cd "${OUT}" && sha256sum redoma_*.deb >SHA256SUMS && cat SHA256SUMS)
+
+      - name: upload the packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages
+          path: ${{ runner.temp }}/release/
+          if-no-files-found: error
+
+  # Publishes what build made. The one job that can write, and it runs no
+  # build: it does not even check the repository out.
+  publish:
+    name: publish
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      # The one permission that creates a release; nothing else is written.
+      contents: write
+    steps:
+      - name: download the packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+          path: ${{ runner.temp }}/release
+
+      - name: the packages are the ones build summed
+        working-directory: ${{ runner.temp }}/release
+        run: sha256sum --check SHA256SUMS
 
       - name: publish the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           OUT: ${{ runner.temp }}/release
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
         run: |
+          flags=()
+          if [[ ${PRERELEASE} == true ]]; then
+            flags+=(--prerelease)
+          fi
           gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --verify-tag \
-            --title "redoma ${TAG}" --generate-notes \
+            --title "redoma ${TAG}" --generate-notes "${flags[@]}" \
             "${OUT}"/redoma_*.deb "${OUT}/SHA256SUMS"
