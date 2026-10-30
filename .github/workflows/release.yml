@@ -1,0 +1,72 @@
+name: release
+
+# A tag v<VERSION> pushed to this repository publishes a GitHub Release with
+# the Debian packages, redoma_<version>_amd64.deb and redoma_<version>_arm64.deb,
+# and their SHA256SUMS. Only the packages: the runtime image bundles Claude
+# Code and is never published (AGENTS.md, "The runtime image").
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    if: github.repository == 'bpalermo/redoma'
+    runs-on: ubuntu-latest
+    permissions:
+      # The one permission that creates a release; nothing else is written.
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: bazel-contrib/setup-bazel@104e3eea9447cdaa4b00d0fb46191a3985d26ab3 # 0.19.1
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          cache-save: false
+
+      # The packages' version is VERSION's: a tag that says otherwise would
+      # publish packages that disagree with their release.
+      - name: the tag is v<VERSION>
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          want="v$(tr -d '[:space:]' <VERSION)"
+          if [ "${TAG}" != "${want}" ]; then
+            echo "::error::tag ${TAG}, but VERSION says ${want}" >&2
+            exit 1
+          fi
+
+      # The same build CI checks, its tests included, from the tagged commit.
+      - name: bazel test //deb:deb_test
+        run: bazel test --config=ci //deb:deb_test
+
+      - name: the packages and their sums
+        env:
+          OUT: ${{ runner.temp }}/release
+        run: |
+          version="$(tr -d '[:space:]' <VERSION)"
+          mkdir -p "${OUT}"
+          for arch in amd64 arm64; do
+            cp "bazel-bin/deb/redoma_${arch}_deb.deb" "${OUT}/redoma_${version}_${arch}.deb"
+          done
+          (cd "${OUT}" && sha256sum redoma_*.deb >SHA256SUMS && cat SHA256SUMS)
+
+      - name: publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          OUT: ${{ runner.temp }}/release
+        run: |
+          gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --verify-tag \
+            --title "redoma ${TAG}" --generate-notes \
+            "${OUT}"/redoma_*.deb "${OUT}/SHA256SUMS"
