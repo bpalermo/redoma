@@ -37,5 +37,8 @@ go_test(
         exclude = ["*_test.go"],
     ),
     embed = [":hook"],
-    deps = ["//common/register"],
+    deps = [
+        "//common/pidfd",
+        "//common/register",
+    ],
 )
