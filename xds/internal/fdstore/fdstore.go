@@ -37,10 +37,10 @@ var ErrNoStore = errors.New("no systemd notify socket (NOTIFY_SOCKET): descripto
 type Notify struct {
 	// Socket is NOTIFY_SOCKET's value: a path, or @ and an abstract name.
 	Socket string
-	// socket is the datagram socket a message is sent on and where to: a
-	// new, unconnected socket and Socket's address, as sd_notify(3) does,
-	// unless a test gives one end of a connected pair (and no address).
-	socket func() (fd int, to unix.Sockaddr, err error)
+	// socket is the datagram socket a message is sent on: a new one, as
+	// sd_notify(3) makes, unless a test gives its own. Where it is sent is
+	// always Socket's address (address).
+	socket func() (fd int, err error)
 }
 
 var _ Store = (*Notify)(nil)
@@ -68,33 +68,38 @@ func (n *Notify) Remove(name string) error {
 // does. (Go's net refuses a WriteMsgUnix on a connected datagram socket,
 // and its unconnected one needs a local address.)
 func (n *Notify) send(state string, oob []byte) error {
+	if n.Socket == "" {
+		return ErrNoStore
+	}
 	open := n.socket
 	if open == nil {
-		if n.Socket == "" {
-			return ErrNoStore
-		}
-		open = n.unconnected
+		open = newSocket
 	}
-	fd, to, err := open()
+	fd, err := open()
 	if err != nil {
 		return fmt.Errorf("systemd's notify socket: %w", err)
 	}
 	defer unix.Close(fd)
-	if err := unix.Sendmsg(fd, []byte(state), oob, to, 0); err != nil {
+	if err := unix.Sendmsg(fd, []byte(state), oob, n.address(), 0); err != nil {
 		return fmt.Errorf("systemd's notify socket %s: %w", n.Socket, err)
 	}
 	return nil
 }
 
-// unconnected is a new datagram socket and the notify socket's address. A
-// leading @ names an abstract socket, which unix.SockaddrUnix writes as a
-// leading NUL, as sd_notify(3) reads NOTIFY_SOCKET.
-func (n *Notify) unconnected() (int, unix.Sockaddr, error) {
+// newSocket is a new, unconnected datagram socket.
+func newSocket() (int, error) {
 	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
-		return 0, nil, os.NewSyscallError("socket", err)
+		return 0, os.NewSyscallError("socket", err)
 	}
-	return fd, &unix.SockaddrUnix{Name: n.Socket}, nil
+	return fd, nil
+}
+
+// address is the notify socket's. A leading @ names an abstract socket,
+// which unix.SockaddrUnix writes as a leading NUL, as sd_notify(3) reads
+// NOTIFY_SOCKET.
+func (n *Notify) address() *unix.SockaddrUnix {
+	return &unix.SockaddrUnix{Name: n.Socket}
 }
 
 // validName is what systemd takes as an FDNAME: at most 255 characters,

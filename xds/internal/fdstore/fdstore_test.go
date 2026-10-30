@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"syscall"
 	"testing"
+	"time"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 
@@ -57,37 +59,54 @@ func TestAddAndRemove(t *testing.T) {
 	addAndRemove(t, &Notify{Socket: path}, conn)
 }
 
-// TestAddAndRemoveOverAPair is TestAddAndRemove over a socket pair, which
-// the agents' sandbox allows.
-func TestAddAndRemoveOverAPair(t *testing.T) {
-	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_DGRAM|syscall.SOCK_CLOEXEC, 0)
+// TestAddAndRemoveUnconnected is TestAddAndRemove where socket(2) is
+// refused (the agents' sandbox): a datagram socket pair, its receiving end
+// bound to an abstract name and both ends then dissolved (connect with
+// AF_UNSPEC), leaves a sender that is truly unconnected, as a new socket
+// is. Notify sends on it exactly as in production, to the address it
+// derives from Socket.
+func TestAddAndRemoveUnconnected(t *testing.T) {
+	sender, conn, name := unconnectedPair(t)
+	n := &Notify{Socket: name, socket: func() (int, error) { return unix.Dup(sender) }}
+	addAndRemove(t, n, conn)
+}
+
+// unconnectedPair is a datagram socket pair dissolved into an unconnected
+// sender and a receiver bound to a fresh abstract name (@...).
+func unconnectedPair(t *testing.T) (sender int, receiver *net.UnixConn, name string) {
+	t.Helper()
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	conns := make([]*net.UnixConn, 2)
-	for i, fd := range fds {
-		f := os.NewFile(uintptr(fd), "socket")
-		c, err := net.FileConn(f)
-		f.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { c.Close() })
-		conns[i] = c.(*net.UnixConn)
+	name = "@redoma-fdstore-test-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	if err := unix.Bind(fds[1], &unix.SockaddrUnix{Name: name}); err != nil {
+		t.Fatal(err)
 	}
-	// The send path is the production one, sendmsg(2) with the descriptors
-	// (Notify.send); only the socket differs: a duplicate of the pair's
-	// connected end, closed after each send, and no address.
-	socket := func() (int, unix.Sockaddr, error) {
-		f, err := conns[0].File()
-		if err != nil {
-			return 0, nil, err
-		}
-		defer f.Close()
-		fd, err := unix.Dup(int(f.Fd()))
-		return fd, nil, err
+	for _, fd := range fds {
+		dissolve(t, fd)
 	}
-	addAndRemove(t, &Notify{socket: socket}, conns[1])
+	t.Cleanup(func() { unix.Close(fds[0]) })
+	f := os.NewFile(uintptr(fds[1]), "receiver")
+	c, err := net.FileConn(f)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	return fds[0], c.(*net.UnixConn), name
+}
+
+// dissolve disconnects a datagram socket: connect(2) to AF_UNSPEC.
+func dissolve(t *testing.T, fd int) {
+	t.Helper()
+	sa := unix.RawSockaddr{Family: unix.AF_UNSPEC}
+	if _, _, errno := unix.Syscall(unix.SYS_CONNECT, uintptr(fd), uintptr(unsafe.Pointer(&sa)), unsafe.Sizeof(sa)); errno != 0 {
+		t.Fatalf("connect(AF_UNSPEC): %v", errno)
+	}
+	if _, err := unix.Getpeername(fd); err == nil {
+		t.Fatal("still connected after connect(AF_UNSPEC)")
+	}
 }
 
 func addAndRemove(t *testing.T, n *Notify, conn *net.UnixConn) {
@@ -180,17 +199,36 @@ func TestListened(t *testing.T) {
 	}
 }
 
-// TestAbstractAddress: NOTIFY_SOCKET's @ names an abstract socket, which
-// the address carries as unix.SockaddrUnix writes it (a leading NUL).
+// TestAbstractAddress: NOTIFY_SOCKET's @ names an abstract socket, whose
+// address starts with a NUL on the wire: the receiver bound to Notify's
+// address reports, raw, a NUL then the rest of the name, and gets what
+// Notify sends.
 func TestAbstractAddress(t *testing.T) {
-	n := &Notify{Socket: "@/org/example/notify"}
-	fd, to, err := n.unconnected()
-	sockettest.SkipIfRefused(t, err)
+	sender, conn, name := unconnectedPair(t)
+	var raw unix.RawSockaddrUnix
+	size := uint32(unsafe.Sizeof(raw))
+	rc, err := conn.SyscallConn()
 	if err != nil {
 		t.Fatal(err)
 	}
-	unix.Close(fd)
-	if sa, ok := to.(*unix.SockaddrUnix); !ok || sa.Name != "@/org/example/notify" {
-		t.Errorf("address %#v", to)
+	var errno unix.Errno
+	if err := rc.Control(func(fd uintptr) {
+		_, _, errno = unix.Syscall(unix.SYS_GETSOCKNAME, fd, uintptr(unsafe.Pointer(&raw)), uintptr(unsafe.Pointer(&size)))
+	}); err != nil || errno != 0 {
+		t.Fatalf("getsockname: %v, %v", err, errno)
+	}
+	path := make([]byte, 0, len(name))
+	for _, c := range raw.Path[:int(size)-2] {
+		path = append(path, byte(c))
+	}
+	if len(path) == 0 || path[0] != 0 || string(path[1:]) != name[1:] {
+		t.Errorf("the bound address is %q, want a NUL then %q", path, name[1:])
+	}
+	n := &Notify{Socket: name, socket: func() (int, error) { return unix.Dup(sender) }}
+	if err := n.Remove("c0ffee"); err != nil {
+		t.Fatal(err)
+	}
+	if state, _ := receive(t, conn); state != "FDSTOREREMOVE=1\nFDNAME=c0ffee\n" {
+		t.Errorf("received %q", state)
 	}
 }
