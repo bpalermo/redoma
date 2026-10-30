@@ -1,5 +1,5 @@
 # //runtime:base_test_<arch>: what only the base has, and what it must not.
-# It is published, public: nothing of Claude Code is in it (base_deps_test
+# It is to be published, public: nothing of Claude Code is in it (base_deps_test
 # holds its build graph to that as well).
 schemaVersion: 2.0.0
 

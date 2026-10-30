@@ -214,22 +214,23 @@ credential mode; it is not implemented yet.
 The agents run an image with `redoma-shim` as its entrypoint and Claude
 Code's native binary in it. It comes in two parts:
 
-- **`redoma-base`**, published, public, with every release from
-  v0.1.0-rc.2 on: `ghcr.io/bpalermo/redoma-base:<version>`, for amd64 and
-  arm64. Debian bookworm with git, jq, python3, ripgrep, a shell and the
+- **`redoma-base`** will be published, public, with every release from
+  v0.1.0-rc.2 on, once the release workflow pushes it:
+  `ghcr.io/bpalermo/redoma-base:<version>`, for amd64 and arm64. Until
+  then, build it with `//runtime:base_load`. Debian bookworm with git, jq, python3, ripgrep, a shell and the
   usual tools, the CA bundle, and `redoma-shim` as the entrypoint. No
   Claude Code. Its `org.opencontainers.image.version` label is the version
   of the redoma package of the same release (`0.1.0~rc.2` for the image
-  tagged `0.1.0-rc.2`). Each release's notes on GitHub give the image's
-  digest, and the image has a build provenance attestation.
+  tagged `0.1.0-rc.2`). Each release's notes on GitHub will give the
+  image's digest, and the image will have a build provenance attestation.
 - **Claude Code**, which you download yourself under Anthropic's terms, and
   you are responsible for complying with them. That is why redoma never
   publishes an image containing it. You add it in an image of your own
   built FROM the base, and keep that image local or in a private registry
   of your own.
 
-An image of your own, pinned to the base's digest from its release's notes,
-with Claude Code's native binary for the image's architecture (`package/claude`
+Once the base is published, an image of your own, pinned to the base's
+digest from its release's notes, with Claude Code's native binary for the image's architecture (`package/claude`
 of the npm package `@anthropic-ai/claude-code-linux-x64` or `-arm64`,
 unmodified) next to the Containerfile. An image inherits its base's
 labels, so it sets its own: otherwise it would claim the base's Apache-2.0
