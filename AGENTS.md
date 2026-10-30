@@ -800,7 +800,7 @@ package is added to that list.
 `runtime/` builds two images with rules_img and no Containerfile, each for
 linux/amd64 and linux/arm64 (an index of both):
 
-- `//runtime:base_index`, **redoma-base**, nothing proprietary in it:
+- `//runtime:base_index`, **redoma-base**, with no Claude Code in it:
   - Debian bookworm packages (`ca-certificates`, `git`, `jq`, `python3`,
     `ripgrep`, and a shell with the usual tools; MODULE.bazel, `apt`) and
     their whole dependency closure, for both architectures, resolved by
@@ -861,8 +861,10 @@ linux/amd64 and linux/arm64 (an index of both):
   architectures' version label to `deb_version.txt` and the tag to it.
   `//runtime:claude_code_test` checks that each tarball is the version
   pinned and the architecture it was fetched for.
-- **The runtime image is never published from here.** Claude Code is
-  proprietary: whoever runs redoma builds the image
+- **The runtime image is never published from here.** Whoever runs
+  redoma downloads Claude Code under Anthropic's terms and is responsible
+  for complying with them, which is why redoma never publishes an image
+  containing it: they build the image
   (`//runtime:image_load`, or one of their own FROM the base, README.md)
   and pushes it to a private registry of their own, never a public one: it
   carries Claude Code's binary. It has no push target,

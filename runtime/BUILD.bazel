@@ -2,12 +2,14 @@
 # linux/amd64 and linux/arm64:
 #
 # - redoma-base (:base_index): Debian bookworm packages (MODULE.bazel,
-#   `apt`) and redoma-shim, its entrypoint. Nothing in it is proprietary:
-#   the release workflow publishes it, public, as ghcr.io/bpalermo/redoma-base
+#   `apt`) and redoma-shim, its entrypoint. No Claude Code: the release
+#   workflow publishes it, public, as ghcr.io/bpalermo/redoma-base
 #   (:base_push), so an image of one's own can start FROM it.
 # - redoma-runtime (:image_index): the base and Claude Code's native binary
-#   (MODULE.bazel, `claude_code`), the example of such an image. Claude Code
-#   is proprietary: this image is built by its user, loaded into their own
+#   (MODULE.bazel, `claude_code`), the example of such an image. Its user
+#   downloads Claude Code under Anthropic's terms and is responsible for
+#   complying with them, which is why redoma never publishes an image
+#   containing it: this image is built by its user, loaded into their own
 #   Podman (:image_load) or pushed to a private registry of their own, never
 #   a public one, and never published from this repository. It has no push
 #   target, nothing outside this package can reach its index (private
@@ -146,7 +148,7 @@ genrule(
     cmd = "tr '~' - <$< >$@",
 )
 
-# redoma-base: no Claude Code, nothing proprietary.
+# redoma-base: no Claude Code.
 image_manifest(
     name = "base_manifest",
     entrypoint = ["/usr/local/bin/redoma-shim"],
