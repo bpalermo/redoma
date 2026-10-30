@@ -860,9 +860,29 @@ and no Containerfile, for linux/amd64 and linux/arm64:
     stamped `deb_version.txt` is the tag's version. It then uploads
     `redoma_<asset version>_{amd64,arm64}.deb` and their `SHA256SUMS` as an
     artifact (`bazel/release-assets.sh`).
-  - Its `publish` job, the only one with `contents: write`, checks the sums,
-    creates the GitHub Release as a draft, checks that its assets carry
-    exactly the names the job uploaded, and only then publishes it.
+  - Its `publish` job, the only one with `contents: write`, checks the sums
+    and that the tag has no release yet, published or draft. It creates the
+    GitHub Release as a draft and checks that GitHub holds exactly the
+    uploaded assets: each name, and each asset's `digest` against its line
+    in `SHA256SUMS` (and `SHA256SUMS`'s own sum). Only then does it publish
+    the release.
+  - When the job fails after it created the draft, its last step deletes
+    that draft (only a draft: a published release is never deleted, and the
+    tag stays), and the failed jobs can be re-run (`gh run rerun <run id>
+    --failed`) once the cause is fixed.
+
+  If a draft is still there anyway (the clean-up itself failed, or the run
+  was cancelled), a re-run stops at "no release of the tag yet". Make sure
+  it is a draft, delete it, keep the tag, and re-run:
+
+  ```bash
+  gh release view <tag> -R bpalermo/redoma --json isDraft   # must say true
+  gh release delete <tag> -R bpalermo/redoma --yes          # no --cleanup-tag
+  gh run rerun <run id> -R bpalermo/redoma --failed
+  ```
+
+  A release that was published is never deleted to retry it: a bad
+  candidate is followed by the next one, `-rc.<n+1>`.
 
   A tag `v<VERSION>-rc.<n>` does the same as a prerelease, its packages
   versioned `<VERSION>~rc.<n>`. Any other `v*` tag fails the run

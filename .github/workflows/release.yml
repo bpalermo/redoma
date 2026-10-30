@@ -119,10 +119,28 @@ jobs:
         working-directory: ${{ runner.temp }}/release
         run: sha256sum --check SHA256SUMS
 
+      # No release of this tag yet, published or draft: a published one is
+      # never replaced, and with no draft before this run every draft of
+      # the tag below is this run's own, the one the read-back checks and
+      # the clean-up deletes. A draft left by an earlier run stops here
+      # (AGENTS.md, "Pull requests": a failed release).
+      - name: no release of the tag yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          found="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+            --jq '.[] | select(.tag_name == env.TAG) | "\(.html_url) draft=\(.draft)"')"
+          if [[ -n ${found} ]]; then
+            echo "::error::${TAG} already has a release: ${found//$'\n'/, }" >&2
+            exit 1
+          fi
+
       # A draft first: the release is published only once GitHub holds its
-      # assets under exactly the names SHA256SUMS lists. A rewritten name
-      # leaves the draft unpublished, and the run failed.
+      # assets under exactly the names and digests SHA256SUMS lists. A
+      # mismatch fails the run, and the clean-up deletes the draft.
       - name: draft the release
+        id: draft
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -137,22 +155,58 @@ jobs:
             --draft --title "redoma ${TAG}" --generate-notes "${flags[@]}" \
             "${OUT}"/redoma_*.deb "${OUT}/SHA256SUMS"
 
-      - name: the uploaded names are the ones summed
+      # Every asset of the draft, as GitHub holds it, by name and by the
+      # sha256 GitHub computed (its `digest`), against SHA256SUMS and the
+      # sum of SHA256SUMS itself: nothing renamed, missing, extra or
+      # altered.
+      - name: the uploaded assets are the ones summed
+        id: check
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           OUT: ${{ runner.temp }}/release
         run: |
-          want="$(cd "${OUT}" && ls redoma_*.deb SHA256SUMS | sort)"
-          got="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" \
-            --json assets --jq '.assets[].name' | sort)"
-          if [[ ${got} != "${want}" ]]; then
-            echo "::error::the release's assets are named: ${got//$'\n'/ }; SHA256SUMS needs: ${want//$'\n'/ }" >&2
+          id="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+            --jq '.[] | select(.tag_name == env.TAG and .draft) | .id')"
+          if [[ ! ${id} =~ ^[0-9]+$ ]]; then
+            echo "::error::want one draft of ${TAG}, found: ${id:-none}" >&2
             exit 1
           fi
+          want="$(cd "${OUT}" && { cat SHA256SUMS; sha256sum SHA256SUMS; } | sort)"
+          got="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${id}/assets" \
+            --jq '.[] | "\(.digest // "no-digest" | ltrimstr("sha256:"))  \(.name)"' | sort)"
+          if [[ ${got} != "${want}" ]]; then
+            echo "::error::the draft's assets do not match SHA256SUMS (< summed, > uploaded):" >&2
+            diff <(echo "${want}") <(echo "${got}") >&2 || true
+            exit 1
+          fi
+          echo "id=${id}" >>"${GITHUB_OUTPUT}"
 
       - name: publish the release
         env:
           GH_TOKEN: ${{ github.token }}
+          ID: ${{ steps.check.outputs.id }}
+        run: |
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${ID}" \
+            -F draft=false --jq '.html_url'
+
+      # A run that fails once the draft step has run deletes the tag's draft,
+      # which "no release of the tag yet" proved is this run's own, so the
+      # failed jobs can be re-run. Only a draft: a published release is
+      # never deleted, and the tag stays.
+      - name: delete the draft
+        if: failure() && steps.draft.outcome != 'skipped'
+        env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
+        run: |
+          ids="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+            --jq '.[] | select(.tag_name == env.TAG and .draft) | .id')"
+          for id in ${ids}; do
+            release="repos/${GITHUB_REPOSITORY}/releases/${id}"
+            # Read again just before: a release published since is kept.
+            if [[ "$(gh api "${release}" --jq '.draft')" == true ]]; then
+              gh api -X DELETE "${release}"
+              echo "deleted the draft ${id} of ${TAG}; the tag stays"
+            fi
+          done
