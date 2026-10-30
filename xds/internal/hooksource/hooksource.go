@@ -460,7 +460,10 @@ func (s *Source) register(ctx context.Context, req register.Request, file *os.Fi
 		}
 		return err
 	}
-	s.Log.Info("hook registration", "container", req.Container, "agent", r.Agent, "netns", r.Netns)
+	s.Log.Info("hook registration", "container", req.Container, "agent", r.Agent, "netns", r.Netns, "pidfd", r.proc != nil)
+	if r.proc == nil {
+		s.Log.Warn("hook registration without its container's pidfd (the hook could not bind the process); in Broker mode the agent gets no SVID", "container", req.Container, "agent", r.Agent)
+	}
 
 	select {
 	case err = <-bound:

@@ -27,7 +27,9 @@ import (
 //     the pidfd's process's.
 //
 // redoma xds names the process to SPIRE by this pidfd's PID and checks it
-// is still alive after each attestation.
+// is still alive after each attestation. A process that fails these checks
+// is registered without a pidfd (CreateRuntime): in Broker mode its agent
+// then gets no SVID.
 func BindProcess(pid int, netns, container string) (*os.File, error) {
 	return processBinder{proc: "/proc"}.bind(pid, netns, container)
 }

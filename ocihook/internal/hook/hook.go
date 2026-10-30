@@ -334,8 +334,8 @@ type Hook struct {
 	Timeout time.Duration
 	Mount   Mounter
 	// BindProcess opens a pidfd for the container's process, the one whose
-	// network namespace is mounted at netns; nil is BindProcess. A test's
-	// may return no file, and the request then announces none.
+	// network namespace is mounted at netns; nil is BindProcess. An error,
+	// or no file (a test's), registers the container without one.
 	BindProcess func(pid int, netns, container string) (*os.File, error)
 	// Dial connects to the control plane's registration socket.
 	Dial func(ctx context.Context) (net.Conn, error)
@@ -394,14 +394,18 @@ func (h *Hook) CreateRuntime(ctx context.Context, st State) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, h.Timeout)
 	defer cancel()
+	// A process that cannot be bound is registered without its pidfd: in
+	// Delegated mode nothing needs one, and in Broker mode redoma xds then
+	// serves the agent no SVID (it fails closed). The start does not depend
+	// on a check (the cgroup's) only a host can confirm.
 	proc, err := h.bindProcess()(st.Pid, target, st.ID)
-	if err == nil {
-		err = h.call(ctx, register.Request{Op: register.OpRegister, Container: st.ID, Agent: name, Netns: target, Pidfd: proc != nil}, proc)
-		if proc != nil {
-			proc.Close()
-		}
-	} else {
-		err = fmt.Errorf("the container's process: %w", err)
+	if err != nil {
+		h.logf("container %s: its process cannot be bound to a pidfd (%v); registering it without one, so in Broker mode agent %s gets no SVID", st.ID, err, name)
+		proc = nil
+	}
+	err = h.call(ctx, register.Request{Op: register.OpRegister, Container: st.ID, Agent: name, Netns: target, Pidfd: proc != nil}, proc)
+	if proc != nil {
+		proc.Close()
 	}
 	if err == nil {
 		h.logf("container %s is agent %s, its listeners bound in %s", st.ID, name, target)

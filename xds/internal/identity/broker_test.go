@@ -194,7 +194,8 @@ func TestBrokerDiscardsAnAnswerAfterTheProcessExited(t *testing.T) {
 	}
 }
 
-// TestBrokerWithoutAProcess: an agent with no pidfd (a launcher's, or one
+// TestBrokerWithoutAProcess: an agent with no pidfd (a launcher's, one the
+// hook could not bind a process for, or one
 // whose pidfd was lost) is never named to SPIRE.
 func TestBrokerWithoutAProcess(t *testing.T) {
 	b, fake := newBroker(t)

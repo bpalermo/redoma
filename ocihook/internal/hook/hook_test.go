@@ -319,25 +319,29 @@ func TestCreateRuntimeSendsThePidfd(t *testing.T) {
 	}
 }
 
-// TestCreateRuntimeRefusesAnUnboundProcess: a process BindProcess refuses
-// (its PID reused) fails the start before any register, and the mount is
-// undone.
-func TestCreateRuntimeRefusesAnUnboundProcess(t *testing.T) {
+// TestCreateRuntimeRegistersAnUnboundProcess: a process BindProcess
+// cannot bind (its cgroup, its namespace, its life) does not fail the
+// start: the container is registered without a pidfd, which in Broker mode
+// gets it no SVID, and the failure is logged.
+func TestCreateRuntimeRegistersAnUnboundProcess(t *testing.T) {
 	cp := &fakeCP{answer: func(register.Request) string { return "" }}
 	m := &fakeMounter{mounted: map[string]int{}}
-	h, _ := newHook(cp, m)
+	h, log := newHook(cp, m)
 	h.BindProcess = func(int, string, string) (*os.File, error) {
-		return nil, errors.New("its network namespace is not the one mounted: the PID was reused")
+		return nil, errors.New("its cgroup is not container " + cid + "'s")
 	}
-	err := h.CreateRuntime(t.Context(), state(t, true))
-	if err == nil || !strings.Contains(err.Error(), "PID was reused") {
-		t.Fatalf("CreateRuntime = %v, want the binding's error", err)
+	if err := h.CreateRuntime(t.Context(), state(t, true)); err != nil {
+		t.Fatalf("CreateRuntime = %v, want the start to go on", err)
 	}
-	if m.has("/run/netns/redoma-oci-" + cid) {
-		t.Error("the namespace is still mounted")
+	if !m.has("/run/netns/redoma-oci-" + cid) {
+		t.Error("the namespace is not mounted")
 	}
-	if got := strings.Join(cp.ops(), ","); got != "unregister" {
-		t.Errorf("requests %s, want only the undo's unregister", got)
+	want := register.Request{Op: register.OpRegister, Container: cid, Agent: "beta", Netns: "/run/netns/redoma-oci-" + cid}
+	if len(cp.requests) != 1 || cp.requests[0] != want {
+		t.Errorf("requests %+v, want %+v (no pidfd)", cp.requests, want)
+	}
+	if !strings.Contains(log.String(), "cannot be bound") || !strings.Contains(log.String(), cid) {
+		t.Errorf("log %q, want the failure and the container", log.String())
 	}
 }
 

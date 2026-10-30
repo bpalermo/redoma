@@ -253,3 +253,19 @@ func maps(a, b map[string]bool) bool {
 	}
 	return true
 }
+
+// TestRegisterWithoutAPidfd: a register the hook could not bind a process
+// for is accepted, its agent without a Process (which in Broker mode gets
+// it no SVID: identity's TestBrokerWithoutAProcess), and nothing is stored.
+func TestRegisterWithoutAPidfd(t *testing.T) {
+	store := &fakeStore{kept: map[string]int{}}
+	var mu sync.Mutex
+	e := newEnvWith(t, "", withPidfds(store, map[string]*os.File{}, &mu))
+	ev := e.registered(t, cidA, "beta", 7)
+	if ev.Agent.Process != nil {
+		t.Errorf("agent %+v, want no process", ev.Agent)
+	}
+	if store.held(cidA) != 0 {
+		t.Error("something was stored for a register without a pidfd")
+	}
+}

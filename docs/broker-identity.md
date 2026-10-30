@@ -60,10 +60,14 @@ SubscribeToX509SVID stream -> redoma xds checks pidfd and SPIFFE ID -> SDS -> En
    the namespace from the container's init PID, it opens a pidfd for that
    PID (`pidfd_open(2)`) and binds it to the process exactly (see "Binding
    the pidfd"). It sends the pidfd with its registration request, as
-   `SCM_RIGHTS` ancillary data on the registration socket.
+   `SCM_RIGHTS` ancillary data on the registration socket. A process it
+   cannot bind does not stop the container: the hook logs why and registers
+   it without a pidfd.
 3. **redoma xds** receives the pidfd with the request, from root only (the
    socket's peer check is unchanged), and accepts the registration if the
-   descriptor is a pidfd of a live process. It keeps the pidfd for as long
+   descriptor is a pidfd of a live process; a registration without one is
+   accepted and logged, and in Broker mode that agent gets no SVID (it
+   fails closed). It keeps the pidfd for as long
    as the agent is registered, in its own table and in systemd's file
    descriptor store, so a restart of `redoma xds` gets it back (see "The
    file descriptor store"). The PID it names in a Broker request is the
@@ -270,8 +274,15 @@ If the held process was killed (by root, or the OOM killer) and its PID
 reused before step 1, the hook mounted the other process's namespace, and
 step 3's cgroup is not the container's. If the PID was reused between steps
 1 and 2, step 3's namespace differs. If after step 2, the pidfd reports the
-process exited. Each way the hook refuses the container's start. A pidfd
-that passes refers to the container's own process, with no start-time
+process exited. Each way the hook logs the failure and registers the
+container without a pidfd: the start goes on, in Delegated mode exactly as
+before, and in Broker mode `redoma xds` serves that agent no SVID and logs
+which container. A failed bind never fails the start, because the cgroup
+check rests on the runtime having moved the process into its cgroup by
+createRuntime, which only a host can confirm (see the migration's step 3).
+The hook's security refusals are unchanged and still fail the start: a
+host PID namespace, a joined namespace, a forbidden mount. A pidfd that
+passes refers to the container's own process, with no start-time
 comparison, and `redoma xds` never needs to read another process's `/proc`:
 the unit keeps `ProtectProc=invisible`. Should a check above ever miss,
 the SPIFFE ID filter still keeps another container's SVID from being
@@ -469,7 +480,12 @@ A host moves one step at a time; until the last, setting
    second.
 3. Upgrade redoma to a version with Broker mode. Its hook sends a pidfd; a
    registration made by an older hook has none, so restart the agents, now
-   with `--label redoma.agent=<name>` next to the annotation.
+   with `--label redoma.agent=<name>` next to the annotation. Then check
+   that each registration carries its pidfd: `redoma xds` logs every hook
+   registration with `pidfd=true` or `false`, and the hook logs any process
+   it could not bind. A `false` means the runtime had not moved the
+   container's process into its `libpod-<id>` cgroup by createRuntime, or
+   another check failed: do not go on to step 4 until it is understood.
 4. Set `identity_api = broker` and restart `redoma xds`. Envoy keeps its
    listeners and the SVIDs it holds across the restart; each agent's SVID
    is then served from a Broker stream. Check that every agent's relay
