@@ -807,12 +807,19 @@ linux/amd64 and linux/arm64 (an index of both):
     rules_distroless from snapshot.debian.org at one instant and fetched by
     sha256; Bazel keeps the resolution in `MODULE.bazel.lock`. No
     maintainer script runs: `//runtime` makes what they would (the CA
-    bundle, `/etc/passwd` and `/etc/group` with root and nobody, dpkg's
-    status for scanners), plus Debian's `/etc/nsswitch.conf` (`hosts: files
+    bundle, `/etc/passwd` and `/etc/group` with root and nobody, and
+    `/var/lib/dpkg/status`, what scanners read), plus Debian's `/etc/nsswitch.conf` (`hosts: files
     dns`, so localhost never waits on DNS) and an `/etc/hosts` with
     localhost, the base Podman writes a container's hosts file from
     (without it Podman takes the host's). New packages: move the snapshot
     in MODULE.bazel and run `bazel mod tidy`.
+  - `/var/lib/dpkg/status` names every package installed, dependencies
+    included: rules_distroless writes it from the packages `apt.install`
+    lists only, so MODULE.bazel lists the whole resolved closure.
+    `//runtime:dpkg_status_test_amd64` and `_arm64` hold the file to the
+    packages installed (each with Version, Architecture and Status) and
+    name what is missing on either side; a snapshot that adds a
+    dependency fails there until it is listed.
   - `redoma-shim` at `/usr/local/bin/redoma-shim`, the entrypoint, built in
     the same graph for the same platform.
   - The config has no environment but `PATH`, no user (the container's
@@ -855,10 +862,13 @@ linux/amd64 and linux/arm64 (an index of both):
   and `_arm64` check each image's structure per architecture (paths, modes,
   owners, the entrypoint, `PATH`, the labels, the dynamic loader) from its
   config and file listing: `image_test.yaml` what both have,
-  `base_test.yaml` the base's (no claude, no Claude Code path),
-  `runtime_test.yaml` the runtime image's. `//runtime:base_deps_test`
-  holds the base's whole build graph, its push included, to no target of
-  Claude Code's (a `genquery`), and `//runtime:base_version_test` both
+  `base_test.yaml` the base's (no claude at a few fixed paths only),
+  `runtime_test.yaml` the runtime image's. A Claude Code binary at another
+  path is caught by `//runtime:base_tree_test_amd64` and `_arm64` (no file
+  named `claude*` or with `anthropic` in its path, at any path of the
+  base's packages and system files) and by `//runtime:base_deps_test`,
+  which holds the base's whole build graph, its push included, to no
+  target of Claude Code's (a `genquery`). `//runtime:base_version_test` holds both
   architectures' version label to `deb_version.txt` and the tag to it.
   `//runtime:claude_code_test` checks that each tarball is the version
   pinned and the architecture it was fetched for.
@@ -867,12 +877,12 @@ linux/amd64 and linux/arm64 (an index of both):
   for complying with them, which is why redoma never publishes an image
   containing it: they build the image
   (`//runtime:image_load`, or one of their own FROM the base, README.md)
-  and pushes it to a private registry of their own, never a public one: it
+  and push it to a private registry of their own, never a public one: it
   carries Claude Code's binary. It has no push target,
   `//runtime:image_index` is private to its package so none can be added
   elsewhere, and CI only builds it, when its inputs change. Nothing of
-  Claude Code's ever goes into the base: `base_deps_test` and
-  `base_test.yaml` fail on it.
+  Claude Code's ever goes into the base: `base_deps_test`,
+  `base_tree_test_*` and `base_test.yaml` fail on it.
 - **Bumping Claude Code** is one change to `claude_code(...)` in
   MODULE.bazel: `version`, and the `sha256` of each tarball. A wrong hash
   fails the fetch; a tarball of another version or architecture fails

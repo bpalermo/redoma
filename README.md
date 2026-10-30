@@ -283,9 +283,10 @@ among them the GNU C Library (LGPL-2.1+), bash, coreutils and git (GPL),
 and python3 (PSF). Each package's license is in the image at
 `/usr/share/doc/<package>/copyright`, and the GPL and LGPL texts in
 `/usr/share/common-licenses`. The exact version of every package, its
-dependencies included, is in `MODULE.bazel.lock` at the image's revision
-(the `org.opencontainers.image.revision` label; the apt extension's
-resolution, per architecture). The source of each is Debian's source
+dependencies included, and its source package are in the image's
+`/var/lib/dpkg/status` (what image scanners read), and in
+`MODULE.bazel.lock` at the image's revision (the
+`org.opencontainers.image.revision` label). The source of each is Debian's source
 package of that version, kept on snapshot.debian.org
 (`https://snapshot.debian.org/package/<source package>/<version>/`).
 

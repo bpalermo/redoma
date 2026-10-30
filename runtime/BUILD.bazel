@@ -16,7 +16,9 @@
 #   target, nothing outside this package can reach its index (private
 #   visibility), and CI only builds it.
 #
-# :base_deps_test holds the base, and its push, to no Claude Code at all.
+# :base_deps_test holds the base's build graph, its push included, to no
+# target of Claude Code's; :base_tree_test_<arch> its packages and system
+# files to no file named like it; base_test.yaml checks fixed paths.
 #
 # /etc/claude-code (managed settings) is left out: a host adds its own in an
 # image FROM this one.
@@ -28,6 +30,7 @@ load("@rules_img//img:load.bzl", "image_load")
 load("@rules_img//img:push.bzl", "image_push")
 load("@rules_img//img:test.bzl", "image_structure_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//bazel/platforms:transition.bzl", "platform_files")
 
 PLATFORMS = {
     "amd64": "//bazel/platforms:linux_amd64",
@@ -211,9 +214,10 @@ image_layer(
 
 # redoma-runtime: the base and Claude Code, an image of one's own FROM the
 # base (README.md, "The runtime image"). It keeps the base's entrypoint and
-# PATH, and sets its own labels: inherited, the base's would claim its
-# Apache-2.0 license and name for this image, and its source label would
-# link an image pushed to a private registry to this repository.
+# PATH, and sets its own title, description and license labels and an
+# empty source: inherited, the base's would claim its Apache-2.0 license,
+# name and description for this image, and its source label would link an
+# image pushed to a private registry to this repository.
 image_manifest(
     name = "image_manifest",
     base = ":base_index",
@@ -309,6 +313,59 @@ sh_test(
         "//deb:deb_version",
     ],
 )
+
+# Each architecture's dpkg status (in :system) and the data tarballs of
+# every package installed, built for that architecture, for
+# dpkg_status_test.
+[platform_files(
+    name = "dpkg_status_inputs_" + arch,
+    srcs = [":system"],
+    platform = platform,
+) for arch, platform in PLATFORMS.items()]
+
+[platform_files(
+    name = "packages_flat_" + arch,
+    srcs = ["@bookworm//:flat"],
+    platform = platform,
+) for arch, platform in PLATFORMS.items()]
+
+# No file named like Claude Code at any path of the base's packages and
+# system files: what base_test.yaml's fixed paths would miss.
+[sh_test(
+    name = "base_tree_test_" + arch,
+    srcs = ["base_tree_test.sh"],
+    args = [
+        arch,
+        "$(rlocationpath :packages_flat_%s)" % arch,
+        "$(rlocationpath :dpkg_status_inputs_%s)" % arch,
+    ],
+    data = [
+        ":dpkg_status_inputs_" + arch,
+        ":packages_flat_" + arch,
+    ],
+) for arch in PLATFORMS]
+
+[platform_files(
+    name = "installed_packages_" + arch,
+    srcs = ["@bookworm//:packages"],
+    platform = platform,
+) for arch, platform in PLATFORMS.items()]
+
+# /var/lib/dpkg/status lists every package installed, and only those, with
+# its Version, Architecture and Status: what scanners read.
+[sh_test(
+    name = "dpkg_status_test_" + arch,
+    srcs = ["dpkg_status_test.sh"],
+    args = [
+        arch,
+        "$(rlocationpath :dpkg_status_inputs_%s)" % arch,
+        "$(rlocationpaths :installed_packages_%s)" % arch,
+    ],
+    data = [
+        ":dpkg_status_inputs_" + arch,
+        ":installed_packages_" + arch,
+    ],
+) for arch in PLATFORMS]
 
 sh_test(
     name = "etc_test",
