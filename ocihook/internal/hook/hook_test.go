@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -342,6 +343,29 @@ func TestCreateRuntimeRegistersAnUnboundProcess(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "cannot be bound") || !strings.Contains(log.String(), cid) {
 		t.Errorf("log %q, want the failure and the container", log.String())
+	}
+}
+
+// TestCreateRuntimeRefusesAReusedPID: a process in another container's
+// cgroup proves the PID was reused, maybe before the mount, whose namespace
+// may then be that container's: the start fails before any register, and
+// the mount is undone.
+func TestCreateRuntimeRefusesAReusedPID(t *testing.T) {
+	cp := &fakeCP{answer: func(register.Request) string { return "" }}
+	m := &fakeMounter{mounted: map[string]int{}}
+	h, _ := newHook(cp, m)
+	h.BindProcess = func(int, string, string) (*os.File, error) {
+		return nil, fmt.Errorf("%w: it is in container %s's cgroup", ErrPIDReused, strings.Repeat("e", 64))
+	}
+	err := h.CreateRuntime(t.Context(), state(t, true))
+	if !errors.Is(err, ErrPIDReused) {
+		t.Fatalf("CreateRuntime = %v, want ErrPIDReused", err)
+	}
+	if m.has("/run/netns/redoma-oci-" + cid) {
+		t.Error("the namespace is still mounted")
+	}
+	if got := strings.Join(cp.ops(), ","); got != "unregister" {
+		t.Errorf("requests %s, want only the undo's unregister", got)
 	}
 }
 

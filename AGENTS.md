@@ -466,8 +466,10 @@ definitions in `ocihook/hooks.d` match the default key; a host that changes
   for the container's process and binds it to it (`hook.BindProcess`): its
   network namespace is the one mounted, its cgroup is the container's
   (`libpod-<id>`), and it is still alive after both reads. A process that
-  fails them is logged and registered without a pidfd, never refused: in
-  Broker mode its agent then gets no SVID. The register
+  is in another container's cgroup fails the start (`hook.ErrPIDReused`:
+  its PID was reused, and the namespace mounted may be that container's);
+  one that fails the checks otherwise is logged and registered without a
+  pidfd: in Broker mode its agent then gets no SVID. The register
   carries it as `SCM_RIGHTS` data (`register.WriteRequest`); `redoma xds`
   keeps it in systemd's file descriptor store under the container's ID, so
   a restart gets it back, and gives a name back to its registration only

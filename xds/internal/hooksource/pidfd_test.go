@@ -176,8 +176,10 @@ func TestRestartUnderTheSameID(t *testing.T) {
 	mu.Lock()
 	files[cidA] = second
 	mu.Unlock()
-	// No poststop came for the first run (it can come late, or never).
-	renewed := e.registered(t, cidA, "beta", 8)
+	// No poststop came for the first run (it can come late, or never). The
+	// namespace is left as recorded: a new one at the same path would race the
+	// rescan, which drops a registration whose namespace changed.
+	renewed := e.registered(t, cidA, "beta", 7)
 	if renewed.Agent.Process == nil || !renewed.Agent.Process.Alive() {
 		t.Fatalf("agent %+v, want the second run's live process", renewed.Agent)
 	}
@@ -267,5 +269,31 @@ func TestRegisterWithoutAPidfd(t *testing.T) {
 	}
 	if store.held(cidA) != 0 {
 		t.Error("something was stored for a register without a pidfd")
+	}
+}
+
+// TestReRegisterWithoutAPidfd: a container registered again under the same
+// ID without a pidfd (the hook could not bind its new process) loses the
+// old run's: it is closed, and removed from the store, so a restart of
+// redoma xds cannot give the old run's pidfd to the new run.
+func TestReRegisterWithoutAPidfd(t *testing.T) {
+	f, _ := child(t)
+	store := &fakeStore{kept: map[string]int{}}
+	var mu sync.Mutex
+	e := newEnvWith(t, "", withPidfds(store, map[string]*os.File{cidA: f}, &mu))
+	old := e.registered(t, cidA, "beta", 7)
+	renewed := e.registered(t, cidA, "beta", 7)
+	if renewed.Agent.Process != nil {
+		t.Errorf("agent %+v, want no process", renewed.Agent)
+	}
+	if _, err := old.Agent.Process.PID(); err == nil {
+		t.Error("the first run's pidfd is still open")
+	}
+	if store.held(cidA) != 0 {
+		t.Errorf("the store holds %d descriptors for the container, want none", store.held(cidA))
+	}
+	want := []string{"remove " + cidA, "add " + cidA, "remove " + cidA}
+	if !slices.Equal(store.ops, want) {
+		t.Errorf("store ops %v, want %v", store.ops, want)
 	}
 }

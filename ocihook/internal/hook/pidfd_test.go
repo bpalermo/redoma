@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,7 +63,8 @@ func TestBindProcess(t *testing.T) {
 		"the container's":       {"/proc/self/ns/net", scope, ""},
 		"another namespace":     {other, scope, "not the one mounted"},
 		"another cgroup":        {"/proc/self/ns/net", "0::/user.slice/user-1000.slice/session-1.scope\n", "cgroup is not container"},
-		"another container's":   {"/proc/self/ns/net", "0::/machine.slice/libpod-" + strings.Repeat("e", 64) + ".scope\n", "cgroup is not container"},
+		"another container's":   {"/proc/self/ns/net", "0::/machine.slice/libpod-" + strings.Repeat("e", 64) + ".scope\n", "PID was reused"},
+		"cgroupfs, another's":   {"/proc/self/ns/net", "0::/libpod_parent/libpod-" + strings.Repeat("e", 64) + "\n", "PID was reused"},
 		"no cgroup at all":      {"/proc/self/ns/net", "0::/\n", "cgroup is not container"},
 		"conmon's, not its own": {"/proc/self/ns/net", "0::/machine.slice/libpod-conmon-" + cid + ".scope\n", "cgroup is not container"},
 	} {
@@ -79,6 +81,26 @@ func TestBindProcess(t *testing.T) {
 func TestBindProcessExited(t *testing.T) {
 	if _, err := BindProcess(1<<22+1, "/proc/self/ns/net", cid); err == nil {
 		t.Error("a PID with no process was bound")
+	}
+}
+
+// TestBindProcessReuseIsDistinct: only another container's cgroup is
+// ErrPIDReused, which fails the start; not being in any libpod cgroup yet
+// is not.
+func TestBindProcessReuseIsDistinct(t *testing.T) {
+	pid := sleeper(t)
+	for cgroup, reused := range map[string]bool{
+		"0::/machine.slice/libpod-" + strings.Repeat("e", 64) + ".scope\n": true,
+		"0::/user.slice/user-1000.slice/session-1.scope\n":                 false,
+		"0::/machine.slice/libpod-conmon-" + cid + ".scope\n":              false,
+	} {
+		f, err := processBinder{proc: fakeProcDir(t, pid, "/proc/self/ns/net", cgroup)}.bind(pid, "/proc/self/ns/net", cid)
+		if f != nil {
+			f.Close()
+		}
+		if err == nil || errors.Is(err, ErrPIDReused) != reused {
+			t.Errorf("%q: %v, want reused %v", cgroup, err, reused)
+		}
 	}
 }
 

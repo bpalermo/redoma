@@ -394,16 +394,25 @@ func (h *Hook) CreateRuntime(ctx context.Context, st State) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, h.Timeout)
 	defer cancel()
-	// A process that cannot be bound is registered without its pidfd: in
-	// Delegated mode nothing needs one, and in Broker mode redoma xds then
-	// serves the agent no SVID (it fails closed). The start does not depend
-	// on a check (the cgroup's) only a host can confirm.
+	// A PID found in another container's cgroup was reused, maybe before the
+	// mount, which may then be of another container's namespace: the start
+	// fails. A process that cannot be bound otherwise is registered without
+	// its pidfd: in Delegated mode nothing needs one, and in Broker mode
+	// redoma xds then serves the agent no SVID (it fails closed). The start
+	// does not depend on a check (the container's own cgroup) only a host
+	// can confirm.
 	proc, err := h.bindProcess()(st.Pid, target, st.ID)
-	if err != nil {
+	switch {
+	case errors.Is(err, ErrPIDReused):
+		err = fmt.Errorf("the container's process: %w", err)
+	case err != nil:
 		h.logf("container %s: its process cannot be bound to a pidfd (%v); registering it without one, so in Broker mode agent %s gets no SVID", st.ID, err, name)
 		proc = nil
+		err = nil
 	}
-	err = h.call(ctx, register.Request{Op: register.OpRegister, Container: st.ID, Agent: name, Netns: target, Pidfd: proc != nil}, proc)
+	if err == nil {
+		err = h.call(ctx, register.Request{Op: register.OpRegister, Container: st.ID, Agent: name, Netns: target, Pidfd: proc != nil}, proc)
+	}
 	if proc != nil {
 		proc.Close()
 	}

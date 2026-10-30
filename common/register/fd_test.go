@@ -130,3 +130,39 @@ func TestRequestRefusesAMismatch(t *testing.T) {
 		}
 	})
 }
+
+// TestRequestRefusesExtraDescriptors: a pidfd announced and two sent, or
+// more than ReadRequest makes room for (the kernel truncates the control
+// data: MSG_CTRUNC), is refused, and what was received is closed.
+func TestRequestRefusesExtraDescriptors(t *testing.T) {
+	cid := strings.Repeat("ab", 32)
+	data := []byte(`{"op":"register","container":"` + cid + `","pidfd":true}` + "\n")
+	for name, tc := range map[string]struct {
+		count int
+		want  string
+	}{
+		"two":           {2, "came with 2 descriptors"},
+		"over the room": {maxFiles + 4, "too many descriptors"},
+	} {
+		a, b := pair(t)
+		var fds []int
+		var files []*os.File
+		for range tc.count {
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			files = append(files, r, w)
+			fds = append(fds, int(w.Fd()))
+		}
+		if _, _, err := a.WriteMsgUnix(data, syscall.UnixRights(fds...), nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, f, err := ReadRequest(b); err == nil || f != nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: ReadRequest = %v, %v; want %q", name, f, err, tc.want)
+		}
+		for _, f := range files {
+			f.Close()
+		}
+	}
+}

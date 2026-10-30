@@ -265,6 +265,13 @@ func (s *Source) restoreProcesses() {
 		s.removeStored(name)
 	}
 	s.Stored = nil
+	bound := 0
+	for _, r := range s.regs {
+		if r.proc != nil {
+			bound++
+		}
+	}
+	s.Log.Info("hook registrations read back", "registrations", len(s.regs), "with_pidfd", bound, "without_pidfd", len(s.regs)-bound)
 	for container, r := range s.regs {
 		if r.proc == nil {
 			s.Log.Warn("hook registration without its container's pidfd; in Broker mode the agent gets no SVID until its container is restarted", "container", container, "agent", r.Agent)

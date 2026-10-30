@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -27,9 +28,10 @@ import (
 //     the pidfd's process's.
 //
 // redoma xds names the process to SPIRE by this pidfd's PID and checks it
-// is still alive after each attestation. A process that fails these checks
-// is registered without a pidfd (CreateRuntime): in Broker mode its agent
-// then gets no SVID.
+// is still alive after each attestation. A process in another container's
+// cgroup is ErrPIDReused, which fails the start; one that fails the checks
+// otherwise is registered without a pidfd (CreateRuntime): in Broker mode
+// its agent then gets no SVID.
 func BindProcess(pid int, netns, container string) (*os.File, error) {
 	return processBinder{proc: "/proc"}.bind(pid, netns, container)
 }
@@ -62,19 +64,50 @@ func (b processBinder) check(p *pidfd.FD, dir, netns, container string) error {
 		return err
 	}
 	if !same {
-		return errors.New("its network namespace is not the one mounted: the PID was reused")
+		return errors.New("its network namespace is not the one mounted")
 	}
 	cgroup, err := os.ReadFile(filepath.Join(dir, "cgroup"))
 	if err != nil {
 		return err
 	}
+	if other := otherContainer(string(cgroup), container); other != "" {
+		return fmt.Errorf("%w: it is in container %s's cgroup, not container %s's", ErrPIDReused, other, container)
+	}
 	if !inContainerCgroup(string(cgroup), container) {
-		return fmt.Errorf("its cgroup is not container %s's (libpod-%s): the PID was reused", container, container)
+		return fmt.Errorf("its cgroup is not container %s's (libpod-%s) yet", container, container)
 	}
 	if !p.Alive() {
 		return errors.New("it exited while the hook ran")
 	}
 	return nil
+}
+
+// ErrPIDReused is BindProcess finding the PID in another container's cgroup
+// (libpod-<another ID>): the process the runtime held was replaced, maybe
+// before the hook mounted its namespace, which may then be another
+// container's. CreateRuntime fails the start on it; any other failure to
+// bind only registers the container without a pidfd.
+var ErrPIDReused = errors.New("the container's PID was reused")
+
+// libpodScope is a container's cgroup path element: libpod-<ID>, with
+// .scope (Podman's systemd cgroup manager) or without (cgroupfs).
+var libpodScope = regexp.MustCompile(`^libpod-([0-9a-f]{64})(\.scope)?$`)
+
+// otherContainer is the ID of another container than container whose
+// cgroup a /proc/<pid>/cgroup names, or "".
+func otherContainer(cgroup, container string) string {
+	for line := range strings.Lines(cgroup) {
+		parts := strings.SplitN(strings.TrimSpace(line), ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		for el := range strings.SplitSeq(parts[2], "/") {
+			if m := libpodScope.FindStringSubmatch(el); m != nil && m[1] != container {
+				return m[1]
+			}
+		}
+	}
+	return ""
 }
 
 // samePath reports whether a and b are the same file (device and inode).
