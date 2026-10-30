@@ -42,6 +42,10 @@ bazel mod tidy                  # after changing go.mod or a bazel_dep
 bazel run //redoma -- --version
 ```
 
+Building and testing need Bazel (bazelisk reads `.bazelversion`) on Linux,
+plus `dpkg` and `dpkg-deb` on the host: `//deb:deb_test` and
+`//deb:deb_version_test` read the packages with them and fail without them.
+
 Bazel is the only build. Do not run the host `go` tool, and do not "fix"
 go.mod with `go mod tidy`. Change a Go dependency through rules_go's SDK:
 
@@ -128,7 +132,9 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
   the unix-socket test helpers; `common/version`: the stamped version.
 - `examples/`: an Envoy bootstrap and an SDS secret file, held to the code
   by `//xds/internal/lds:lds_test`.
-- `bazel/` holds build rules and CI scripts.
+- `deb/`: the Debian package of the host side (see "The package").
+- `bazel/` holds build rules and CI scripts; `bazel/platforms` the target
+  platforms and `platform_files`, which builds a target for one of them.
 
 ## Configuration
 
@@ -687,11 +693,61 @@ to `--max-backoff` 30s) and heartbeats every 30s.
 - Never touch `/run/redoma`, `/etc/redoma`, systemd, Podman or SPIRE on the
   host from a test or a script.
 
+## The package
+
+`//deb` builds `redoma_amd64.deb` and `redoma_arm64.deb` (rules_pkg's
+`pkg_deb`), each with the binary cross-built for its architecture
+(`platform_files`). `deb/BUILD.bazel` lists what goes in: the binary, the
+units, the hook's definitions and drop-in, `deb/sysusers.conf` as
+`/usr/lib/sysusers.d/redoma.conf`, `redoma/redoma.conf` and the drop-in as
+conffiles, and the docs (`deb/copyright`, machine-readable) and examples.
+Never the shim, a secret, or anything of SPIRE or Envoy.
+
+The packages' version is stamped (`deb/deb_version.sh`, from VERSION and
+`bazel/workspace_status.sh`):
+
+| Commit | Version |
+|---|---|
+| tagged `v<VERSION>` | `<VERSION>` |
+| tagged `v<VERSION>-rc.<n>` | `<VERSION>~rc.<n>` |
+| after candidate `n` of VERSION | `<VERSION>~rc.<n>.git<commit time>.<sha7>` |
+| any other | `<VERSION>~git<commit time>.<sha7>` |
+| unstamped build | `<VERSION>~dev` |
+
+A snapshot of a tree with uncommitted changes ends in `.dirty`. `~` sorts
+first, so snapshots order by time, a candidate's snapshots sit between it
+and the next candidate, and the release upgrades them all. Bump VERSION
+right after a release, or the next snapshots sort below it.
+`//deb:deb_version_test` holds that order to `dpkg --compare-versions`.
+
+Packages built before the version was stamped are all `0.1.0`, which sorts
+above every `0.1.0~` snapshot: a host that installed one removes it
+(`sudo apt remove redoma`; its conffiles stay) before a snapshot will
+install over it.
+
+The maintainer scripts:
+
+- `postinst` (configure) runs `systemd-sysusers` on the package's file,
+  then fails, naming each, when `redoma-sds`, `redoma-relay` or
+  `redoma-lead` has another id than 961, 963 or 964: the hook refuses those
+  ids to agents and SPIRE attests the services by them, so a package that
+  installs with other ids would leave a host open or broken. It reloads
+  systemd and restarts the services only when they run (an upgrade); it
+  enables nothing and adds no one to `redoma-lead`.
+- `prerm` stops the services on removal; `postrm` reloads systemd. The
+  users, the groups and `/var/lib/redoma-relay` stay.
+
+`//deb:deb_test` holds each package to its exact file list, modes, owners,
+conffiles, control fields and stamped version, checks that its binary is an
+ELF of its architecture, and runs the packaged `postinst` against fake ids. A file added to the
+package is added to that list.
+
 ## Versions
 
 - The binaries are pure Go (`pure = "on"`).
-- `VERSION` is the release being worked towards; the binaries report
-  `git describe` of their commit (`bazel/workspace_status.sh`).
+- `VERSION` is the release being worked towards, the base of the packages'
+  version (see "The package"); the binaries report `git describe` of their commit
+  (`bazel/workspace_status.sh`).
 
 ## Pull requests
 

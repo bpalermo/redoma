@@ -52,7 +52,7 @@ nothing else.
 - SPIRE (server and an agent on the host), for the agents' identities and
   the relay's.
 - Envoy on the host, running as root (it binds inside the agents'
-  namespaces), with the bootstrap of `examples/envoy.yaml`.
+  namespaces), with a bootstrap like `examples/envoy.yaml`.
 - An Anthropic API key for the agents' model calls.
 
 ## Building
@@ -60,28 +60,42 @@ nothing else.
 Bazel is the only build (see AGENTS.md):
 
 ```sh
-bazel build //redoma //shim
+bazel build //deb      # bazel-bin/deb/redoma_amd64.deb and redoma_arm64.deb
 bazel test //...
 ```
 
-`bazel-bin/redoma/redoma_/redoma` is the host binary and
-`bazel-bin/shim/shim_/redoma-shim` the container's entrypoint.
+Every binary is pure Go and cross-builds: both packages build on either
+architecture.
 
 ## Installing
 
-Install the binary, the units, the hook definitions and the settings file:
-
 ```sh
-sudo install -m 0755 bazel-bin/redoma/redoma_/redoma /usr/bin/redoma
-sudo install -m 0644 xds/redoma-xds.service relay/redoma-relay.service /usr/lib/systemd/system/
-sudo install -d /usr/share/containers/oci/hooks.d /etc/containers/containers.conf.d /etc/redoma
-sudo install -m 0644 ocihook/hooks.d/*.json /usr/share/containers/oci/hooks.d/
-sudo install -m 0644 ocihook/containers.conf.d/50-redoma-hooks.conf /etc/containers/containers.conf.d/
-sudo install -m 0644 redoma/redoma.conf /etc/redoma/redoma.conf
+sudo apt install ./redoma_amd64.deb     # or redoma_arm64.deb
 ```
 
+A package's version is VERSION on a release and `<VERSION>~...` on any
+other build, so a newer build always upgrades an older one. A host that
+installed an early package whose version is a bare `0.1.0` from a snapshot
+build removes it first (`sudo apt remove redoma`), or the snapshots sort
+below it.
+
+The package installs:
+
+| Path | What |
+|---|---|
+| `/usr/bin/redoma` | the binary |
+| `/usr/lib/systemd/system/redoma-xds.service`, `redoma-relay.service` | the units, not enabled |
+| `/usr/share/containers/oci/hooks.d/redoma-*.json` | the OCI hook's definitions |
+| `/etc/containers/containers.conf.d/50-redoma-hooks.conf` | keeps Podman reading that directory |
+| `/usr/lib/sysusers.d/redoma.conf` | the services' users and groups |
+| `/etc/redoma/redoma.conf` | the settings, a conffile |
+| `/usr/share/doc/redoma/examples/` | an Envoy bootstrap and the model key's SDS file |
+
+It holds no secret and installs neither SPIRE nor Envoy, nor the agents'
+image.
+
 The services run as system users with fixed ids, which the hook refuses to
-any agent container:
+any agent container and SPIRE's entries attest the services by:
 
 | User / group | uid / gid | What |
 |---|---|---|
@@ -89,11 +103,12 @@ any agent container:
 | `redoma-relay` | 963 | `redoma relay`; its group reaches the agents' socket |
 | `redoma-lead` | 964 (group) | the users who may task agents |
 
+The package makes them, and its installation fails, naming each, when one
+of those names already has another id. It adds no one to `redoma-lead`; a
+lead's user joins it by hand, then logs in again:
+
 ```sh
-sudo groupadd -g 961 redoma-sds && sudo useradd -r -u 961 -g 961 -d / -s /usr/sbin/nologin redoma-sds
-sudo groupadd -g 963 redoma-relay && sudo useradd -r -u 963 -g 963 -d / -s /usr/sbin/nologin redoma-relay
-sudo groupadd -g 964 redoma-lead
-sudo usermod -aG redoma-lead "$USER"    # the lead; log in again for it to apply
+sudo usermod -aG redoma-lead <user>
 ```
 
 ## Configuration

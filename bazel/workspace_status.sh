@@ -36,10 +36,23 @@ fi
 # build can always be traced back.
 version="${release:-$(git describe --tags --always --dirty 2>/dev/null || echo unknown)}"
 
+# The newest candidate of VERSION this commit descends from, for the
+# packages' snapshot versions: a snapshot after v<VERSION>-rc.<n> sorts above it.
+last_rc="$(git tag --merged HEAD --list "v${next}-rc.*" 2>/dev/null | grep -E "^v${next//./\\.}-rc\.[0-9]+$" | sort -t. -k4,4n | tail -1 || true)"
+
+# Whether the tree has uncommitted changes to tracked files.
+dirty=false
+[[ -z "$(git status --porcelain --untracked-files=no 2>/dev/null || echo dirty)" ]] || dirty=true
+
 short="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+# The commit time in UTC, for the packages' snapshot versions (deb/deb_version.sh).
+committed="$(TZ=UTC git show -s --date=format-local:%Y%m%d%H%M%S --format=%cd HEAD 2>/dev/null || echo unknown)"
 
 echo "STABLE_GIT_VERSION ${version}"
 echo "STABLE_RELEASE_TAG ${release:-none}"
 echo "STABLE_GIT_COMMIT ${commit}"
+echo "STABLE_GIT_COMMIT_TIME ${committed}"
+echo "STABLE_LAST_RC_TAG ${last_rc:-none}"
+echo "STABLE_GIT_DIRTY ${dirty}"
 # The commit abbreviated, for an image tag a human reads (redoma-runtime's).
 echo "STABLE_GIT_SHORT_COMMIT ${short}"

@@ -1,0 +1,13 @@
+#!/bin/sh
+# The redoma package's postrm: forget the units. The users, the groups and
+# /var/lib/redoma-relay stay: their ids are attested by SPIRE's entries and
+# the relay's queues are the agents' undelivered work.
+set -eu
+case "${1:-}" in
+remove | purge)
+	if [ -d /run/systemd/system ]; then
+		systemctl daemon-reload || true
+	fi
+	;;
+esac
+exit 0

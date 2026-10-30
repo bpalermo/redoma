@@ -1,0 +1,46 @@
+#!/bin/sh
+# The redoma package's postinst: make the services' users and groups, check
+# that they have the ids redoma relies on, and reload systemd.
+set -eu
+
+# name kind id: the ids sysusers.conf gives, which the OCI hook refuses to
+# agent containers and SPIRE's entries attest by.
+IDS="redoma-sds user 961
+redoma-sds group 961
+redoma-relay user 963
+redoma-relay group 963
+redoma-lead group 964"
+
+# check_ids fails, naming every mismatch, unless each name has its id.
+check_ids() {
+	bad=0
+	while read -r name kind want; do
+		case "${kind}" in
+		user) got=$(getent passwd "${name}" | cut -d: -f3) || got="" ;;
+		group) got=$(getent group "${name}" | cut -d: -f3) || got="" ;;
+		esac
+		if [ "${got}" != "${want}" ]; then
+			echo "redoma: the ${kind} ${name} has id '${got}', not ${want}." >&2
+			bad=1
+		fi
+	done <<IDS_END
+${IDS}
+IDS_END
+	if [ "${bad}" != 0 ]; then
+		echo "redoma: the services' ids are fixed (/usr/lib/sysusers.d/redoma.conf): the OCI hook refuses them to agent containers and SPIRE attests the services by uid. Free those ids or names and reconfigure the package (dpkg --configure redoma)." >&2
+		exit 1
+	fi
+}
+
+case "${1:-}" in
+configure)
+	systemd-sysusers /usr/lib/sysusers.d/redoma.conf
+	check_ids
+	if [ -d /run/systemd/system ]; then
+		systemctl daemon-reload
+		# An upgrade restarts what runs; a first install starts nothing.
+		systemctl try-restart redoma-xds.service redoma-relay.service
+	fi
+	;;
+esac
+exit 0

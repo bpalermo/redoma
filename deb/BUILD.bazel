@@ -1,0 +1,212 @@
+# The Debian package of the host side, redoma_<arch>.deb, for amd64 and arm64:
+#
+#   /usr/bin/redoma                                    the binary
+#   /usr/lib/systemd/system/redoma-{xds,relay}.service its units
+#   /usr/share/containers/oci/hooks.d/redoma-*.json    the OCI hook's definitions
+#   /etc/containers/containers.conf.d/50-redoma-hooks.conf
+#   /usr/lib/sysusers.d/redoma.conf                    its users and groups, 961/963/964
+#   /etc/redoma/redoma.conf                            the settings (a conffile)
+#   /usr/share/doc/redoma/                             copyright (DEP-5), NOTICE, README.md, examples
+#
+# Not in it: redoma-shim (the runtime image's), SPIRE, Envoy, any secret. The
+# postinst makes the users and groups and fails when their ids are not the
+# fixed ones; it never adds anyone to redoma-lead.
+
+load("@rules_pkg//pkg:deb.bzl", "pkg_deb")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files", "pkg_mkdirs")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("@rules_shell//shell:sh_library.bzl", "sh_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//bazel/platforms:transition.bzl", "platform_files")
+
+ARCHES = {
+    "amd64": "//bazel/platforms:linux_amd64",
+    "arm64": "//bazel/platforms:linux_arm64",
+}
+
+CONFFILES = [
+    "/etc/containers/containers.conf.d/50-redoma-hooks.conf",
+    "/etc/redoma/redoma.conf",
+]
+
+pkg_files(
+    name = "units",
+    srcs = [
+        "//relay:redoma-relay.service",
+        "//xds:redoma-xds.service",
+    ],
+    attributes = pkg_attributes(mode = "0644"),
+    prefix = "usr/lib/systemd/system",
+)
+
+pkg_files(
+    name = "hooks",
+    srcs = [
+        "//ocihook:hooks.d/redoma-create-runtime.json",
+        "//ocihook:hooks.d/redoma-poststop.json",
+    ],
+    attributes = pkg_attributes(mode = "0644"),
+    prefix = "usr/share/containers/oci/hooks.d",
+)
+
+pkg_files(
+    name = "containers_conf",
+    srcs = ["//ocihook:containers.conf.d/50-redoma-hooks.conf"],
+    attributes = pkg_attributes(mode = "0644"),
+    prefix = "etc/containers/containers.conf.d",
+)
+
+pkg_files(
+    name = "sysusers",
+    srcs = ["sysusers.conf"],
+    attributes = pkg_attributes(mode = "0644"),
+    prefix = "usr/lib/sysusers.d",
+    renames = {"sysusers.conf": "redoma.conf"},
+)
+
+pkg_files(
+    name = "settings",
+    srcs = ["//redoma:redoma.conf"],
+    attributes = pkg_attributes(mode = "0644"),
+    prefix = "etc/redoma",
+)
+
+pkg_files(
+    name = "doc",
+    srcs = [
+        "copyright",
+        "//:NOTICE",
+        "//:README.md",
+    ],
+    attributes = pkg_attributes(mode = "0644"),
+    prefix = "usr/share/doc/redoma",
+)
+
+# The packages' version: VERSION on a release tag, a candidate's or a
+# snapshot's otherwise (deb_version.sh), so a newer build always upgrades an
+# older one. Stamped: --stamp is on by default (.bazelrc).
+genrule(
+    name = "deb_version",
+    srcs = ["//:VERSION"],
+    outs = ["deb_version.txt"],
+    cmd = "$(execpath deb_version.sh) $(execpath //:VERSION) bazel-out/stable-status.txt >$@",
+    stamp = 1,
+    tools = ["deb_version.sh"],
+)
+
+pkg_files(
+    name = "examples",
+    srcs = [
+        "//examples:anthropic-key.yaml",
+        "//examples:envoy.yaml",
+    ],
+    attributes = pkg_attributes(mode = "0644"),
+    prefix = "usr/share/doc/redoma/examples",
+)
+
+# /etc/redoma/egress and /etc/redoma/secrets are the administrator's to
+# make; /etc/redoma comes with the conffile.
+pkg_mkdirs(
+    name = "dirs",
+    attributes = pkg_attributes(mode = "0755"),
+    dirs = ["etc/redoma"],
+)
+
+[platform_files(
+    name = "redoma_" + arch,
+    srcs = ["//redoma"],
+    platform = platform,
+) for arch, platform in ARCHES.items()]
+
+[pkg_files(
+    name = "bin_" + arch,
+    srcs = [":redoma_" + arch],
+    attributes = pkg_attributes(mode = "0755"),
+    prefix = "usr/bin",
+) for arch in ARCHES]
+
+[pkg_tar(
+    name = "data_" + arch,
+    srcs = [
+        ":bin_" + arch,
+        ":containers_conf",
+        ":dirs",
+        ":doc",
+        ":examples",
+        ":hooks",
+        ":settings",
+        ":sysusers",
+        ":units",
+    ],
+    extension = "tar.gz",
+    # Every file root's: the services run as their own users, which the
+    # package makes.
+    owner = "0.0",
+    ownername = "root.root",
+) for arch in ARCHES]
+
+[pkg_deb(
+    name = "redoma_" + arch + "_deb",
+    architecture = arch,
+    conffiles = CONFFILES,
+    data = ":data_" + arch,
+    depends = ["systemd"],
+    description = "Isolated coding-agent containers behind one host Envoy\n" +
+                  " The host side of redoma: redoma xds, the host Envoy's control plane\n" +
+                  " (each agent's listeners, relay cluster and SPIFFE identity); redoma\n" +
+                  " relay, between the lead and the agents; redoma msg and redoma mcp,\n" +
+                  " the lead's clients; and redoma oci-hook, which makes an annotated\n" +
+                  " rootful Podman container an agent.",
+    homepage = "https://github.com/bpalermo/redoma",
+    maintainer = "Bruno Palermo <b@palermo.dev>",
+    package = "redoma",
+    package_file_name = "redoma_" + arch + ".deb",
+    postinst = "postinst",
+    postrm = "postrm",
+    prerm = "prerm",
+    priority = "optional",
+    recommends = ["podman"],
+    section = "admin",
+    version_file = ":deb_version",
+    visibility = ["//visibility:public"],
+) for arch in ARCHES]
+
+filegroup(
+    name = "deb",
+    srcs = [":redoma_" + arch + "_deb" for arch in ARCHES],
+    visibility = ["//visibility:public"],
+)
+
+sh_test(
+    name = "deb_test",
+    srcs = ["deb_test.sh"],
+    args = [
+        "$(rlocationpath :redoma_amd64_deb)",
+        "$(rlocationpath :redoma_arm64_deb)",
+        "$(rlocationpath :deb_version)",
+    ],
+    data = [
+        "sysusers.conf",
+        ":deb_version",
+        ":redoma_amd64_deb",
+        ":redoma_arm64_deb",
+    ],
+)
+
+sh_test(
+    name = "deb_version_test",
+    srcs = ["deb_version_test.sh"],
+    args = ["$(rlocationpath deb_version.sh)"],
+    data = ["deb_version.sh"],
+)
+
+# For the shellcheck aspect (--config=lint): the maintainer scripts.
+sh_library(
+    name = "maintainer_scripts",
+    srcs = [
+        "deb_version.sh",
+        "postinst",
+        "postrm",
+        "prerm",
+    ],
+)
