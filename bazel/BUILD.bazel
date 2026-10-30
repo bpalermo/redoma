@@ -28,6 +28,15 @@ sh_test(
     data = ["release-tag.sh"],
 )
 
+# The files a release uploads (release-assets.sh, the `build` job of
+# release.yml): names GitHub keeps, and a SHA256SUMS of exactly those.
+sh_test(
+    name = "release_assets_test",
+    size = "small",
+    srcs = ["release_assets_test.sh"],
+    data = ["release-assets.sh"],
+)
+
 # The decision of ci-impacted-targets.sh (the `diff` job of ci.yml): which
 # impacted targets CI builds and tests, on fixture lists.
 sh_test(

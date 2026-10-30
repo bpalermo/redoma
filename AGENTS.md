@@ -858,14 +858,24 @@ and no Containerfile, for linux/amd64 and linux/arm64:
     (`git merge-base --is-ancestor` against `origin/main`). It runs
     `//deb:deb_test` alone, not the rest of CI's build, and checks that the
     stamped `deb_version.txt` is the tag's version. It then uploads
-    `redoma_<version>_{amd64,arm64}.deb` and their `SHA256SUMS` as an
-    artifact.
-  - Its `publish` job, the only one with `contents: write`, checks the sums
-    and publishes them as a GitHub Release.
+    `redoma_<asset version>_{amd64,arm64}.deb` and their `SHA256SUMS` as an
+    artifact (`bazel/release-assets.sh`).
+  - Its `publish` job, the only one with `contents: write`, checks the sums,
+    creates the GitHub Release as a draft, checks that its assets carry
+    exactly the names the job uploaded, and only then publishes it.
 
   A tag `v<VERSION>-rc.<n>` does the same as a prerelease, its packages
   versioned `<VERSION>~rc.<n>`. Any other `v*` tag fails the run
   (`bazel/release-tag.sh`).
+
+  The asset version is the packages' version with `~` as `-`, the tag's
+  spelling: `redoma_0.1.0-rc.1_amd64.deb` holds version `0.1.0~rc.1`.
+  GitHub renames an uploaded asset whose name has a character outside
+  `[A-Za-z0-9._-]` or a period at either end (a `~` becomes `.`), and
+  `SHA256SUMS` would then name files nobody downloads. The control
+  `Version` keeps its `~`: dpkg orders by it. `release-assets.sh` refuses
+  any name GitHub would rewrite and sums the files under their uploaded
+  names; `//bazel:release_assets_test` holds it to that.
 - GitHub Actions are pinned by commit SHA, with the version in a comment.
   Dependabot keeps those current, but not the `multitool.lock.json` pins:
   bump bazel-diff by hand, its version in every URL and the sha256s (GitHub's
