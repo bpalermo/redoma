@@ -1,0 +1,66 @@
+# //runtime:image_test_<arch>: the runtime image's structure, read from its config
+# and file listing (rules_img's image_structure_test, no container runs).
+schemaVersion: 2.0.0
+
+metadataTest:
+  entrypoint: ["/usr/local/bin/redoma-shim"]
+  envVars:
+    - key: PATH
+      value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  labels:
+    - key: org.opencontainers.image.source
+      value: https://github.com/bpalermo/redoma
+
+fileExistenceTests:
+  - name: redoma-shim
+    path: /usr/local/bin/redoma-shim
+    shouldExist: true
+    permissions: -rwxr-xr-x
+    uid: 0
+    gid: 0
+  - name: claude
+    path: /usr/local/bin/claude
+    shouldExist: true
+    permissions: -rwxr-xr-x
+    uid: 0
+    gid: 0
+  - name: git
+    path: /usr/bin/git
+    shouldExist: true
+  - name: python3
+    path: /usr/bin/python3
+    shouldExist: true
+  - name: ripgrep
+    path: /usr/bin/rg
+    shouldExist: true
+  - name: jq
+    path: /usr/bin/jq
+    shouldExist: true
+  - name: bash
+    path: /bin/bash
+    shouldExist: true
+  - name: sh
+    path: /bin/sh
+    shouldExist: true
+  - name: the CA bundle
+    path: /etc/ssl/certs/ca-certificates.crt
+    shouldExist: true
+  - name: passwd
+    path: /etc/passwd
+    shouldExist: true
+  - name: nsswitch.conf
+    path: /etc/nsswitch.conf
+    shouldExist: true
+    permissions: -rw-r--r--
+    uid: 0
+    gid: 0
+  - name: hosts
+    path: /etc/hosts
+    shouldExist: true
+    permissions: -rw-r--r--
+    uid: 0
+    gid: 0
+  # Left to an image FROM this one: the host's managed settings.
+  - name: no managed settings
+    path: /etc/claude-code
+    shouldExist: false
