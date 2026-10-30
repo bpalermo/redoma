@@ -394,9 +394,9 @@ func (h *Hook) CreateRuntime(ctx context.Context, st State) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, h.Timeout)
 	defer cancel()
-	// A PID found in another container's cgroup was reused, maybe before the
-	// mount, which may then be of another container's namespace: the start
-	// fails. A process that cannot be bound otherwise is registered without
+	// A PID found in another namespace or another container's cgroup was
+	// reused, maybe before the mount, which may then be of another
+	// process's namespace: the start fails. A process that cannot be bound otherwise is registered without
 	// its pidfd: in Delegated mode nothing needs one, and in Broker mode
 	// redoma xds then serves the agent no SVID (it fails closed). The start
 	// does not depend on a check (the container's own cgroup) only a host
