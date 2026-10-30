@@ -23,7 +23,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 	"github.com/bpalermo/redoma/common/version"
 	"github.com/bpalermo/redoma/msg/internal/feed"
 	"github.com/bpalermo/redoma/msg/internal/leadmcp"
@@ -115,7 +115,7 @@ var commands = map[string]command{
 		if err != nil {
 			return err
 		}
-		r, err := c.Send(ctx, &relayv1.SendRequest{Agent: args[0], Text: text})
+		r, err := c.Send(ctx, relayv1.SendRequest_builder{Agent: args[0], Text: text}.Build())
 		if err != nil {
 			return err
 		}
@@ -130,14 +130,14 @@ var commands = map[string]command{
 		if err != nil {
 			return err
 		}
-		_, err = c.Reply(ctx, &relayv1.ReplyRequest{QuestionId: args[0], Text: text})
+		_, err = c.Reply(ctx, relayv1.ReplyRequest_builder{QuestionId: args[0], Text: text}.Build())
 		return err
 	},
 	"cancel": func(ctx context.Context, c relayv1.LeadClient, args []string, _ stdio) error {
 		if len(args) != 1 {
 			return errUsage
 		}
-		_, err := c.Cancel(ctx, &relayv1.CancelRequest{TaskId: args[0]})
+		_, err := c.Cancel(ctx, relayv1.CancelRequest_builder{TaskId: args[0]}.Build())
 		return err
 	},
 	"watch": func(ctx context.Context, c relayv1.LeadClient, args []string, std stdio) error {
@@ -186,7 +186,7 @@ func textOf(words []string, stdin io.Reader) (string, error) {
 }
 
 func watch(ctx context.Context, c relayv1.LeadClient, agent string, stdout io.Writer) error {
-	st, err := c.Watch(ctx, &relayv1.WatchRequest{Agent: agent})
+	st, err := c.Watch(ctx, relayv1.WatchRequest_builder{Agent: agent}.Build())
 	if err != nil {
 		return err
 	}

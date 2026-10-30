@@ -17,7 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 	"github.com/bpalermo/redoma/common/reliable"
 	"github.com/bpalermo/redoma/relay/internal/mtls"
 	"github.com/bpalermo/redoma/relay/internal/mtls/mtlstest"
@@ -204,7 +204,7 @@ func (a *agent) endErr() error {
 func (a *agent) send(e *relayv1.Envelope) {
 	a.t.Helper()
 	a.seq++
-	e.Seq = a.seq
+	e.SetSeq(a.seq)
 	if err := a.st.Send(e); err != nil {
 		a.t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func (a *agent) send(e *relayv1.Envelope) {
 
 func (a *agent) ack(seq uint64) {
 	a.t.Helper()
-	if err := a.st.Send(&relayv1.Envelope{Body: &relayv1.Envelope_Ack{Ack: &relayv1.Ack{Seq: seq}}}); err != nil {
+	if err := a.st.Send(relayv1.Envelope_builder{Ack: relayv1.Ack_builder{Seq: seq}.Build()}.Build()); err != nil {
 		a.t.Fatal(err)
 	}
 }
@@ -221,7 +221,7 @@ func watch(t *testing.T, r *relay, agent string) (<-chan *relayv1.WatchEvent, co
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	st, err := r.lead.Watch(ctx, &relayv1.WatchRequest{Agent: agent})
+	st, err := r.lead.Watch(ctx, relayv1.WatchRequest_builder{Agent: agent}.Build())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestNewerStreamReplaces(t *testing.T) {
 	if err := old.endErr(); status.Code(err) != codes.Aborted {
 		t.Errorf("the older stream ended with %v, want Aborted", err)
 	}
-	if _, err := r.lead.Send(context.Background(), &relayv1.SendRequest{Agent: "beta", Text: "x"}); err != nil {
+	if _, err := r.lead.Send(context.Background(), relayv1.SendRequest_builder{Agent: "beta", Text: "x"}.Build()); err != nil {
 		t.Fatal(err)
 	}
 	if got := fresh.recv(); got.GetTask().GetText() != "x" {
@@ -344,7 +344,7 @@ func TestResendAfterDisconnect(t *testing.T) {
 	e := newEnv(t)
 	r := e.start()
 	a := e.mustConnect(r, "beta", "shim-1")
-	sent, err := r.lead.Send(context.Background(), &relayv1.SendRequest{Agent: "beta", Text: "one"})
+	sent, err := r.lead.Send(context.Background(), relayv1.SendRequest_builder{Agent: "beta", Text: "one"}.Build())
 	if err != nil {
 		t.Fatal(err)
 	}

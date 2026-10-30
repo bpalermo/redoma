@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 	"github.com/bpalermo/redoma/msg/internal/feed"
 	"github.com/bpalermo/redoma/msg/internal/leadtest"
 )
@@ -194,7 +194,7 @@ func TestPollCompactAndRaw(t *testing.T) {
 		leadtest.Question("a", "a/q1", "a/t1", "which branch?"),
 		leadtest.Message("a", "a/t1", "halfway"),
 		leadtest.Turn("a", "a/t1", `{"type":"result","subtype":"success","is_error":false,"result":"Done.","total_cost_usd":0.1}`),
-		{Agent: "a", Body: &relayv1.WatchEvent_TurnEvent{TurnEvent: &relayv1.TurnEvent{TaskId: "a/t1", Done: true}}},
+		relayv1.WatchEvent_builder{Agent: "a", TurnEvent: relayv1.TurnEvent_builder{TaskId: "a/t1", Done: true}.Build()}.Build(),
 	} {
 		s.watch <- ev
 	}

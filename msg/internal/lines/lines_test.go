@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 )
 
 func turn(chunk string, partial bool) *relayv1.WatchEvent {
-	return &relayv1.WatchEvent{Agent: "a", Body: &relayv1.WatchEvent_TurnEvent{TurnEvent: &relayv1.TurnEvent{TaskId: "a/t1", Chunk: []byte(chunk), Partial: partial}}}
+	return relayv1.WatchEvent_builder{Agent: "a", TurnEvent: relayv1.TurnEvent_builder{TaskId: "a/t1", Chunk: []byte(chunk), Partial: partial}.Build()}.Build()
 }
 
 func compact(t *testing.T, ev *relayv1.WatchEvent, cont bool) string {
@@ -47,7 +47,7 @@ func TestCompact(t *testing.T) {
 		{"a part", turn(`{"type":"assistant","mess`, true), false, "-"},
 		{"the last part", turn(`age":{}}`, false), true, "-"},
 		{
-			"end", &relayv1.WatchEvent{Agent: "a", Body: &relayv1.WatchEvent_TurnEvent{TurnEvent: &relayv1.TurnEvent{TaskId: "a/t1", Done: true, Error: "cancelled"}}}, false,
+			"end", relayv1.WatchEvent_builder{Agent: "a", TurnEvent: relayv1.TurnEvent_builder{TaskId: "a/t1", Done: true, Error: "cancelled"}.Build()}.Build(), false,
 			`{"agent":"a","turn":{"task":"a/t1","done":true,"error":"cancelled"}}`,
 		},
 	} {

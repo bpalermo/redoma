@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/bpalermo/redoma/msg",
     visibility = ["//visibility:public"],
     deps = [
-        "//api/relay/v1:relay",
+        "//api/redoma/relay/v1:relay",
         "//common/version",
         "//msg/internal/feed",
         "//msg/internal/leadmcp",
@@ -22,7 +22,7 @@ go_test(
     srcs = ["command_test.go"],
     embed = [":msg"],
     deps = [
-        "//api/relay/v1:relay",
+        "//api/redoma/relay/v1:relay",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",
         "@org_golang_google_grpc//test/bufconn",

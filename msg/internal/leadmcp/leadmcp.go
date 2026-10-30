@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 	"github.com/bpalermo/redoma/common/allowlist"
 	"github.com/bpalermo/redoma/common/mcpserver"
 	"github.com/bpalermo/redoma/msg/internal/feed"
@@ -174,7 +174,7 @@ func (s *Server) send(ctx context.Context, args json.RawMessage) (string, error)
 	if err := checkText(a.Text); err != nil {
 		return "", err
 	}
-	r, err := s.Lead.Send(ctx, &relayv1.SendRequest{Agent: a.Agent, Text: a.Text})
+	r, err := s.Lead.Send(ctx, relayv1.SendRequest_builder{Agent: a.Agent, Text: a.Text}.Build())
 	if err != nil {
 		return "", err
 	}
@@ -192,7 +192,7 @@ func (s *Server) reply(ctx context.Context, args json.RawMessage) (string, error
 	if err := checkText(a.Text); err != nil {
 		return "", err
 	}
-	if _, err := s.Lead.Reply(ctx, &relayv1.ReplyRequest{QuestionId: a.Question, Text: a.Text}); err != nil {
+	if _, err := s.Lead.Reply(ctx, relayv1.ReplyRequest_builder{QuestionId: a.Question, Text: a.Text}.Build()); err != nil {
 		return "", err
 	}
 	return "answered", nil
@@ -206,7 +206,7 @@ func (s *Server) cancel(ctx context.Context, args json.RawMessage) (string, erro
 	if err := checkID("task", a.Task); err != nil {
 		return "", err
 	}
-	if _, err := s.Lead.Cancel(ctx, &relayv1.CancelRequest{TaskId: a.Task}); err != nil {
+	if _, err := s.Lead.Cancel(ctx, relayv1.CancelRequest_builder{TaskId: a.Task}.Build()); err != nil {
 		return "", err
 	}
 	return "cancelled", nil
