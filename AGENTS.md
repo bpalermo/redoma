@@ -827,6 +827,17 @@ linux/amd64 and linux/arm64 (an index of both):
     architectures' manifests by digest, then the index, tagged with the
     same version with `-` for `~` (`//runtime:base_tag`, `0.1.0-rc.2`), and
     no other tag. Only the release workflow runs it.
+  - **The package is made public once, by hand.** A package GitHub
+    creates on its first push is private, and a workflow cannot change
+    its visibility. After the first release that pushes the base, the
+    maintainer sets `redoma-base` to public (the package's settings,
+    "Change visibility"); later pushes keep it. Until then a consumer's
+    pull fails without credentials.
+  - It redistributes Debian's binary packages (GPL and LGPL among them):
+    each one's `copyright` and `/usr/share/common-licenses` stay in it
+    (`base_test.yaml` checks a few), and README.md, "Third-party software
+    in the base", says where their sources are. A package added to
+    MODULE.bazel is redistributed too: check its license allows that.
 - `//runtime:image_index`, **redoma-runtime**, the base and Claude Code's
   native binary at `/usr/local/bin/claude` (0755), the `package/claude` of
   `@anthropic-ai/claude-code-linux-x64` or `-arm64`, exactly as the tarball
