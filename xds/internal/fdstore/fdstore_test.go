@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/bpalermo/redoma/common/sockettest"
 )
 
@@ -73,21 +75,19 @@ func TestAddAndRemoveOverAPair(t *testing.T) {
 		t.Cleanup(func() { c.Close() })
 		conns[i] = c.(*net.UnixConn)
 	}
-	// The pair's end is closed after each send, as a dialled connection
-	// is: hand out a duplicate.
-	dial := func() (*net.UnixConn, error) {
+	// The send path is the production one, sendmsg(2) with the descriptors
+	// (Notify.send); only the socket differs: a duplicate of the pair's
+	// connected end, closed after each send, and no address.
+	socket := func() (int, unix.Sockaddr, error) {
 		f, err := conns[0].File()
 		if err != nil {
-			return nil, err
+			return 0, nil, err
 		}
 		defer f.Close()
-		c, err := net.FileConn(f)
-		if err != nil {
-			return nil, err
-		}
-		return c.(*net.UnixConn), nil
+		fd, err := unix.Dup(int(f.Fd()))
+		return fd, nil, err
 	}
-	addAndRemove(t, &Notify{dial: dial}, conns[1])
+	addAndRemove(t, &Notify{socket: socket}, conns[1])
 }
 
 func addAndRemove(t *testing.T, n *Notify, conn *net.UnixConn) {
@@ -177,5 +177,20 @@ func TestListened(t *testing.T) {
 	}
 	if _, err := listened(self, strconv.Itoa(self), "x", "", start); err == nil {
 		t.Error("a LISTEN_FDS that is no count was accepted")
+	}
+}
+
+// TestAbstractAddress: NOTIFY_SOCKET's @ names an abstract socket, which
+// the address carries as unix.SockaddrUnix writes it (a leading NUL).
+func TestAbstractAddress(t *testing.T) {
+	n := &Notify{Socket: "@/org/example/notify"}
+	fd, to, err := n.unconnected()
+	sockettest.SkipIfRefused(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unix.Close(fd)
+	if sa, ok := to.(*unix.SockaddrUnix); !ok || sa.Name != "@/org/example/notify" {
+		t.Errorf("address %#v", to)
 	}
 }
