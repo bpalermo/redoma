@@ -1,5 +1,7 @@
-# //runtime:image_test_<arch>: the runtime image's structure, read from its config
-# and file listing (rules_img's image_structure_test, no container runs).
+# //runtime:base_test_<arch> and image_test_<arch>: what the base and the
+# runtime image both have, read from the config and file listing (rules_img's
+# image_structure_test, no container runs). base_test.yaml and
+# runtime_test.yaml say how they differ.
 schemaVersion: 2.0.0
 
 metadataTest:
@@ -14,12 +16,6 @@ metadataTest:
 fileExistenceTests:
   - name: redoma-shim
     path: /usr/local/bin/redoma-shim
-    shouldExist: true
-    permissions: -rwxr-xr-x
-    uid: 0
-    gid: 0
-  - name: claude
-    path: /usr/local/bin/claude
     shouldExist: true
     permissions: -rwxr-xr-x
     uid: 0
@@ -60,7 +56,7 @@ fileExistenceTests:
     permissions: -rw-r--r--
     uid: 0
     gid: 0
-  # Left to an image FROM this one: the host's managed settings.
+  # Left to an image of one's own: the host's managed settings.
   - name: no managed settings
     path: /etc/claude-code
     shouldExist: false

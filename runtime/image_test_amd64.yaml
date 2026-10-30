@@ -1,7 +1,7 @@
-# //runtime:image_test_amd64: what only the amd64 image has.
+# //runtime:base_test_amd64 and image_test_amd64: what only the amd64 images have.
 schemaVersion: 2.0.0
 
 fileExistenceTests:
-  - name: the dynamic loader claude needs
+  - name: the dynamic loader (claude's, and any dynamic binary's)
     path: /lib64/ld-linux-x86-64.so.2
     shouldExist: true
