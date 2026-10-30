@@ -156,9 +156,10 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
 - `examples/`: an Envoy bootstrap and an SDS secret file, held to the code
   by `//xds/internal/lds:lds_test`.
 - `deb/`: the Debian package of the host side (see "The package").
-- `runtime/`: the runtime image, `redoma-runtime` (see "The runtime
-  image"); `bazel/claude_code` is the repository rule that fetches Claude
-  Code for it.
+- `runtime/`: the base image, `redoma-base`, and the runtime image,
+  `redoma-runtime`, the base and Claude Code (see "The runtime image");
+  `bazel/claude_code` is the repository rule that fetches Claude Code for
+  it.
 - `bazel/` holds build rules and CI scripts; `bazel/platforms` the target
   platforms and `platform_files`, which builds a target for one of them.
 
@@ -796,41 +797,65 @@ package is added to that list.
 
 ## The runtime image
 
-`//runtime:image_index` is what an agent container runs, built with rules_img
-and no Containerfile, for linux/amd64 and linux/arm64:
+`runtime/` builds two images with rules_img and no Containerfile, each for
+linux/amd64 and linux/arm64 (an index of both):
 
-- Debian bookworm packages (`ca-certificates`, `git`, `jq`, `python3`,
-  `ripgrep`, and a shell with the usual tools; MODULE.bazel, `apt`) and
-  their whole dependency closure, for both architectures, resolved by
-  rules_distroless from snapshot.debian.org at one instant and fetched by
-  sha256; Bazel keeps the resolution in `MODULE.bazel.lock`. No maintainer
-  script runs: `//runtime` makes what they would (the CA bundle,
-  `/etc/passwd` and `/etc/group` with root and nobody, dpkg's status for
-  scanners), plus Debian's `/etc/nsswitch.conf` (`hosts: files dns`, so
-  localhost never waits on DNS) and an `/etc/hosts` with localhost, the base
-  Podman writes a container's hosts file from (without it Podman takes the
-  host's). New packages: move the snapshot in MODULE.bazel and run
-  `bazel mod tidy`.
-- Claude Code's native binary at `/usr/local/bin/claude` (0755), the
-  `package/claude` of `@anthropic-ai/claude-code-linux-x64` or `-arm64`,
-  exactly as the tarball has it (Anthropic's terms require it unmodified:
-  never patch or strip it). Node is not in the image.
-- `redoma-shim` at `/usr/local/bin/redoma-shim`, the entrypoint, built in
-  the same graph for the same platform.
-- The config has no environment but `PATH`, no user (the container's
-  `--user` sets one), and the labels `org.opencontainers.image.source` and
-  `.revision` (the commit). Nothing in `/etc/claude-code`.
-- `//runtime:image_test_amd64` and `_arm64` check each architecture's
-  structure (paths, modes, owners, the entrypoint, `PATH`, the labels, the
-  dynamic loader claude needs) from the image's config and file listing;
-  `//runtime:claude_code_test` that each tarball is the version pinned and
-  the architecture it was fetched for.
-- **It is never published from here.** Claude Code is proprietary: whoever
-  runs redoma builds the image (`//runtime:image_load`, README.md) or pushes
-  it to a private registry of their own, never a public one: it carries
-  Claude Code's binary. There is no push target, `//runtime:image_index` is
-  private to its package so none can be added elsewhere, and CI only builds
-  it, when its inputs change.
+- `//runtime:base_index`, **redoma-base**, nothing proprietary in it:
+  - Debian bookworm packages (`ca-certificates`, `git`, `jq`, `python3`,
+    `ripgrep`, and a shell with the usual tools; MODULE.bazel, `apt`) and
+    their whole dependency closure, for both architectures, resolved by
+    rules_distroless from snapshot.debian.org at one instant and fetched by
+    sha256; Bazel keeps the resolution in `MODULE.bazel.lock`. No
+    maintainer script runs: `//runtime` makes what they would (the CA
+    bundle, `/etc/passwd` and `/etc/group` with root and nobody, dpkg's
+    status for scanners), plus Debian's `/etc/nsswitch.conf` (`hosts: files
+    dns`, so localhost never waits on DNS) and an `/etc/hosts` with
+    localhost, the base Podman writes a container's hosts file from
+    (without it Podman takes the host's). New packages: move the snapshot
+    in MODULE.bazel and run `bazel mod tidy`.
+  - `redoma-shim` at `/usr/local/bin/redoma-shim`, the entrypoint, built in
+    the same graph for the same platform.
+  - The config has no environment but `PATH`, no user (the container's
+    `--user` sets one), no working directory, and the labels
+    `org.opencontainers.image.source`, `.revision` (the commit), `.title`,
+    `.description`, `.licenses` (`Apache-2.0`) and `.version`: the
+    packages' version, from the same stamped `//deb:deb_version` (so
+    `0.1.0~rc.2` for `v0.1.0-rc.2`; see "The package"). An image and the
+    packages of one build always agree, and a host can check its image
+    against the package it installed.
+  - `//runtime:base_push` pushes it to `ghcr.io/bpalermo/redoma-base`: both
+    architectures' manifests by digest, then the index, tagged with the
+    same version with `-` for `~` (`//runtime:base_tag`, `0.1.0-rc.2`), and
+    no other tag. Only the release workflow runs it.
+- `//runtime:image_index`, **redoma-runtime**, the base and Claude Code's
+  native binary at `/usr/local/bin/claude` (0755), the `package/claude` of
+  `@anthropic-ai/claude-code-linux-x64` or `-arm64`, exactly as the tarball
+  has it (Anthropic's terms require it unmodified: never patch or strip
+  it). Node is not in the image. It is built `FROM` the base (rules_img's
+  `base`), the example of an image of one's own: the same entrypoint,
+  `PATH` and labels, but `.title` and `.licenses` (`NOASSERTION`: Claude
+  Code is not Apache-2.0).
+- Nothing in `/etc/claude-code` in either.
+- `//runtime:base_test_amd64` and `_arm64`, `//runtime:image_test_amd64`
+  and `_arm64` check each image's structure per architecture (paths, modes,
+  owners, the entrypoint, `PATH`, the labels, the dynamic loader) from its
+  config and file listing: `image_test.yaml` what both have,
+  `base_test.yaml` the base's (no claude, no Claude Code path),
+  `runtime_test.yaml` the runtime image's. `//runtime:base_deps_test`
+  holds the base's whole build graph, its push included, to no target of
+  Claude Code's (a `genquery`), and `//runtime:base_version_test` both
+  architectures' version label to `deb_version.txt` and the tag to it.
+  `//runtime:claude_code_test` checks that each tarball is the version
+  pinned and the architecture it was fetched for.
+- **The runtime image is never published from here.** Claude Code is
+  proprietary: whoever runs redoma builds the image
+  (`//runtime:image_load`, or one of their own FROM the base, README.md)
+  and pushes it to a private registry of their own, never a public one: it
+  carries Claude Code's binary. It has no push target,
+  `//runtime:image_index` is private to its package so none can be added
+  elsewhere, and CI only builds it, when its inputs change. Nothing of
+  Claude Code's ever goes into the base: `base_deps_test` and
+  `base_test.yaml` fail on it.
 - **Bumping Claude Code** is one change to `claude_code(...)` in
   MODULE.bazel: `version`, and the `sha256` of each tarball. A wrong hash
   fails the fetch; a tarball of another version or architecture fails

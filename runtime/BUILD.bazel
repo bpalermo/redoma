@@ -1,13 +1,19 @@
-# redoma-runtime: what an agent container runs, built here with no
-# Containerfile, for linux/amd64 and linux/arm64. Debian bookworm packages
-# (MODULE.bazel, `apt`), Claude Code's native binary (MODULE.bazel,
-# `claude_code`) and redoma-shim, its entrypoint.
+# The images an agent container runs, built here with no Containerfile, for
+# linux/amd64 and linux/arm64:
 #
-# It bundles Claude Code, which is proprietary: the image is built by its
-# user, loaded into their own Podman (:image_load) or pushed to a private
-# registry of their own, never a public one, and never published from this
-# repository. There is no push target here, and nothing outside this package
-# can reach the index (private visibility); CI only builds it.
+# - redoma-base (:base_index): Debian bookworm packages (MODULE.bazel,
+#   `apt`) and redoma-shim, its entrypoint. Nothing in it is proprietary:
+#   the release workflow publishes it, public, as ghcr.io/bpalermo/redoma-base
+#   (:base_push), so an image of one's own can start FROM it.
+# - redoma-runtime (:image_index): the base and Claude Code's native binary
+#   (MODULE.bazel, `claude_code`), the example of such an image. Claude Code
+#   is proprietary: this image is built by its user, loaded into their own
+#   Podman (:image_load) or pushed to a private registry of their own, never
+#   a public one, and never published from this repository. It has no push
+#   target, nothing outside this package can reach its index (private
+#   visibility), and CI only builds it.
+#
+# :base_deps_test holds the base, and its push, to no Claude Code at all.
 #
 # /etc/claude-code (managed settings) is left out: a host adds its own in an
 # image FROM this one.
@@ -16,6 +22,7 @@ load("@rules_distroless//distroless:defs.bzl", "cacerts", "flatten", "group", "p
 load("@rules_img//img:image.bzl", "image_index", "image_manifest")
 load("@rules_img//img:layer.bzl", "file_metadata", "image_layer", "layer_from_tar")
 load("@rules_img//img:load.bzl", "image_load")
+load("@rules_img//img:push.bzl", "image_push")
 load("@rules_img//img:test.bzl", "image_structure_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
@@ -108,6 +115,83 @@ image_layer(
     ),
 )
 
+image_layer(
+    name = "shim_layer",
+    srcs = {"/usr/local/bin/redoma-shim": "//shim"},
+    compress = "zstd",
+    default_metadata = file_metadata(
+        gid = 0,
+        mode = "0755",
+        uid = 0,
+    ),
+    include_runfiles = False,
+)
+
+# The base's version label: the packages' version, the same file //deb
+# stamps them with, so an image and a package of one build always agree
+# (`0.1.0~rc.2` for v0.1.0-rc.2; AGENTS.md, "The package").
+genrule(
+    name = "base_version_label",
+    srcs = ["//deb:deb_version"],
+    outs = ["base_version_label.txt"],
+    cmd = "echo \"org.opencontainers.image.version=$$(cat $<)\" >$@",
+)
+
+# The base's tag: the same version, with `-` for Debian's `~`, which a tag
+# cannot have (`0.1.0-rc.2` for v0.1.0-rc.2, as the release is named).
+genrule(
+    name = "base_tag",
+    srcs = ["//deb:deb_version"],
+    outs = ["base_tag.txt"],
+    cmd = "tr '~' - <$< >$@",
+)
+
+# redoma-base: no Claude Code, nothing proprietary.
+image_manifest(
+    name = "base_manifest",
+    entrypoint = ["/usr/local/bin/redoma-shim"],
+    env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
+    label_files = [":base_version_label"],
+    labels = {
+        "org.opencontainers.image.description": "redoma-shim on Debian bookworm: the base of a redoma agent image",
+        "org.opencontainers.image.licenses": "Apache-2.0",
+        "org.opencontainers.image.revision": "{{.STABLE_GIT_COMMIT}}",
+        "org.opencontainers.image.source": "https://github.com/bpalermo/redoma",
+        "org.opencontainers.image.title": "redoma-base",
+    },
+    layers = [
+        ":packages_layer",
+        ":system_layer",
+        ":etc_layer",
+        ":shim_layer",
+    ],
+)
+
+image_index(
+    name = "base_index",
+    manifests = [":base_manifest"],
+    platforms = PLATFORMS.values(),
+)
+
+# Run by the release workflow only, on a release tag: pushes both
+# architectures' manifests by digest, then the index, tagged with the
+# release's version (:base_tag), and nothing else (no `latest`).
+image_push(
+    name = "base_push",
+    image = ":base_index",
+    registry = "ghcr.io",
+    repository = "bpalermo/redoma-base",
+    tag_file = ":base_tag",
+)
+
+# Loads the base of the host's own architecture into the local Podman or
+# Docker: `bazel run //runtime:base_load`.
+image_load(
+    name = "base_load",
+    image = ":base_index",
+    tag = "localhost/redoma-base:dev",
+)
+
 # Claude Code, as the package of the target platform's architecture has it.
 image_layer(
     name = "claude_layer",
@@ -121,33 +205,18 @@ image_layer(
     include_runfiles = False,
 )
 
-image_layer(
-    name = "shim_layer",
-    srcs = {"/usr/local/bin/redoma-shim": "//shim"},
-    compress = "zstd",
-    default_metadata = file_metadata(
-        gid = 0,
-        mode = "0755",
-        uid = 0,
-    ),
-    include_runfiles = False,
-)
-
+# redoma-runtime: the base and Claude Code, an image of one's own FROM the
+# base (README.md, "The runtime image"). It keeps the base's entrypoint,
+# PATH and labels, but for the license: Claude Code is not Apache-2.0.
 image_manifest(
     name = "image_manifest",
-    entrypoint = ["/usr/local/bin/redoma-shim"],
-    env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
+    base = ":base_index",
     labels = {
-        "org.opencontainers.image.revision": "{{.STABLE_GIT_COMMIT}}",
-        "org.opencontainers.image.source": "https://github.com/bpalermo/redoma",
+        "org.opencontainers.image.description": "redoma-shim and Claude Code on Debian bookworm: a redoma agent image",
+        "org.opencontainers.image.licenses": "NOASSERTION",
+        "org.opencontainers.image.title": "redoma-runtime",
     },
-    layers = [
-        ":packages_layer",
-        ":system_layer",
-        ":etc_layer",
-        ":claude_layer",
-        ":shim_layer",
-    ],
+    layers = [":claude_layer"],
 )
 
 image_index(
@@ -167,23 +236,72 @@ image_load(
     tag = "localhost/redoma-runtime:dev",
 )
 
-# One index per architecture, for the structure tests: a test of a
+# One index per image and architecture, for the structure tests: a test of a
 # multi-platform index applies every config to every platform, and the
 # dynamic loader's path is each architecture's own.
 [image_index(
-    name = "image_index_" + arch,
-    manifests = [":image_manifest"],
+    name = "%s_index_%s" % (image, arch),
+    manifests = [":%s_manifest" % image],
     platforms = [platform],
-) for arch, platform in PLATFORMS.items()]
+) for arch, platform in PLATFORMS.items() for image in ("base", "image")]
+
+[image_structure_test(
+    name = "base_test_" + arch,
+    configs = [
+        "image_test.yaml",
+        "image_test_%s.yaml" % arch,
+        "base_test.yaml",
+    ],
+    image = ":base_index_" + arch,
+) for arch in PLATFORMS]
 
 [image_structure_test(
     name = "image_test_" + arch,
     configs = [
         "image_test.yaml",
         "image_test_%s.yaml" % arch,
+        "runtime_test.yaml",
     ],
     image = ":image_index_" + arch,
 ) for arch in PLATFORMS]
+
+# Everything the base and its push are built from, as a query of the build
+# graph: base_deps_test fails on anything of Claude Code's in it.
+genquery(
+    name = "base_deps",
+    expression = "deps(//runtime:base_push)",
+    scope = [":base_push"],
+)
+
+sh_test(
+    name = "base_deps_test",
+    srcs = ["base_deps_test.sh"],
+    args = ["$(rlocationpath :base_deps)"],
+    data = [":base_deps"],
+)
+
+# The base's version label, read from each architecture's config as pushed,
+# is the packages' version.
+filegroup(
+    name = "base_oci_layout",
+    srcs = [":base_index"],
+    output_group = "oci_layout",
+)
+
+sh_test(
+    name = "base_version_test",
+    srcs = ["base_version_test.sh"],
+    args = [
+        "$(rlocationpath :base_oci_layout)",
+        "$(rlocationpath //deb:deb_version)",
+        "$(rlocationpath :base_tag)",
+    ],
+    data = [
+        ":base_oci_layout",
+        ":base_tag",
+        "//deb:deb_version",
+    ],
+)
 
 sh_test(
     name = "etc_test",

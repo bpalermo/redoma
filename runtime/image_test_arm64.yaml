@@ -1,7 +1,7 @@
-# //runtime:image_test_arm64: what only the arm64 image has.
+# //runtime:base_test_arm64 and image_test_arm64: what only the arm64 images have.
 schemaVersion: 2.0.0
 
 fileExistenceTests:
-  - name: the dynamic loader claude needs
+  - name: the dynamic loader (claude's, and any dynamic binary's)
     path: /lib/ld-linux-aarch64.so.1
     shouldExist: true

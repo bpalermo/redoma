@@ -92,6 +92,8 @@ genrule(
     cmd = "$(execpath deb_version.sh) $(execpath //:VERSION) bazel-out/stable-status.txt >$@",
     stamp = 1,
     tools = ["deb_version.sh"],
+    # The runtime base image's version label (//runtime:base_version_label).
+    visibility = ["//runtime:__pkg__"],
 )
 
 pkg_files(

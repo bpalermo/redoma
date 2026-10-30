@@ -1,0 +1,25 @@
+# //runtime:base_test_<arch>: what only the base has, and what it must not.
+# It is published, public: nothing of Claude Code is in it (base_deps_test
+# holds its build graph to that as well).
+schemaVersion: 2.0.0
+
+metadataTest:
+  labels:
+    - key: org.opencontainers.image.licenses
+      value: Apache-2.0
+    - key: org.opencontainers.image.title
+      value: redoma-base
+
+fileExistenceTests:
+  - name: no claude
+    path: /usr/local/bin/claude
+    shouldExist: false
+  - name: no claude on any other path
+    path: /usr/bin/claude
+    shouldExist: false
+  - name: no Claude Code package
+    path: /usr/local/lib/node_modules/@anthropic-ai
+    shouldExist: false
+  - name: no Claude Code state
+    path: /root/.claude
+    shouldExist: false
