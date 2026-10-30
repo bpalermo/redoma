@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/bpalermo/redoma/shim",
     visibility = ["//visibility:private"],
     deps = [
-        "//api/relay/v1:relay",
+        "//api/redoma/relay/v1:relay",
         "//common/version",
         "//shim/internal/bridge",
         "//shim/internal/mcp",

@@ -1,7 +1,7 @@
 // Package reliable is the at-least-once delivery both ends of a relay stream
-// share (api/relay/v1): the sender's queue of envelopes not yet acked, on disk
-// (Outbox), the receiver's record of what it has taken (Inbox), and the loop
-// that runs one stream with them (Session).
+// share (api/redoma/relay/v1): the sender's queue of envelopes not yet
+// acked, on disk (Outbox), the receiver's record of what it has taken
+// (Inbox), and the loop that runs one stream with them (Session).
 package reliable
 
 import (
@@ -19,7 +19,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 	"github.com/bpalermo/redoma/common/atomicfile"
 )
 
@@ -180,7 +180,7 @@ func readRecords(r io.Reader) ([]*relayv1.Envelope, int64, error) {
 		if _, err := io.ReadFull(r, buf); err != nil {
 			return out, off, nil
 		}
-		e := &relayv1.Envelope{}
+		e := relayv1.Envelope_builder{}.Build()
 		if err := proto.Unmarshal(buf, e); err != nil {
 			return nil, 0, fmt.Errorf("the record at offset %d: %w", off, err)
 		}
@@ -212,10 +212,10 @@ func (o *Outbox) Push(e *relayv1.Envelope) error {
 	if o.broken != nil {
 		return o.broken
 	}
-	e.Seq = o.next
+	e.SetSeq(o.next)
 	rec, err := record(e)
 	if err != nil {
-		e.Seq = 0
+		e.SetSeq(0)
 		return err
 	}
 	err = o.write(rec)
@@ -223,7 +223,7 @@ func (o *Outbox) Push(e *relayv1.Envelope) error {
 		err = o.syncf(o.log)
 	}
 	if err != nil {
-		e.Seq = 0
+		e.SetSeq(0)
 		// Leave no part of it for the next open to misread, nor a record
 		// whose seq the next push would reuse. If even that fails, the
 		// queue refuses every push from then on: its log is no longer

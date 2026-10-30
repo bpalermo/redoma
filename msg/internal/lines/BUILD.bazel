@@ -5,12 +5,12 @@ go_library(
     srcs = ["lines.go"],
     importpath = "github.com/bpalermo/redoma/msg/internal/lines",
     visibility = ["//msg:__subpackages__"],
-    deps = ["//api/relay/v1:relay"],
+    deps = ["//api/redoma/relay/v1:relay"],
 )
 
 go_test(
     name = "lines_test",
     srcs = ["lines_test.go"],
     embed = [":lines"],
-    deps = ["//api/relay/v1:relay"],
+    deps = ["//api/redoma/relay/v1:relay"],
 )

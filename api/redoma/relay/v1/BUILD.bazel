@@ -1,0 +1,57 @@
+load("@protobuf//bazel:proto_library.bzl", "proto_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+load("@rules_go//proto:def.bzl", "go_proto_library")
+
+proto_library(
+    name = "relayv1_proto",
+    srcs = ["relay.proto"],
+    strip_import_prefix = "/api",
+    visibility = ["//visibility:public"],
+)
+
+go_proto_library(
+    name = "relayv1_go_proto",
+    compilers = [
+        "@rules_go//proto:go_proto",
+        "@rules_go//proto:go_grpc_v2",
+    ],
+    importpath = "github.com/bpalermo/redoma/api/redoma/relay/v1",
+    proto = ":relayv1_proto",
+    visibility = ["//visibility:public"],
+)
+
+go_library(
+    name = "relay",
+    embed = [":relayv1_go_proto"],
+    importpath = "github.com/bpalermo/redoma/api/redoma/relay/v1",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "relay_test",
+    srcs = [
+        "doc_test.go",
+        "wire_test.go",
+    ],
+    data = glob(["testdata/**"]) + [
+        ":relay_source_info",  # keep
+    ],
+    deps = [
+        ":relay",
+        "@org_golang_google_protobuf//proto",
+        "@org_golang_google_protobuf//reflect/protodesc",
+        "@org_golang_google_protobuf//reflect/protoreflect",
+        "@org_golang_google_protobuf//types/descriptorpb",
+    ],
+)
+
+# relay.proto's descriptors with their comments (proto_library's own
+# descriptor set has none): //api/redoma/relay/v1:relay_test checks from it
+# that every element is documented.
+genrule(
+    name = "relay_source_info",
+    srcs = ["relay.proto"],
+    outs = ["relay_source_info.binpb"],
+    cmd = "$(execpath @protobuf//:protoc) --include_source_info --descriptor_set_out=$@ --proto_path=api $(execpath relay.proto)",
+    tools = ["@protobuf//:protoc"],
+)

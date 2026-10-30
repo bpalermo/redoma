@@ -14,7 +14,7 @@ import (
 	"strings"
 	"syscall"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 	"github.com/bpalermo/redoma/common/atomicfile"
 	"github.com/bpalermo/redoma/shim/internal/bridge"
 )
@@ -185,9 +185,9 @@ func (s *Shim) stream(t *turn, r io.Reader) int {
 }
 
 func turnEvent(task string, chunk []byte, partial bool) *relayv1.Envelope {
-	return &relayv1.Envelope{Body: &relayv1.Envelope_TurnEvent{TurnEvent: &relayv1.TurnEvent{
+	return relayv1.Envelope_builder{TurnEvent: relayv1.TurnEvent_builder{
 		TaskId: task, Chunk: bytes.Clone(chunk), Partial: partial,
-	}}}
+	}.Build()}.Build()
 }
 
 // sessionOf is the session id of a stream-json line that carries one (its

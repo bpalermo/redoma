@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/bpalermo/redoma/relay",
     visibility = ["//visibility:public"],
     deps = [
-        "//api/relay/v1:relay",
+        "//api/redoma/relay/v1:relay",
         "//common/allowlist",
         "//common/config",
         "//common/version",

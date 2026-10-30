@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 )
 
 // Line is one event as redoma msg shows it. A turn's chunk, a line of
@@ -58,21 +58,21 @@ type Text struct {
 // Raw is the event whole.
 func Raw(ev *relayv1.WatchEvent) Line {
 	l := Line{Agent: ev.GetAgent()}
-	switch b := ev.GetBody().(type) {
-	case *relayv1.WatchEvent_TurnEvent:
-		t := &Turn{Task: b.TurnEvent.GetTaskId(), Partial: b.TurnEvent.GetPartial(), Done: b.TurnEvent.GetDone(), Error: b.TurnEvent.GetError()}
-		if chunk := b.TurnEvent.GetChunk(); !t.Partial && json.Valid(chunk) {
+	switch ev.WhichBody() {
+	case relayv1.WatchEvent_TurnEvent_case:
+		t := &Turn{Task: ev.GetTurnEvent().GetTaskId(), Partial: ev.GetTurnEvent().GetPartial(), Done: ev.GetTurnEvent().GetDone(), Error: ev.GetTurnEvent().GetError()}
+		if chunk := ev.GetTurnEvent().GetChunk(); !t.Partial && json.Valid(chunk) {
 			t.Event = chunk
 		} else if len(chunk) > 0 {
 			t.Text = string(chunk)
 		}
 		l.Turn = t
-	case *relayv1.WatchEvent_Question:
-		l.Question = &Text{ID: b.Question.GetId(), Task: b.Question.GetTaskId(), Text: b.Question.GetText()}
-	case *relayv1.WatchEvent_Message:
-		l.Message = &Text{Task: b.Message.GetTaskId(), Text: b.Message.GetText()}
-	case *relayv1.WatchEvent_Dropped:
-		d := b.Dropped
+	case relayv1.WatchEvent_Question_case:
+		l.Question = &Text{ID: ev.GetQuestion().GetId(), Task: ev.GetQuestion().GetTaskId(), Text: ev.GetQuestion().GetText()}
+	case relayv1.WatchEvent_Message_case:
+		l.Message = &Text{Task: ev.GetMessage().GetTaskId(), Text: ev.GetMessage().GetText()}
+	case relayv1.WatchEvent_Dropped_case:
+		d := ev.GetDropped()
 		l.Dropped = &Drop{TurnEvents: d.GetTurnEvents(), Questions: d.GetQuestions(), Messages: d.GetMessages(), Invalid: d.GetInvalid(), Reason: d.GetReason()}
 	}
 	return l

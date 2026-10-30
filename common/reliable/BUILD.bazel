@@ -10,7 +10,7 @@ go_library(
     importpath = "github.com/bpalermo/redoma/common/reliable",
     visibility = ["//visibility:public"],
     deps = [
-        "//api/relay/v1:relay",
+        "//api/redoma/relay/v1:relay",
         "//common/atomicfile",
         "@org_golang_google_protobuf//proto",
     ],
@@ -20,5 +20,5 @@ go_test(
     name = "reliable_test",
     srcs = ["reliable_test.go"],
     embed = [":reliable"],
-    deps = ["//api/relay/v1:relay"],
+    deps = ["//api/redoma/relay/v1:relay"],
 )

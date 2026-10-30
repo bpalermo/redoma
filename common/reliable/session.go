@@ -7,7 +7,7 @@ import (
 	"io"
 	"time"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 )
 
 // EpochKey is the metadata key that carries a sender's queue epoch: the
@@ -74,12 +74,12 @@ func (s *Session) receive(st Stream) error {
 		if err != nil {
 			return err
 		}
-		switch b := e.GetBody().(type) {
-		case *relayv1.Envelope_Ack:
-			if err := s.Out.Ack(b.Ack.GetSeq()); err != nil {
+		switch e.WhichBody() {
+		case relayv1.Envelope_Ack_case:
+			if err := s.Out.Ack(e.GetAck().GetSeq()); err != nil {
 				return fmt.Errorf("an ack: %w", err)
 			}
-		case *relayv1.Envelope_Heartbeat:
+		case relayv1.Envelope_Heartbeat_case:
 		default:
 			if e.GetSeq() == 0 {
 				return errors.New("the peer sent an envelope without a seq")
@@ -139,7 +139,7 @@ func (s *Session) send(ctx context.Context, st Stream, recvErr <-chan error) err
 		case <-acks.C:
 			err = s.flushAck(st)
 		case <-beat:
-			err = st.Send(&relayv1.Envelope{Body: &relayv1.Envelope_Heartbeat{Heartbeat: &relayv1.Heartbeat{}}})
+			err = st.Send(relayv1.Envelope_builder{Heartbeat: relayv1.Heartbeat_builder{}.Build()}.Build())
 		}
 		if err != nil {
 			return err
@@ -156,5 +156,5 @@ func (s *Session) flushAck(st Stream) error {
 }
 
 func ack(seq uint64) *relayv1.Envelope {
-	return &relayv1.Envelope{Body: &relayv1.Envelope_Ack{Ack: &relayv1.Ack{Seq: seq}}}
+	return relayv1.Envelope_builder{Ack: relayv1.Ack_builder{Seq: seq}.Build()}.Build()
 }

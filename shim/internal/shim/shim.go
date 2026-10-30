@@ -28,7 +28,7 @@ import (
 
 	"google.golang.org/grpc/metadata"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 	"github.com/bpalermo/redoma/common/atomicfile"
 	"github.com/bpalermo/redoma/common/reliable"
 	"github.com/bpalermo/redoma/shim/internal/bridge"
@@ -252,11 +252,11 @@ const (
 )
 
 func done(id string, err error) *relayv1.Envelope {
-	ev := &relayv1.TurnEvent{TaskId: id, Done: true}
+	ev := relayv1.TurnEvent_builder{TaskId: id, Done: true}.Build()
 	if err != nil {
-		ev.Error = text(err.Error(), maxError)
+		ev.SetError(text(err.Error(), maxError))
 	}
-	return &relayv1.Envelope{Body: &relayv1.Envelope_TurnEvent{TurnEvent: ev}}
+	return relayv1.Envelope_builder{TurnEvent: ev}.Build()
 }
 
 // connect holds the stream to the relay, reconnecting with a jittered,
@@ -310,23 +310,23 @@ func (s *Shim) session(ctx context.Context) error {
 // handle takes one envelope from the relay. A task is saved before handle
 // returns, so before it is acked.
 func (s *Shim) handle(e *relayv1.Envelope) {
-	switch b := e.GetBody().(type) {
-	case *relayv1.Envelope_Task:
-		s.queue(task{ID: b.Task.GetId(), Text: b.Task.GetText()})
-	case *relayv1.Envelope_Reply:
+	switch e.WhichBody() {
+	case relayv1.Envelope_Task_case:
+		s.queue(task{ID: e.GetTask().GetId(), Text: e.GetTask().GetText()})
+	case relayv1.Envelope_Reply_case:
 		s.mu.Lock()
-		ch, ok := s.questions[b.Reply.GetQuestionId()]
-		delete(s.questions, b.Reply.GetQuestionId())
+		ch, ok := s.questions[e.GetReply().GetQuestionId()]
+		delete(s.questions, e.GetReply().GetQuestionId())
 		s.mu.Unlock()
 		if !ok {
-			s.log.Warn("a reply to no question waiting (its turn ended?)", "question", b.Reply.GetQuestionId())
+			s.log.Warn("a reply to no question waiting (its turn ended?)", "question", e.GetReply().GetQuestionId())
 			return
 		}
-		ch <- b.Reply.GetText()
-	case *relayv1.Envelope_Cancel:
-		s.cancel(b.Cancel.GetTaskId())
+		ch <- e.GetReply().GetText()
+	case relayv1.Envelope_Cancel_case:
+		s.cancel(e.GetCancel().GetTaskId())
 	default:
-		s.log.Warn("dropping an envelope the relay does not send", "type", fmt.Sprintf("%T", e.GetBody()))
+		s.log.Warn("dropping an envelope the relay does not send", "type", fmt.Sprintf("body field %d", e.WhichBody()))
 	}
 }
 
@@ -521,7 +521,7 @@ func (s *Shim) Ask(ctx context.Context, question string) (string, error) {
 		delete(s.questions, id)
 		s.mu.Unlock()
 	}()
-	s.push(&relayv1.Envelope{Body: &relayv1.Envelope_Question{Question: &relayv1.Question{Id: id, Text: text(question, maxText), TaskId: cur.id}}})
+	s.push(relayv1.Envelope_builder{Question: relayv1.Question_builder{Id: id, Text: text(question, maxText), TaskId: cur.id}.Build()}.Build())
 	s.log.Info("asked the lead", "task", cur.id, "question", id)
 	select {
 	case text := <-ch:
@@ -546,7 +546,7 @@ func (s *Shim) Message(_ context.Context, msg string) error {
 		return errors.New("no turn is running")
 	}
 	id := cur.id
-	s.push(&relayv1.Envelope{Body: &relayv1.Envelope_Message{Message: &relayv1.Message{To: "lead", Text: text(msg, maxText), TaskId: id}}})
+	s.push(relayv1.Envelope_builder{Message: relayv1.Message_builder{To: "lead", Text: text(msg, maxText), TaskId: id}.Build()}.Build())
 	return nil
 }
 

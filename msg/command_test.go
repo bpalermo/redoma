@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	relayv1 "github.com/bpalermo/redoma/api/relay/v1"
+	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
 )
 
 // fake is a Lead service that records what it is asked.
@@ -23,28 +23,28 @@ type fake struct {
 
 func (f *fake) Send(_ context.Context, r *relayv1.SendRequest) (*relayv1.SendResponse, error) {
 	f.got = append(f.got, "send "+r.GetAgent()+" "+r.GetText())
-	return &relayv1.SendResponse{TaskId: r.GetAgent() + "/t1"}, nil
+	return relayv1.SendResponse_builder{TaskId: r.GetAgent() + "/t1"}.Build(), nil
 }
 
 func (f *fake) Reply(_ context.Context, r *relayv1.ReplyRequest) (*relayv1.ReplyResponse, error) {
 	f.got = append(f.got, "reply "+r.GetQuestionId()+" "+r.GetText())
-	return &relayv1.ReplyResponse{}, nil
+	return relayv1.ReplyResponse_builder{}.Build(), nil
 }
 
 func (f *fake) Cancel(_ context.Context, r *relayv1.CancelRequest) (*relayv1.CancelResponse, error) {
 	f.got = append(f.got, "cancel "+r.GetTaskId())
-	return &relayv1.CancelResponse{}, nil
+	return relayv1.CancelResponse_builder{}.Build(), nil
 }
 
 func (f *fake) Watch(r *relayv1.WatchRequest, st relayv1.Lead_WatchServer) error {
 	f.got = append(f.got, "watch "+r.GetAgent())
 	for _, ev := range []*relayv1.WatchEvent{
-		{Agent: "a", Body: &relayv1.WatchEvent_TurnEvent{TurnEvent: &relayv1.TurnEvent{TaskId: "a/t1", Chunk: []byte(`{"type":"result"}`)}}},
-		{Agent: "a", Body: &relayv1.WatchEvent_TurnEvent{TurnEvent: &relayv1.TurnEvent{TaskId: "a/t1", Chunk: []byte(`not json`)}}},
-		{Agent: "a", Body: &relayv1.WatchEvent_TurnEvent{TurnEvent: &relayv1.TurnEvent{TaskId: "a/t1", Done: true, Error: "cancelled"}}},
-		{Agent: "a", Body: &relayv1.WatchEvent_Question{Question: &relayv1.Question{Id: "a/q1", Text: "which?", TaskId: "a/t1"}}},
-		{Agent: "a", Body: &relayv1.WatchEvent_Message{Message: &relayv1.Message{To: "lead", Text: "hi"}}},
-		{Agent: "a", Body: &relayv1.WatchEvent_Dropped{Dropped: &relayv1.Dropped{TurnEvents: 3, Reason: "over its rate"}}},
+		relayv1.WatchEvent_builder{Agent: "a", TurnEvent: relayv1.TurnEvent_builder{TaskId: "a/t1", Chunk: []byte(`{"type":"result"}`)}.Build()}.Build(),
+		relayv1.WatchEvent_builder{Agent: "a", TurnEvent: relayv1.TurnEvent_builder{TaskId: "a/t1", Chunk: []byte(`not json`)}.Build()}.Build(),
+		relayv1.WatchEvent_builder{Agent: "a", TurnEvent: relayv1.TurnEvent_builder{TaskId: "a/t1", Done: true, Error: "cancelled"}.Build()}.Build(),
+		relayv1.WatchEvent_builder{Agent: "a", Question: relayv1.Question_builder{Id: "a/q1", Text: "which?", TaskId: "a/t1"}.Build()}.Build(),
+		relayv1.WatchEvent_builder{Agent: "a", Message: relayv1.Message_builder{To: "lead", Text: "hi"}.Build()}.Build(),
+		relayv1.WatchEvent_builder{Agent: "a", Dropped: relayv1.Dropped_builder{TurnEvents: 3, Reason: "over its rate"}.Build()}.Build(),
 	} {
 		if err := st.Send(ev); err != nil {
 			return err
