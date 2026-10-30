@@ -75,10 +75,12 @@ release's tag without its `v`. A release candidate, tagged
 `v<VERSION>-rc.<n>`, is a prerelease: its files are named
 `redoma_<VERSION>-rc.<n>_<arch>.deb`, while the packages inside are version
 `<VERSION>~rc.<n>`, which sorts below the release. With a release's files
-downloaded:
+downloaded, check them against `SHA256SUMS` and each one's build
+provenance (made by this repository's release workflow), then install:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
+gh attestation verify redoma_<tag>_amd64.deb -R bpalermo/redoma
 sudo apt install ./redoma_<tag>_amd64.deb   # or redoma_<tag>_arm64.deb
 ```
 
@@ -86,6 +88,7 @@ For example, for `v0.1.0-rc.1`:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
+gh attestation verify redoma_0.1.0-rc.1_amd64.deb -R bpalermo/redoma
 sudo apt install ./redoma_0.1.0-rc.1_amd64.deb
 ```
 

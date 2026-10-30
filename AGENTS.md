@@ -837,9 +837,11 @@ linux/amd64 and linux/arm64 (an index of both):
   - **The registry is set up once, by hand**, before the first release
     that pushes the base: the Quay organization `redoma`, its public
     repository `redoma-base`, a robot account with write on it, and that
-    account's name and token as the repository secrets `QUAY_USERNAME` and
-    `QUAY_PASSWORD`. The release workflow fails at its login when either
-    secret is missing.
+    account's name and token as the secrets `QUAY_USERNAME` and
+    `QUAY_PASSWORD` of the GitHub Environment `release` (environment
+    secrets, not repository secrets), whose deployment rule limits it to
+    `v*` tags. The release workflow fails at its login when either secret
+    is missing.
   - It redistributes Debian's binary packages (GPL and LGPL among them):
     each one's `copyright` and `/usr/share/common-licenses` stay in it
     (`base_test.yaml` checks a few), and README.md, "Third-party software
@@ -905,14 +907,17 @@ linux/amd64 and linux/arm64 (an index of both):
   change, and never pushed: only the release workflow pushes the base.
 - Releases are tagged on a commit of `main` after CI has passed on it.
   A tag `v<VERSION>` runs `.github/workflows/release.yml`.
-  - Its `build` job (read-only) fails unless the tagged commit is on `main`
+  - Its `build` job (`contents: read`, plus `id-token` and `attestations`
+    for the packages' attestation) fails unless the tagged commit is on `main`
     (`git merge-base --is-ancestor` against `origin/main`). It runs
     `//deb:deb_test` alone, not the rest of CI's build, and checks that the
     stamped `deb_version.txt` is the tag's version. It then uploads
     `redoma_<asset version>_{amd64,arm64}.deb` and their `SHA256SUMS` as an
-    artifact (`bazel/release-assets.sh`).
-  - Its `base` job, after `build` and the only one given the Quay
-    secrets (with `id-token: write` for cosign and the attestation, and
+    artifact (`bazel/release-assets.sh`), after attesting the build
+    provenance of each of the three (`actions/attest-build-provenance`,
+    `subject-path`; `gh attestation verify <file> -R bpalermo/redoma`).
+  - Its `base` job, after `build` and the only one in the `release`
+    environment, so the only one given the Quay secrets (with `id-token: write` for cosign and the attestation, and
     `attestations: write`), builds
     redoma-base from the tagged commit, runs its tests (`base_test_*`,
     `base_tree_test_*`, `dpkg_status_test_*`, `base_deps_test`,
