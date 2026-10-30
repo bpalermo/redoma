@@ -833,7 +833,8 @@ linux/amd64 and linux/arm64 (an index of both):
   - `//runtime:base_push` pushes it to `ghcr.io/bpalermo/redoma-base`: both
     architectures' manifests by digest, then the index, tagged with the
     same version with `-` for `~` (`//runtime:base_tag`, `0.1.0-rc.2`), and
-    no other tag. Only the release workflow runs it.
+    no other tag. It is for the release workflow only, which does not
+    run it yet: until it does, nothing publishes the base.
   - **The package is made public once, by hand.** A package GitHub
     creates on its first push is private, and a workflow cannot change
     its visibility. After the first release that pushes the base, the

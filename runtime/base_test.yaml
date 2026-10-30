@@ -1,6 +1,6 @@
 # //runtime:base_test_<arch>: what only the base has, and what it must not.
-# It is published, public: nothing of Claude Code is in it. The checks here
-# look at fixed paths only; base_tree_test_<arch> fails on a file named
+# It is to be published, public: nothing of Claude Code is in it. The checks
+# here look at fixed paths only; base_tree_test_<arch> fails on a file named
 # like Claude Code at any path of the base's packages and system files, and
 # base_deps_test on any target of Claude Code's in the base's build graph.
 schemaVersion: 2.0.0
