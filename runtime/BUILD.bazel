@@ -206,14 +206,17 @@ image_layer(
 )
 
 # redoma-runtime: the base and Claude Code, an image of one's own FROM the
-# base (README.md, "The runtime image"). It keeps the base's entrypoint,
-# PATH and labels, but for the license: Claude Code is not Apache-2.0.
+# base (README.md, "The runtime image"). It keeps the base's entrypoint and
+# PATH, and sets its own labels: inherited, the base's would claim its
+# Apache-2.0 license and name for this image, and its source label would
+# link an image pushed to a private registry to this repository.
 image_manifest(
     name = "image_manifest",
     base = ":base_index",
     labels = {
         "org.opencontainers.image.description": "redoma-shim and Claude Code on Debian bookworm: a redoma agent image",
         "org.opencontainers.image.licenses": "NOASSERTION",
+        "org.opencontainers.image.source": "",
         "org.opencontainers.image.title": "redoma-runtime",
     },
     layers = [":claude_layer"],

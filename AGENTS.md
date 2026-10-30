@@ -843,9 +843,12 @@ linux/amd64 and linux/arm64 (an index of both):
   `@anthropic-ai/claude-code-linux-x64` or `-arm64`, exactly as the tarball
   has it (Anthropic's terms require it unmodified: never patch or strip
   it). Node is not in the image. It is built `FROM` the base (rules_img's
-  `base`), the example of an image of one's own: the same entrypoint,
-  `PATH` and labels, but `.title` and `.licenses` (`NOASSERTION`: Claude
-  Code is not Apache-2.0).
+  `base`), the example of an image of one's own: the same entrypoint and
+  `PATH`, and its own `.title`, `.description`, `.licenses`
+  (`NOASSERTION`) and an empty `.source`. Inherited, the base's labels
+  would claim Apache-2.0 for an image with Claude Code in it, and link an
+  image pushed to a private registry to this repository; README.md's
+  Containerfile example overrides them the same way.
 - Nothing in `/etc/claude-code` in either.
 - `//runtime:base_test_amd64` and `_arm64`, `//runtime:image_test_amd64`
   and `_arm64` check each image's structure per architecture (paths, modes,

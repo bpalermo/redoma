@@ -9,6 +9,8 @@ metadataTest:
       value: Apache-2.0
     - key: org.opencontainers.image.title
       value: redoma-base
+    - key: org.opencontainers.image.source
+      value: https://github.com/bpalermo/redoma
 
 fileExistenceTests:
   - name: no claude

@@ -9,9 +9,6 @@ metadataTest:
   envVars:
     - key: PATH
       value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-  labels:
-    - key: org.opencontainers.image.source
-      value: https://github.com/bpalermo/redoma
 
 fileExistenceTests:
   - name: redoma-shim
