@@ -69,14 +69,24 @@ architecture.
 
 ## Installing
 
-Each release on GitHub has the packages, `redoma_<version>_amd64.deb` and
-`redoma_<version>_arm64.deb`, and their `SHA256SUMS`; a release candidate,
-tagged `v<VERSION>-rc.<n>`, is a prerelease. With a release's files
+Each release on GitHub has the packages, `redoma_<tag>_amd64.deb` and
+`redoma_<tag>_arm64.deb`, and their `SHA256SUMS`, where `<tag>` is the
+release's tag without its `v`. A release candidate, tagged
+`v<VERSION>-rc.<n>`, is a prerelease: its files are named
+`redoma_<VERSION>-rc.<n>_<arch>.deb`, while the packages inside are version
+`<VERSION>~rc.<n>`, which sorts below the release. With a release's files
 downloaded:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
-sudo apt install ./redoma_<version>_amd64.deb   # or redoma_<version>_arm64.deb
+sudo apt install ./redoma_<tag>_amd64.deb   # or redoma_<tag>_arm64.deb
+```
+
+For example, for `v0.1.0-rc.1`:
+
+```sh
+sha256sum --check --ignore-missing SHA256SUMS
+sudo apt install ./redoma_0.1.0-rc.1_amd64.deb
 ```
 
 A package built as above has no version in its name:

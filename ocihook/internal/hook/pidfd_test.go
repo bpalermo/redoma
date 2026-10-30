@@ -130,7 +130,12 @@ func TestBindProcessExitedDuringTheChecks(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = cmd.Wait() }()
+	// Closing stdin first lets the child exit, so a failure before the
+	// in.Close below fails the test instead of hanging it in Wait.
+	defer func() {
+		in.Close()
+		_ = cmd.Wait()
+	}()
 	pid := cmd.Process.Pid
 	watch, err := pidfd.Open(pid)
 	if err != nil {

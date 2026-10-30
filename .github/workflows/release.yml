@@ -4,7 +4,8 @@ name: release
 # the Debian packages, redoma_<version>_amd64.deb and redoma_<version>_arm64.deb,
 # and their SHA256SUMS. A tag v<VERSION>-rc.<n> publishes a release
 # candidate the same way, as a prerelease, its packages versioned
-# <VERSION>~rc.<n> (AGENTS.md, "The package"). Only the packages: the runtime
+# <VERSION>~rc.<n> (AGENTS.md, "The package") and named
+# redoma_<VERSION>-rc.<n>_<arch>.deb, a name GitHub keeps. Only the packages: the runtime
 # image bundles Claude Code and is never published (AGENTS.md, "The runtime
 # image").
 on:
@@ -80,16 +81,16 @@ jobs:
             exit 1
           fi
 
+      # Named as GitHub uploads them: a candidate's 0.1.0~rc.1 package is
+      # redoma_0.1.0-rc.1_<arch>.deb, since GitHub would turn the `~` into
+      # a `.` and SHA256SUMS would no longer name the downloaded files. A
+      # name GitHub would rewrite fails here (bazel/release-assets.sh,
+      # //bazel:release_assets_test).
       - name: the packages and their sums
         env:
           OUT: ${{ runner.temp }}/release
           DEB_VERSION: ${{ steps.tag.outputs.deb }}
-        run: |
-          mkdir -p "${OUT}"
-          for arch in amd64 arm64; do
-            cp "bazel-bin/deb/redoma_${arch}_deb.deb" "${OUT}/redoma_${DEB_VERSION}_${arch}.deb"
-          done
-          (cd "${OUT}" && sha256sum redoma_*.deb >SHA256SUMS && cat SHA256SUMS)
+        run: bash bazel/release-assets.sh "${DEB_VERSION}" bazel-bin/deb "${OUT}"
 
       - name: upload the packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -118,7 +119,10 @@ jobs:
         working-directory: ${{ runner.temp }}/release
         run: sha256sum --check SHA256SUMS
 
-      - name: publish the release
+      # A draft first: the release is published only once GitHub holds its
+      # assets under exactly the names SHA256SUMS lists. A rewritten name
+      # leaves the draft unpublished, and the run failed.
+      - name: draft the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -130,5 +134,25 @@ jobs:
             flags+=(--prerelease)
           fi
           gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --verify-tag \
-            --title "redoma ${TAG}" --generate-notes "${flags[@]}" \
+            --draft --title "redoma ${TAG}" --generate-notes "${flags[@]}" \
             "${OUT}"/redoma_*.deb "${OUT}/SHA256SUMS"
+
+      - name: the uploaded names are the ones summed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          OUT: ${{ runner.temp }}/release
+        run: |
+          want="$(cd "${OUT}" && ls redoma_*.deb SHA256SUMS | sort)"
+          got="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" \
+            --json assets --jq '.assets[].name' | sort)"
+          if [[ ${got} != "${want}" ]]; then
+            echo "::error::the release's assets are named: ${got//$'\n'/ }; SHA256SUMS needs: ${want//$'\n'/ }" >&2
+            exit 1
+          fi
+
+      - name: publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
