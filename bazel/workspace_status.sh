@@ -16,7 +16,8 @@ set -euo pipefail
 commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 
 # VERSION is the release being worked towards. A commit tagged v<VERSION>, or
-# v<VERSION>-rc.<n> for a release candidate, is that release; any other commit,
+# v<VERSION>-rc.<n> for a release candidate (n from 1, without a leading
+# zero), is that release; any other commit,
 # including one with a tag that does not match VERSION, is a snapshot of it.
 next="$(tr -d '[:space:]' <VERSION 2>/dev/null || true)"
 next="${next:-0.0.0}"
@@ -28,7 +29,7 @@ if [[ -z "$(git status --porcelain --untracked-files=no 2>/dev/null || echo dirt
 	if grep -qx "v${next}" <<<"${tags}"; then
 		release="v${next}"
 	else
-		release="$(grep -E "^v${next//./\\.}-rc\.[0-9]+$" <<<"${tags}" | sort -t. -k4,4n | tail -1 || true)"
+		release="$(grep -E "^v${next//./\\.}-rc\.[1-9][0-9]*$" <<<"${tags}" | sort -t. -k4,4n | tail -1 || true)"
 	fi
 fi
 
@@ -38,7 +39,7 @@ version="${release:-$(git describe --tags --always --dirty 2>/dev/null || echo u
 
 # The newest candidate of VERSION this commit descends from, for the
 # packages' snapshot versions: a snapshot after v<VERSION>-rc.<n> sorts above it.
-last_rc="$(git tag --merged HEAD --list "v${next}-rc.*" 2>/dev/null | grep -E "^v${next//./\\.}-rc\.[0-9]+$" | sort -t. -k4,4n | tail -1 || true)"
+last_rc="$(git tag --merged HEAD --list "v${next}-rc.*" 2>/dev/null | grep -E "^v${next//./\\.}-rc\.[1-9][0-9]*$" | sort -t. -k4,4n | tail -1 || true)"
 
 # Whether the tree has uncommitted changes to tracked files.
 dirty=false

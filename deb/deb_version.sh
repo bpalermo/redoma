@@ -30,23 +30,23 @@ time="$(key STABLE_GIT_COMMIT_TIME || true)"
 commit="$(key STABLE_GIT_COMMIT || true)"
 dirty="$(key STABLE_GIT_DIRTY || true)"
 
-case "${tag}" in
-"v${version}")
+# A candidate's n counts from 1, without a leading zero, as in
+# bazel/workspace_status.sh; any other tag is no candidate.
+rc='-rc\.([1-9][0-9]*)$'
+if [[ ${tag} == "v${version}" ]]; then
 	echo "${version}"
 	exit 0
-	;;
-"v${version}-rc."*)
-	echo "${version}~rc.${tag##*-rc.}"
+elif [[ ${tag} =~ ^v${version//./\\.}${rc} ]]; then
+	echo "${version}~rc.${BASH_REMATCH[1]}"
 	exit 0
-	;;
-esac
+fi
 
 if [[ ! ${time} =~ ^[0-9]{14}$ || ! ${commit} =~ ^[0-9a-f]{7,}$ ]]; then
 	echo "${version}~dev"
 	exit 0
 fi
 snapshot="git${time}.${commit:0:7}"
-if [[ ${last_rc} =~ ^v${version//./\\.}-rc\.([0-9]+)$ ]]; then
+if [[ ${last_rc} =~ ^v${version//./\\.}${rc} ]]; then
 	snapshot="rc.${BASH_REMATCH[1]}.${snapshot}"
 fi
 if [[ ${dirty} == true ]]; then

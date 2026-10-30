@@ -29,6 +29,14 @@ expect 0.2.0 "a release" "STABLE_RELEASE_TAG v0.2.0" "${at}" "STABLE_GIT_COMMIT 
 expect 0.2.0~rc.3 "a candidate" "STABLE_RELEASE_TAG v0.2.0-rc.3" "STABLE_LAST_RC_TAG v0.2.0-rc.3" "STABLE_GIT_COMMIT ${commit}"
 expect 0.2.0~git20261029120000.0123456 "a snapshot" "STABLE_RELEASE_TAG none" "STABLE_LAST_RC_TAG none" "${at}" "STABLE_GIT_COMMIT ${commit}"
 expect 0.2.0~rc.3.git20261029120000.0123456 "a snapshot after a candidate" "STABLE_RELEASE_TAG none" "STABLE_LAST_RC_TAG v0.2.0-rc.3" "${at}" "STABLE_GIT_COMMIT ${commit}"
+expect 0.2.0~rc.10 "candidate 10" "STABLE_RELEASE_TAG v0.2.0-rc.10" "STABLE_GIT_COMMIT ${commit}"
+expect 0.2.0~rc.10.git20261029120000.0123456 "a snapshot after candidate 10" "STABLE_RELEASE_TAG none" "STABLE_LAST_RC_TAG v0.2.0-rc.10" "${at}" "STABLE_GIT_COMMIT ${commit}"
+# Candidates count from 1, without a leading zero: any other tag is no
+# candidate, and its commit and those after it are snapshots.
+for rc in 0 01 x; do
+	expect 0.2.0~git20261029120000.0123456 "a tag v0.2.0-rc.${rc}" "STABLE_RELEASE_TAG v0.2.0-rc.${rc}" "${at}" "STABLE_GIT_COMMIT ${commit}"
+	expect 0.2.0~git20261029120000.0123456 "a snapshot after v0.2.0-rc.${rc}" "STABLE_RELEASE_TAG none" "STABLE_LAST_RC_TAG v0.2.0-rc.${rc}" "${at}" "STABLE_GIT_COMMIT ${commit}"
+done
 expect 0.2.0~git20261029120000.0123456 "a candidate of another version" "STABLE_RELEASE_TAG none" "STABLE_LAST_RC_TAG v0.1.0-rc.3" "${at}" "STABLE_GIT_COMMIT ${commit}"
 expect 0.2.0~git20261029120000.0123456 "a tag of another version" "STABLE_RELEASE_TAG v0.1.0" "${at}" "STABLE_GIT_COMMIT ${commit}"
 expect 0.2.0~git20261029120000.0123456.dirty "a dirty tree" "STABLE_RELEASE_TAG none" "${at}" "STABLE_GIT_COMMIT ${commit}" "STABLE_GIT_DIRTY true"

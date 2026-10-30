@@ -19,6 +19,15 @@ sh_test(
     data = ["workspace_status.sh"],
 )
 
+# Which release a tag publishes (release-tag.sh, the `build` job of
+# release.yml).
+sh_test(
+    name = "release_tag_test",
+    size = "small",
+    srcs = ["release_tag_test.sh"],
+    data = ["release-tag.sh"],
+)
+
 # The decision of ci-impacted-targets.sh (the `diff` job of ci.yml): which
 # impacted targets CI builds and tests, on fixture lists.
 sh_test(

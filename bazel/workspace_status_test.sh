@@ -36,6 +36,13 @@ expect STABLE_GIT_DIRTY false "a clean tree"
 git tag v0.2.0
 expect STABLE_RELEASE_TAG none "a tag that is not VERSION's"
 
+# Candidates count from 1, without a leading zero: rc.0 and rc.01 are not
+# candidates, of this commit or of one after it.
+git tag v0.1.0-rc.0
+git tag v0.1.0-rc.01
+expect STABLE_RELEASE_TAG none "a candidate numbered 0 or with a leading zero"
+expect STABLE_LAST_RC_TAG none "a candidate numbered 0 or with a leading zero"
+
 # rc.2 sorts after rc.10 by text: the newest candidate is chosen by number.
 git tag v0.1.0-rc.1
 git tag v0.1.0-rc.2
