@@ -36,7 +36,9 @@ expect STABLE_GIT_DIRTY false "a clean tree"
 git tag v0.2.0
 expect STABLE_RELEASE_TAG none "a tag that is not VERSION's"
 
+# rc.2 sorts after rc.10 by text: the newest candidate is chosen by number.
 git tag v0.1.0-rc.1
+git tag v0.1.0-rc.2
 git tag v0.1.0-rc.10
 expect STABLE_RELEASE_TAG 'v0\.1\.0-rc\.10' "candidates"
 expect STABLE_GIT_VERSION 'v0\.1\.0-rc\.10' "candidates"
