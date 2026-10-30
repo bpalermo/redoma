@@ -61,9 +61,10 @@ SubscribeToX509SVID stream -> redoma xds checks pidfd and SPIFFE ID -> SDS -> En
    PID (`pidfd_open(2)`) and binds it to the process exactly (see "Binding
    the pidfd"). It sends the pidfd with its registration request, as
    `SCM_RIGHTS` ancillary data on the registration socket. A process found
-   in another container's cgroup fails the start (its PID was reused); one
-   it cannot bind otherwise does not stop the container: the hook logs why
-   and registers it without a pidfd.
+   in another network namespace than the one mounted, or in another
+   container's cgroup, fails the start (its PID was reused); one it cannot
+   bind otherwise does not stop the container: the hook logs why and
+   registers it without a pidfd.
 3. **redoma xds** receives the pidfd with the request, from root only (the
    socket's peer check is unchanged), and accepts the registration if the
    descriptor is a pidfd of a live process; a registration without one is
@@ -279,14 +280,18 @@ process exited.
 
 What the hook does then depends on what the failure proves:
 
-- **The process is in another container's cgroup** (a path element
-  `libpod-<another ID>`, `hook.ErrPIDReused`): the PID was reused, maybe
-  before the mount, and the namespace mounted may be that container's. Its
-  model and egress listeners must not be bound there, so the start fails,
-  and the mount is undone.
-- **Anything else** (in no container's cgroup yet, another namespace, the
-  process gone): nothing proves the namespace mounted is not the
-  container's. The hook logs the failure and registers the container
+- **Proven reuse** (`hook.ErrPIDReused`): the process at the PID is in
+  another network namespace than the one the hook mounted, or in another
+  container's cgroup (a path element `libpod-<another ID>`). Either way the
+  process the runtime held is gone and its PID reused, maybe before the
+  mount, so the namespace mounted may be another process's. Neither fires
+  while the container's own process is there, so neither can refuse a
+  sound start. The agent's model, egress and relay listeners must not be
+  bound in that namespace (in Delegated mode its relay cluster would carry
+  the agent's SVID for whatever runs there), so the start fails, and the
+  mount is undone.
+- **Anything else** (in no container's cgroup yet, the process gone):
+  nothing proves the namespace mounted is not the container's. The hook logs the failure and registers the container
   without a pidfd: the start goes on, in Delegated mode exactly as before,
   and in Broker mode `redoma xds` serves that agent no SVID and logs which
   container. Such a failure does not fail the start because the cgroup

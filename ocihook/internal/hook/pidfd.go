@@ -28,10 +28,10 @@ import (
 //     the pidfd's process's.
 //
 // redoma xds names the process to SPIRE by this pidfd's PID and checks it
-// is still alive after each attestation. A process in another container's
-// cgroup is ErrPIDReused, which fails the start; one that fails the checks
-// otherwise is registered without a pidfd (CreateRuntime): in Broker mode
-// its agent then gets no SVID.
+// is still alive after each attestation. A process in another namespace or
+// another container's cgroup is ErrPIDReused, which fails the start; one
+// that fails the checks otherwise is registered without a pidfd
+// (CreateRuntime): in Broker mode its agent then gets no SVID.
 func BindProcess(pid int, netns, container string) (*os.File, error) {
 	return processBinder{proc: "/proc"}.bind(pid, netns, container)
 }
@@ -64,7 +64,9 @@ func (b processBinder) check(p *pidfd.FD, dir, netns, container string) error {
 		return err
 	}
 	if !same {
-		return errors.New("its network namespace is not the one mounted")
+		// The container's process, held by the runtime, is gone, and the
+		// namespace mounted may be another's.
+		return fmt.Errorf("%w: its network namespace is not the one mounted", ErrPIDReused)
 	}
 	cgroup, err := os.ReadFile(filepath.Join(dir, "cgroup"))
 	if err != nil {
@@ -82,10 +84,12 @@ func (b processBinder) check(p *pidfd.FD, dir, netns, container string) error {
 	return nil
 }
 
-// ErrPIDReused is BindProcess finding the PID in another container's cgroup
-// (libpod-<another ID>): the process the runtime held was replaced, maybe
-// before the hook mounted its namespace, which may then be another
-// container's. CreateRuntime fails the start on it; any other failure to
+// ErrPIDReused is BindProcess finding that the process at the PID is not
+// the one the runtime held: in another network namespace than the one the
+// hook mounted, or in another container's cgroup (libpod-<another ID>).
+// Either proves the container's process is gone and its PID reused, maybe
+// before the hook mounted the namespace, which may then be another
+// process's. CreateRuntime fails the start on it; any other failure to
 // bind only registers the container without a pidfd.
 var ErrPIDReused = errors.New("the container's PID was reused")
 

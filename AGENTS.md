@@ -465,9 +465,10 @@ definitions in `ocihook/hooks.d` match the default key; a host that changes
 - **The process:** once the namespace is mounted, the hook opens a pidfd
   for the container's process and binds it to it (`hook.BindProcess`): its
   network namespace is the one mounted, its cgroup is the container's
-  (`libpod-<id>`), and it is still alive after both reads. A process that
-  is in another container's cgroup fails the start (`hook.ErrPIDReused`:
-  its PID was reused, and the namespace mounted may be that container's);
+  (`libpod-<id>`), and it is still alive after both reads. A process in
+  another network namespace than the one mounted, or in another
+  container's cgroup, fails the start (`hook.ErrPIDReused`: its PID was
+  reused, and the namespace mounted may be another process's);
   one that fails the checks otherwise is logged and registered without a
   pidfd: in Broker mode its agent then gets no SVID. The register
   carries it as `SCM_RIGHTS` data (`register.WriteRequest`); `redoma xds`

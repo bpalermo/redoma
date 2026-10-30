@@ -8,6 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/bpalermo/redoma/common/pidfd"
 )
 
 // sleeper starts a process that runs until the test ends: the hook's tests
@@ -61,7 +64,7 @@ func TestBindProcess(t *testing.T) {
 		netns, cgroup, want string
 	}{
 		"the container's":       {"/proc/self/ns/net", scope, ""},
-		"another namespace":     {other, scope, "not the one mounted"},
+		"another namespace":     {other, scope, "PID was reused"},
 		"another cgroup":        {"/proc/self/ns/net", "0::/user.slice/user-1000.slice/session-1.scope\n", "cgroup is not container"},
 		"another container's":   {"/proc/self/ns/net", "0::/machine.slice/libpod-" + strings.Repeat("e", 64) + ".scope\n", "PID was reused"},
 		"cgroupfs, another's":   {"/proc/self/ns/net", "0::/libpod_parent/libpod-" + strings.Repeat("e", 64) + "\n", "PID was reused"},
@@ -89,18 +92,70 @@ func TestBindProcessExited(t *testing.T) {
 // is not.
 func TestBindProcessReuseIsDistinct(t *testing.T) {
 	pid := sleeper(t)
-	for cgroup, reused := range map[string]bool{
-		"0::/machine.slice/libpod-" + strings.Repeat("e", 64) + ".scope\n": true,
-		"0::/user.slice/user-1000.slice/session-1.scope\n":                 false,
-		"0::/machine.slice/libpod-conmon-" + cid + ".scope\n":              false,
+	other := t.TempDir() + "/not-the-namespace"
+	if err := os.WriteFile(other, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scope := "0::/machine.slice/libpod-" + cid + ".scope\n"
+	for name, tc := range map[string]struct {
+		netns, cgroup string
+		reused        bool
+	}{
+		"another container's cgroup": {"/proc/self/ns/net", "0::/machine.slice/libpod-" + strings.Repeat("e", 64) + ".scope\n", true},
+		"another namespace":          {other, scope, true},
+		"no container's cgroup yet":  {"/proc/self/ns/net", "0::/user.slice/user-1000.slice/session-1.scope\n", false},
+		"conmon's cgroup":            {"/proc/self/ns/net", "0::/machine.slice/libpod-conmon-" + cid + ".scope\n", false},
 	} {
-		f, err := processBinder{proc: fakeProcDir(t, pid, "/proc/self/ns/net", cgroup)}.bind(pid, "/proc/self/ns/net", cid)
+		f, err := processBinder{proc: fakeProcDir(t, pid, tc.netns, tc.cgroup)}.bind(pid, "/proc/self/ns/net", cid)
 		if f != nil {
 			f.Close()
 		}
-		if err == nil || errors.Is(err, ErrPIDReused) != reused {
-			t.Errorf("%q: %v, want reused %v", cgroup, err, reused)
+		if err == nil || errors.Is(err, ErrPIDReused) != tc.reused {
+			t.Errorf("%s: %v, want reused %v", name, err, tc.reused)
 		}
+	}
+}
+
+// TestBindProcessExitedDuringTheChecks: a process that exited (a zombie,
+// not yet reaped, so its PID and its /proc files are still its own) passes
+// the namespace and cgroup reads, and is refused by the liveness check
+// after them, which is not proven reuse.
+func TestBindProcessExitedDuringTheChecks(t *testing.T) {
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(), "REDOMA_HOOK_CHILD=1")
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Wait() }()
+	pid := cmd.Process.Pid
+	watch, err := pidfd.Open(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := pidfd.New(watch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	in.Close() // it exits, and stays a zombie until Wait
+	deadline := time.Now().Add(10 * time.Second)
+	for w.Alive() {
+		if time.Now().After(deadline) {
+			t.Fatal("the child did not exit")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	proc := fakeProcDir(t, pid, "/proc/self/ns/net", "0::/machine.slice/libpod-"+cid+".scope\n")
+	f, err := processBinder{proc: proc}.bind(pid, "/proc/self/ns/net", cid)
+	if f != nil {
+		f.Close()
+	}
+	if err == nil || errors.Is(err, ErrPIDReused) || !strings.Contains(err.Error(), "exited while the hook ran") {
+		t.Errorf("bind of a zombie: %v, want the liveness check's error", err)
 	}
 }
 
