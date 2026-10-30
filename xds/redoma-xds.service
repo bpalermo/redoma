@@ -1,13 +1,14 @@
 # redoma-xds: the host Envoy's control plane for the agent containers. Serves
 # the listeners of every running agent (LDS), their relay clusters (CDS) and
 # each agent's SPIFFE identity (SDS) over ADS on /run/redoma-xds/xds.sock,
-# fetching the identities from SPIRE's Delegated Identity API on the SPIRE
-# agent's admin socket (spire_admin_socket in /etc/redoma/redoma.conf).
+# fetching the identities from SPIRE: the Delegated Identity API on the SPIRE
+# agent's admin socket, or the SPIFFE Broker API (identity_api and the
+# spire_* sockets in /etc/redoma/redoma.conf).
 #
-# Installed by the redoma package in /usr/lib/systemd/system. The admin socket
-# is redialled with backoff until it is there, so the unit has no dependency
-# on the SPIRE agent's own unit; order them with a drop-in if you want the
-# first redials saved.
+# Installed by the redoma package in /usr/lib/systemd/system. SPIRE's sockets
+# are redialled with backoff until they are there, so the unit has no
+# dependency on the SPIRE agent's own unit; order them with a drop-in if you
+# want the first redials saved.
 [Unit]
 Description=redoma xds: LDS, CDS and SDS for the agent containers' host Envoy
 Documentation=https://github.com/bpalermo/redoma
@@ -30,13 +31,27 @@ Group=redoma-sds
 RuntimeDirectory=redoma-xds
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
+
+# The pidfd of each hook-registered agent's process, which the Broker API
+# names the agent by, is kept in systemd's file descriptor store under its
+# container's ID, so a restart of the service gets it back. Preserve keeps
+# the store across a stop and a start too (systemd 254 and later; older ones
+# ignore the setting, and keep the store across a restart but not a stop and
+# a start). An agent whose pidfd was lost gets no SVID in Broker mode until
+# its container is restarted.
+NotifyAccess=main
+FileDescriptorStoreMax=1024
+FileDescriptorStorePreserve=yes
+
 # The socket is 0660 once bound (server.SocketMode); owner-only before that.
 UMask=0077
 
-# It reads /etc/redoma, /run/redoma/active and /run/netns, connects
-# to one unix socket and listens on another; nothing else. Connecting to a
-# socket needs no write access to its file system, so the read-only system is
-# no obstacle to the admin socket.
+# It reads /etc/redoma, /run/redoma/active and /run/netns (and in Broker
+# mode /etc/passwd and /etc/group, to check who may reach the Workload API),
+# connects to SPIRE's unix sockets and listens on its own; nothing else.
+# Connecting to a socket needs no write access to its file system, so the
+# read-only system is no obstacle to SPIRE's sockets. It reads no other
+# process's /proc: an agent's PID comes from the pidfd's fdinfo, its own.
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=

@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "hostcheck",
+    srcs = ["hostcheck.go"],
+    importpath = "github.com/bpalermo/redoma/xds/internal/hostcheck",
+    visibility = ["//xds:__subpackages__"],
+    deps = ["//common/forbidden"],
+)
+
+go_test(
+    name = "hostcheck_test",
+    srcs = ["hostcheck_test.go"],
+    embed = [":hostcheck"],
+)

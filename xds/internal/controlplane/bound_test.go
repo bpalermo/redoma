@@ -108,3 +108,34 @@ func TestSharedNamespaceIsRefused(t *testing.T) {
 		t.Error("y got listeners in x's namespace")
 	}
 }
+
+// TestSVIDAfterBound: in Broker mode, the identity of an agent whose
+// Source waits for its bind (the OCI hook, which holds the container's
+// start, and with it the Podman API SPIRE attests through) is subscribed
+// only once Envoy reported its listeners and the Source was told; one with
+// no wait (read back after a restart) is subscribed at once.
+func TestSVIDAfterBound(t *testing.T) {
+	r := newReplaceEnv(t, Config{RebindTimeout: time.Hour, SVIDAfterBound: true})
+	sel := r.sel.Type + ":" + r.sel.Value
+	bound := make(chan error, 1)
+	r.src.events <- agent.Event{Agent: r.x, Bound: bound}
+	v := r.eventually(t, "x's listeners", func(v view) bool { return slices.Contains(v.listeners, "agent_x_model") })
+	time.Sleep(50 * time.Millisecond)
+	if n := r.fake.Opened(sel); n != 0 {
+		t.Fatalf("%d SVID subscriptions before Envoy bound the listeners, want none", n)
+	}
+	r.ctl.ListenersApplied(v.snap.GetVersion(resource.ListenerType))
+	if err := recv(t, bound); err != nil {
+		t.Fatalf("Bound = %v", err)
+	}
+	waitStreams(t, r.fake, sel, 1)
+	r.eventually(t, "x bound, its SVID served", r.bound)
+
+	r.src.events <- agent.Event{Agent: r.x, Removed: true}
+	waitStreams(t, r.fake, sel, 0)
+	again := r.x
+	// Elsewhere: no rebind at the old path to wait for.
+	again.Netns, again.NetnsID.Ino = "/run/netns/redoma-x-again", again.NetnsID.Ino+1
+	r.src.events <- agent.Event{Agent: again}
+	waitStreams(t, r.fake, sel, 1)
+}

@@ -16,9 +16,12 @@ control plane around that Envoy:
   - LDS: each running agent's listeners, bound in the agent's namespace;
   - CDS: each agent's cluster to the relay;
   - SDS: each agent's SPIFFE identity, `spiffe://<td>/agent/<name>`,
-    fetched on the agents' behalf from SPIRE's Delegated Identity API.
+    fetched on the agents' behalf from SPIRE's Delegated Identity API, or
+    from the SPIFFE Broker API (`identity_api = broker`, see
+    `docs/broker-identity.md`).
 
-  It runs as uid 961 (`redoma-sds`), the one delegate SPIRE authorizes.
+  It runs as uid 961 (`redoma-sds`), the one delegate or broker SPIRE
+  authorizes.
 - `redoma relay` carries the lead's tasks to the agents and their turns'
   output, questions and messages back (see "The relay").
 - `redoma msg` and `redoma mcp` are the lead's clients of the relay (see
@@ -122,8 +125,13 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
   - `modelauth`: how the model listeners inject the credential;
   - `lds`: an agent's listeners, model and egress, and its relay listener;
   - `cds`: an agent's relay cluster;
-  - `identity`: the Delegated Identity API client (X.509 SVIDs, the bundle,
-    JWT SVIDs), and `identitytest`, its fake;
+  - `identity`: the Delegated Identity API client and the Broker API's
+    (X.509 SVIDs, the bundle, JWT SVIDs), `Workload`, redoma xds's own SVID
+    in Broker mode, and `identitytest`, the Delegated API's fake;
+  - `fdstore`: systemd's file descriptor store, where the agents' pidfds
+    outlive a restart;
+  - `hostcheck`: Broker mode's checks of the host at start (SPIRE's sockets
+    under the hook's forbidden paths, the Workload API's directory);
   - `controlplane`: the snapshot, kept in step with all of the above;
   - `server`: ADS, LDS, CDS and SDS on the unix socket.
 - `ocihook/internal/hook`: the hook's createRuntime and poststop logic.
@@ -234,11 +242,15 @@ goes in `common/config`, that file, and the table above.
   state that cannot be read keeps the last one; a settings file that cannot
   be parsed starts nothing.
 - **An agent's identity is subscribed by its Source's selectors and only
-  those.** SPIRE takes the delegate's selectors as attested, so a Source
-  decides identities. Every Source sends `redoma:agent:<name>`, the selector
-  the SPIRE entries select on. A new selector format is a change every host's
-  SPIRE entries must follow. An SVID whose ID is not
-  `spiffe://<td>/agent/<name>` is not served.
+  those** (Delegated mode). SPIRE takes the delegate's selectors as
+  attested, so a Source decides identities. Every Source sends
+  `redoma:agent:<name>`, the selector the SPIRE entries select on. A new
+  selector format is a change every host's SPIRE entries must follow. An
+  SVID whose ID is not `spiffe://<td>/agent/<name>` is not served, in
+  either mode. In Broker mode an agent is named by its container's process,
+  a pidfd the hook bound to it; SPIRE's attestors decide its selectors, and
+  an answer is used only if the process was still alive once SPIRE had
+  answered (`docs/broker-identity.md`).
 - **The name is the identity, so the name policy is the security
   boundary.** Whoever can make a Source emit a name gets
   `spiffe://<td>/agent/<name>`. activedir: whoever can write
@@ -378,7 +390,10 @@ definitions in `ocihook/hooks.d` match the default key; a host that changes
     (`defaultDeviceRules`) is written from crun's defaults: a rule it does
     not know fails closed, refusing the start;
   - a namespace other than the network's joined by path (`--pid`, `--ipc`,
-    `--uts`, `--cgroupns` of another process; a mount namespace by path);
+    `--uts`, `--cgroupns` of another process; a mount namespace by path),
+    and no PID namespace of its own (`--pid host`): the agent would see the
+    host's processes, and through `/proc/<pid>/root` of one with its uid
+    every file that process reaches, with no mount;
   - a mount of another type than a bind or the runtime's own file systems
     (proc, tmpfs, devpts, mqueue, sysfs, cgroup, cgroup2); a bind whose
     source is not absolute (the runtime takes it against the bundle) or does
@@ -387,7 +402,11 @@ definitions in `ocihook/hooks.d` match the default key; a host that changes
     holds one of `hook.ForbiddenSources` (`/run/redoma-xds`,
     `/run/redoma-relay`, `/run/redoma-relay-lead`, `/run/redoma-spire`,
     `/run/redoma`, `/etc/redoma`, `/run/podman`, `/var/lib/containers`,
-    `/proc`, `/dev`), so neither `/run` nor `/` either. The one exception is
+    `/proc`, `/dev`), so neither `/run` nor `/` either, nor the directory
+    of any SPIRE socket `/etc/redoma/redoma.conf` names, as written and as
+    it resolves (`forbidden.Sources`): a host that moves a socket keeps it
+    forbidden. This check is the one barrier against a bind of a SPIRE
+    socket file itself, which SPIRE makes `0777`. The one exception is
     the container's own `shm`, `passwd` and `group` in its userdata under
     `/var/lib/containers/storage/<driver>-containers/<its id>/userdata/`,
     which Podman 4.9 binds itself (its `hosts`, `resolv.conf`, `hostname`,
@@ -443,6 +462,14 @@ definitions in `ocihook/hooks.d` match the default key; a host that changes
   same file under another path and another place, which neither check
   sees; the services' directories are 0750 and their own, so only root
   could make one).
+- **The process:** once the namespace is mounted, the hook opens a pidfd
+  for the container's process and binds it to it (`hook.BindProcess`): its
+  network namespace is the one mounted, its cgroup is the container's
+  (`libpod-<id>`), and it is still alive after both reads. The register
+  carries it as `SCM_RIGHTS` data (`register.WriteRequest`); `redoma xds`
+  keeps it in systemd's file descriptor store under the container's ID, so
+  a restart gets it back, and gives a name back to its registration only
+  when exactly one live pidfd is stored under it.
 - **poststop:** unregister (best effort) and unmount. A registration whose
   mount is gone (a crash, an unmount by hand) is removed by the rescan.
   Registrations are recorded in `/run/redoma-xds/registrations.json`, so a

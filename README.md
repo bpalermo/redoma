@@ -133,6 +133,8 @@ trust_domain = redoma.internal
 #agent_annotation = redoma/agent
 #spire_admin_socket = /run/redoma-spire/admin/admin.sock
 #spire_workload_api = unix:///run/redoma-spire/workload/agent.sock
+#identity_api = delegated
+#spire_broker_socket = /run/redoma-spire/broker/broker.sock
 ```
 
 From the trust domain come the agents' IDs, `spiffe://<td>/agent/<name>`,
@@ -168,6 +170,11 @@ entries, with `<agent>` the host's SPIRE agent ID:
 The agent entries' selector type, `redoma`, is one no attestor produces:
 those identities exist only through the delegate, for the containers
 `redoma xds` names.
+
+`identity_api = broker` has `redoma xds` use the SPIFFE Broker API instead,
+naming each agent's container process to SPIRE, whose attestors decide its
+selectors. It needs its own SPIRE configuration, entries and host checks:
+see `docs/broker-identity.md`. The Delegated Identity API stays the default.
 
 ### Envoy
 

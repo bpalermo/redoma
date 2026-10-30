@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "register",
     srcs = [
+        "fd.go",
         "netns.go",
         "register.go",
     ],
@@ -12,6 +13,9 @@ go_library(
 
 go_test(
     name = "register_test",
-    srcs = ["register_test.go"],
+    srcs = [
+        "fd_test.go",
+        "register_test.go",
+    ],
     embed = [":register"],
 )

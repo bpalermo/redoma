@@ -63,6 +63,8 @@ type env struct {
 	uid    uint32
 	mu     sync.Mutex
 	stop   func()
+	// drained are the events before Synced: the recorded registrations.
+	drained []agent.Event
 }
 
 func newEnv(t *testing.T, state string) *env {
@@ -125,8 +127,15 @@ func newEnvWith(t *testing.T, state string, change func(*Source)) *env {
 		})
 	}
 	t.Cleanup(e.stop)
-	if ev := e.next(t); !ev.Synced {
-		t.Fatalf("first event %+v, want Synced", ev)
+	for {
+		ev := e.next(t)
+		if ev.Synced {
+			break
+		}
+		if ev.Removed || ev.Bound != nil {
+			t.Fatalf("event %+v before Synced", ev)
+		}
+		e.drained = append(e.drained, ev)
 	}
 	return e
 }

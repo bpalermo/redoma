@@ -1,0 +1,16 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "forbidden",
+    srcs = ["forbidden.go"],
+    importpath = "github.com/bpalermo/redoma/common/forbidden",
+    visibility = ["//visibility:public"],
+    deps = ["//common/config"],
+)
+
+go_test(
+    name = "forbidden_test",
+    srcs = ["forbidden_test.go"],
+    embed = [":forbidden"],
+    deps = ["//common/config"],
+)

@@ -30,6 +30,11 @@
 // proxy is there. Registrations are recorded in StateFile, so a restart of
 // redoma-xds finds them again, and rescanned: one whose namespace is gone
 // (unmounted by poststop, or by hand after a crash) is removed.
+//
+// A register comes with a pidfd of the container's process, which the hook
+// bound to it (hook.BindProcess): the agent's agent.Process, which the
+// Broker API names it by. The pidfds are kept in Store, under their
+// container's ID, so a restart of redoma-xds gets them back (Stored).
 package hooksource
 
 import (
@@ -47,9 +52,11 @@ import (
 
 	"github.com/bpalermo/redoma/common/allowlist"
 	"github.com/bpalermo/redoma/common/atomicfile"
+	"github.com/bpalermo/redoma/common/pidfd"
 	"github.com/bpalermo/redoma/common/register"
 	"github.com/bpalermo/redoma/xds/internal/activedir"
 	"github.com/bpalermo/redoma/xds/internal/agent"
+	"github.com/bpalermo/redoma/xds/internal/fdstore"
 )
 
 // Selectors are what a hook-registered agent's identity is subscribed by:
@@ -87,9 +94,19 @@ type Source struct {
 	BoundTimeout time.Duration
 	Log          *slog.Logger
 
-	// PeerUID and Stat are the system's unless a test replaces them.
-	PeerUID func(net.Conn) (uint32, error)
-	Stat    activedir.StatFunc
+	// Store keeps each registration's pidfd across restarts of this
+	// process, named after its container; nil keeps them in memory only.
+	Store fdstore.Store
+	// Stored are the descriptors Store passed back at start, by name. Run
+	// takes them: a registration gets the one of its name when exactly one
+	// is a live pidfd, and the others are closed and removed from Store.
+	Stored map[string][]*os.File
+
+	// PeerUID, Stat and ReadRequest are the system's unless a test replaces
+	// them.
+	PeerUID     func(net.Conn) (uint32, error)
+	Stat        activedir.StatFunc
+	ReadRequest func(net.Conn) (register.Request, *os.File, error)
 
 	mu   sync.Mutex
 	regs map[string]registration // by container ID
@@ -103,10 +120,17 @@ type registration struct {
 	Agent   string        `json:"agent"`
 	Netns   string        `json:"netns"`
 	NetnsID agent.NetnsID `json:"netns_id"`
+	// proc is the container's process, nil when the hook sent none or it
+	// was lost. Not recorded: Store keeps it.
+	proc *pidfd.FD
 }
 
 func (r registration) agent() agent.Agent {
-	return agent.Agent{ID: r.Agent, Netns: r.Netns, NetnsID: r.NetnsID, Selectors: Selectors(r.Agent)}
+	a := agent.Agent{ID: r.Agent, Netns: r.Netns, NetnsID: r.NetnsID, Selectors: Selectors(r.Agent)}
+	if r.proc != nil {
+		a.Process = r.proc
+	}
+	return a
 }
 
 // Listen opens the registration socket at path, replacing a stale one, with
@@ -158,9 +182,13 @@ func (s *Source) Run(ctx context.Context, emit func(agent.Event)) error {
 	if s.Stat == nil {
 		s.Stat = activedir.StatNetns
 	}
+	if s.ReadRequest == nil {
+		s.ReadRequest = register.ReadRequest
+	}
 	s.mu.Lock()
 	s.emit = emit
 	s.regs = s.load()
+	s.restoreProcesses()
 	for _, r := range s.regs {
 		emit(agent.Event{Agent: r.agent()})
 	}
@@ -215,6 +243,97 @@ func (s *Source) load() map[string]registration {
 	return regs
 }
 
+// restoreProcesses gives each registration the pidfd Stored holds under its
+// container's ID, when exactly one of them is a live pidfd: a container
+// restarted under the same ID may have left an older one. Every name is
+// then removed from Store and the one kept added back, so Store holds
+// exactly the registrations' pidfds. Called with mu held.
+func (s *Source) restoreProcesses() {
+	for name, files := range s.Stored {
+		live := livePidfds(files)
+		r, ok := s.regs[name]
+		switch {
+		case ok && len(live) == 1:
+			r.proc = live[0]
+			s.regs[name] = r
+		case ok && len(live) > 1:
+			s.Log.Error("several live pidfds stored for one container; keeping none", "container", name, "count", len(live))
+			closeAll(live)
+		default:
+			closeAll(live)
+		}
+		s.removeStored(name)
+	}
+	s.Stored = nil
+	for container, r := range s.regs {
+		if r.proc == nil {
+			s.Log.Warn("hook registration without its container's pidfd; in Broker mode the agent gets no SVID until its container is restarted", "container", container, "agent", r.Agent)
+			continue
+		}
+		s.addStored(container, r.proc)
+	}
+}
+
+// livePidfds are the files that are pidfds of live processes; the others
+// are closed.
+func livePidfds(files []*os.File) []*pidfd.FD {
+	var live []*pidfd.FD
+	for _, f := range files {
+		p, err := pidfd.New(f)
+		if err != nil {
+			continue
+		}
+		if !p.Alive() {
+			p.Close()
+			continue
+		}
+		live = append(live, p)
+	}
+	return live
+}
+
+func closeAll(procs []*pidfd.FD) {
+	for _, p := range procs {
+		p.Close()
+	}
+}
+
+// addStored keeps proc in Store under container's ID, after removing
+// anything an earlier run of the container left there.
+func (s *Source) addStored(container string, proc *pidfd.FD) {
+	if s.Store == nil {
+		return
+	}
+	s.removeStored(container)
+	if err := s.Store.Add(container, proc.File()); err != nil && !errors.Is(err, fdstore.ErrNoStore) {
+		s.Log.Warn("cannot keep the container's pidfd in systemd's store; it is lost if redoma xds restarts", "container", container, "err", err)
+	}
+}
+
+func (s *Source) removeStored(container string) {
+	if s.Store == nil {
+		return
+	}
+	if err := s.Store.Remove(container); err != nil && !errors.Is(err, fdstore.ErrNoStore) {
+		s.Log.Warn("cannot remove the container's pidfd from systemd's store", "container", container, "err", err)
+	}
+}
+
+// put records r for container, replacing what the container had: its
+// pidfd, if another, is closed, and r's kept in Store. Called with mu held.
+func (s *Source) put(container string, r registration) {
+	if old, ok := s.regs[container]; ok && old.proc != nil && old.proc != r.proc {
+		old.proc.Close()
+	}
+	s.regs[container] = r
+	if r.proc != nil {
+		s.addStored(container, r.proc)
+	} else {
+		s.removeStored(container)
+	}
+	s.save()
+}
+
 // save records the registrations; called with mu held.
 func (s *Source) save() {
 	raw, err := json.Marshal(s.regs)
@@ -261,6 +380,10 @@ func (s *Source) drop(container string) {
 		return
 	}
 	delete(s.regs, container)
+	if r.proc != nil {
+		r.proc.Close()
+	}
+	s.removeStored(container)
 	s.save()
 	s.emit(agent.Event{Agent: r.agent(), Removed: true})
 }
@@ -287,16 +410,23 @@ func (s *Source) serve(ctx context.Context, conn net.Conn) error {
 		s.Log.Error("refused a registration from a process that is not root", "uid", uid)
 		return errors.New("only root may register agents")
 	}
-	var req register.Request
-	if err := register.Read(conn, &req); err != nil {
+	req, file, err := s.ReadRequest(conn)
+	if err != nil {
 		return fmt.Errorf("reading the request: %w", err)
 	}
+	if file != nil && req.Op != register.OpRegister {
+		file.Close()
+		return fmt.Errorf("a pidfd with a %s", req.Op)
+	}
 	if !register.ValidContainer(req.Container) {
+		if file != nil {
+			file.Close()
+		}
 		return fmt.Errorf("not a container ID: %q", req.Container)
 	}
 	switch req.Op {
 	case register.OpRegister:
-		return s.register(ctx, req)
+		return s.register(ctx, req, file)
 	case register.OpUnregister:
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -307,16 +437,27 @@ func (s *Source) serve(ctx context.Context, conn net.Conn) error {
 	}
 }
 
-// register claims req.Agent for the container and waits until Envoy has
-// bound its listeners. A claim that fails is withdrawn.
-func (s *Source) register(ctx context.Context, req register.Request) error {
+// register claims req.Agent for the container, with the pidfd of its
+// process if file is one, and waits until Envoy has bound its listeners. A
+// claim that fails is withdrawn.
+func (s *Source) register(ctx context.Context, req register.Request, file *os.File) error {
 	r, err := s.check(req)
+	if err == nil && file != nil {
+		r.proc, err = process(file)
+		file = nil
+	}
+	if file != nil {
+		file.Close()
+	}
 	if err != nil {
 		s.Log.Error("refused a hook registration", "container", req.Container, "agent", req.Agent, "err", err)
 		return err
 	}
 	bound := make(chan error, 1)
 	if err := s.claim(req.Container, r, bound); err != nil {
+		if r.proc != nil {
+			r.proc.Close()
+		}
 		return err
 	}
 	s.Log.Info("hook registration", "container", req.Container, "agent", r.Agent, "netns", r.Netns)
@@ -336,6 +477,20 @@ func (s *Source) register(ctx context.Context, req register.Request) error {
 		s.mu.Unlock()
 	}
 	return err
+}
+
+// process takes the pidfd a register came with: a pidfd, of a process
+// still alive.
+func process(file *os.File) (*pidfd.FD, error) {
+	p, err := pidfd.New(file)
+	if err != nil {
+		return nil, fmt.Errorf("the container's process: %w", err)
+	}
+	if !p.Alive() {
+		p.Close()
+		return nil, errors.New("the container's process has exited")
+	}
+	return p, nil
 }
 
 // check validates a register request and reads the namespace's identity.
@@ -385,8 +540,7 @@ func (s *Source) claim(container string, r registration, bound chan<- error) err
 		// The same container under another name: that name goes.
 		s.drop(container)
 	}
-	s.regs[container] = r
-	s.save()
+	s.put(container, r)
 	s.emit(agent.Event{Agent: r.agent(), Bound: bound})
 	return nil
 }

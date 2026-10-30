@@ -30,9 +30,22 @@ type Agent struct {
 	// same path is a different agent to Envoy: its listeners must be bound
 	// again, in the new namespace.
 	NetnsID NetnsID
-	// Selectors are what its identity is subscribed by. SPIRE takes them as
-	// attested, so they decide which identity the agent gets.
+	// Selectors are what its identity is subscribed by through the
+	// Delegated Identity API. SPIRE takes them as attested, so they decide
+	// which identity the agent gets.
 	Selectors []Selector
+	// Process is the agent's container process, which the Broker API names
+	// it by: nil when its Source has none (a launcher's agent, or a
+	// registration whose pidfd was lost).
+	Process Process
+}
+
+// Process is a process held by a pidfd (common/pidfd).
+type Process interface {
+	// PID is its PID, or an error once it has exited.
+	PID() (int, error)
+	// Alive reports whether it has not exited.
+	Alive() bool
 }
 
 // NetnsID identifies a namespace: the device and inode of its nsfs file
@@ -43,9 +56,9 @@ type NetnsID struct {
 }
 
 // Equal reports whether a and b are the same agent in the same namespace
-// with the same selectors.
+// with the same selectors and the same process.
 func (a Agent) Equal(b Agent) bool {
-	return a.ID == b.ID && a.Netns == b.Netns && a.NetnsID == b.NetnsID && slices.Equal(a.Selectors, b.Selectors)
+	return a.ID == b.ID && a.Netns == b.Netns && a.NetnsID == b.NetnsID && slices.Equal(a.Selectors, b.Selectors) && a.Process == b.Process
 }
 
 // Event is an agent starting or stopping, or the end of the initial set.

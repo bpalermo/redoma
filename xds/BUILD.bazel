@@ -7,12 +7,15 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//common/config",
+        "//common/forbidden",
         "//common/version",
         "//xds/internal/activedir",
         "//xds/internal/agent",
         "//xds/internal/cds",
         "//xds/internal/controlplane",
+        "//xds/internal/fdstore",
         "//xds/internal/hooksource",
+        "//xds/internal/hostcheck",
         "//xds/internal/identity",
         "//xds/internal/server",
         "@com_github_envoyproxy_go_control_plane//pkg/cache/v3:cache",
@@ -28,5 +31,8 @@ go_test(
     name = "xds_test",
     srcs = ["command_test.go"],
     embed = [":xds"],
-    deps = ["//common/config"],
+    deps = [
+        "//common/config",
+        "//xds/internal/hostcheck",
+    ],
 )

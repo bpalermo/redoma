@@ -8,17 +8,23 @@ go_library(
     deps = [
         "//common/allowlist",
         "//common/atomicfile",
+        "//common/pidfd",
         "//common/register",
         "//xds/internal/activedir",
         "//xds/internal/agent",
+        "//xds/internal/fdstore",
     ],
 )
 
 go_test(
     name = "hooksource_test",
-    srcs = ["hooksource_test.go"],
+    srcs = [
+        "hooksource_test.go",
+        "pidfd_test.go",
+    ],
     embed = [":hooksource"],
     deps = [
+        "//common/pidfd",
         "//common/register",
         "//xds/internal/agent",
         "//xds/internal/identity/identitytest",

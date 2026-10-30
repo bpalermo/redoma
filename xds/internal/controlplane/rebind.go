@@ -199,6 +199,9 @@ func (c *Controller) confirmBound() {
 		if b.version != 0 && applied >= b.version {
 			b.ch <- nil
 			delete(c.bound, id)
+			if r, ok := c.agents[id]; ok {
+				c.watch(r)
+			}
 		}
 	}
 }

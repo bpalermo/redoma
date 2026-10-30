@@ -2,8 +2,10 @@
 // containers. It serves the host Envoy, over ADS on a unix socket, the
 // listeners of every running agent (LDS, bound inside the agent's network
 // namespace), each agent's cluster to the relay (CDS) and each agent's
-// SPIFFE identity (SDS), which it fetches from SPIRE's Delegated Identity
-// API as the authorized delegate.
+// SPIFFE identity (SDS), which it fetches from SPIRE on the agents' behalf:
+// from the Delegated Identity API as the authorized delegate, or from the
+// SPIFFE Broker API as its one broker (identity_api; see
+// docs/broker-identity.md).
 //
 // It runs as uid 961 (redoma-sds) under systemd: see redoma-xds.service.
 package xds
@@ -13,6 +15,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/envoyproxy/go-control-plane/pkg/cache/v3"
@@ -20,12 +24,15 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
 	"github.com/bpalermo/redoma/common/config"
+	"github.com/bpalermo/redoma/common/forbidden"
 	"github.com/bpalermo/redoma/common/version"
 	"github.com/bpalermo/redoma/xds/internal/activedir"
 	"github.com/bpalermo/redoma/xds/internal/agent"
 	"github.com/bpalermo/redoma/xds/internal/cds"
 	"github.com/bpalermo/redoma/xds/internal/controlplane"
+	"github.com/bpalermo/redoma/xds/internal/fdstore"
 	"github.com/bpalermo/redoma/xds/internal/hooksource"
+	"github.com/bpalermo/redoma/xds/internal/hostcheck"
 	"github.com/bpalermo/redoma/xds/internal/identity"
 	"github.com/bpalermo/redoma/xds/internal/server"
 )
@@ -39,7 +46,13 @@ type flags struct {
 	registerSocket string
 	xdsSocket      string
 	adminSocket    string
+	identityAPI    string
+	brokerSocket   string
+	workloadAPI    string
 	relay          cds.Relay
+	// file is the settings file as read, before the flags: what the OCI
+	// hook reads too.
+	file config.Config
 }
 
 // Command is `redoma xds`. The trust domain, the relay's ID and the SPIRE
@@ -77,24 +90,33 @@ func command(f *flags) *cobra.Command {
 	fl.DurationVar(&f.boundTimeout, "bound-timeout", 25*time.Second, "how long a hook registration waits for Envoy to bind the listeners (below the hook's own --timeout)")
 	fl.StringVar(&f.xdsSocket, "xds-socket", "/run/redoma-xds/xds.sock", "the unix socket the host Envoy's ADS cluster connects to")
 	fl.StringVar(&f.adminSocket, "spire-admin-socket", "", "the SPIRE agent's admin socket, the Delegated Identity API (default: the settings file's spire_admin_socket)")
+	fl.StringVar(&f.identityAPI, "identity-api", "", "how the agents' SVIDs are obtained: delegated or broker (default: the settings file's identity_api)")
+	fl.StringVar(&f.brokerSocket, "spire-broker-socket", "", "the SPIRE agent's Broker API socket, in Broker mode (default: the settings file's spire_broker_socket)")
+	fl.StringVar(&f.workloadAPI, "spire-workload-api", "", "the SPIRE agent's Workload API, where redoma xds gets its own SVID in Broker mode (default: the settings file's spire_workload_api)")
 	fl.StringVar(&f.relay.Socket, "relay-socket", "/run/redoma-relay/relay.sock", "the relay's agent socket, as the host Envoy sees it; every agent gets a relay listener (127.0.0.1:7070) and a cluster to it. Empty: no relay")
 	fl.StringVar(&f.relay.ID, "relay-id", "", "the relay's SPIFFE ID, which Envoy requires of its certificate (default: spiffe://<trust domain>/host/relay)")
 	return cmd
 }
 
 // settle fills in what the command line left to the settings file: the
-// trust domain, the SPIRE admin socket, and the relay's ID, derived from
-// the trust domain finally chosen.
+// trust domain, SPIRE's sockets and the identity API, and the relay's ID,
+// derived from the trust domain finally chosen.
 func (f *flags) settle(cmd *cobra.Command) error {
 	conf, err := config.FromCommand(cmd)
 	if err != nil {
 		return err
 	}
+	f.file = conf
 	config.Unless(cmd, "trust-domain", &f.cfg.TrustDomain, conf.TrustDomain)
 	config.Unless(cmd, "spire-admin-socket", &f.adminSocket, conf.SpireAdminSocket)
+	config.Unless(cmd, "identity-api", &f.identityAPI, conf.IdentityAPI)
+	config.Unless(cmd, "spire-broker-socket", &f.brokerSocket, conf.SpireBrokerSocket)
+	config.Unless(cmd, "spire-workload-api", &f.workloadAPI, conf.WorkloadAPI)
 	config.Unless(cmd, "relay-id", &f.relay.ID, "spiffe://"+f.cfg.TrustDomain+config.RelayPath)
 	// A flag is held to what the file is held to.
 	conf.TrustDomain, conf.SpireAdminSocket = f.cfg.TrustDomain, f.adminSocket
+	conf.IdentityAPI, conf.SpireBrokerSocket, conf.WorkloadAPI = f.identityAPI, f.brokerSocket, f.workloadAPI
+	f.cfg.SVIDAfterBound = f.identityAPI == config.IdentityBroker
 	if err := conf.Validate(); err != nil {
 		return err
 	}
@@ -105,17 +127,19 @@ func (f *flags) settle(cmd *cobra.Command) error {
 }
 
 func run(ctx context.Context, f flags, log *slog.Logger) error {
-	log.Info("redoma xds starting", "version", version.Version, "xds_socket", f.xdsSocket, "spire_admin_socket", f.adminSocket, "trust_domain", f.cfg.TrustDomain)
+	log.Info("redoma xds starting", "version", version.Version, "xds_socket", f.xdsSocket, "identity_api", f.identityAPI, "trust_domain", f.cfg.TrustDomain)
 	if f.cfg.Relay != nil {
 		if err := checkRelayID(f.cfg.Relay.ID, f.cfg.TrustDomain); err != nil {
 			return err
 		}
 	}
-	conn, err := identity.Dial(f.adminSocket)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	id, closeID, err := identityAPI(ctx, f, log)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer closeID()
 
 	snapshots := cache.NewSnapshotCache(true, controlplane.NodeHash{}, nil)
 	l, err := server.Listen(f.xdsSocket)
@@ -127,10 +151,8 @@ func run(ctx context.Context, f flags, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	ctl := controlplane.New(f.cfg, source, identity.New(conn, f.cfg.TrustDomain, log), snapshots, log)
+	ctl := controlplane.New(f.cfg, source, id, snapshots, log)
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	errc := make(chan error, 2)
 	go func() { errc <- ctl.Run(ctx) }()
 	go func() { errc <- server.Serve(ctx, l, snapshots, server.ListenerVersions(ctl.ListenersApplied), log) }()
@@ -168,12 +190,74 @@ func checkRelayID(id, trustDomain string) error {
 	return nil
 }
 
+// identityAPI is the client of the API identity_api names, and what closes
+// it. Broker mode first checks that the agents cannot reach SPIRE's sockets
+// (brokerChecks).
+func identityAPI(ctx context.Context, f flags, log *slog.Logger) (controlplane.Identity, func(), error) {
+	if f.identityAPI != config.IdentityBroker {
+		log.Info("the agents' SVIDs come from the Delegated Identity API", "spire_admin_socket", f.adminSocket)
+		conn, err := identity.Dial(f.adminSocket)
+		if err != nil {
+			return nil, nil, err
+		}
+		return identity.New(conn, f.cfg.TrustDomain, log), func() { conn.Close() }, nil
+	}
+	log.Info("the agents' SVIDs come from the Broker API", "spire_broker_socket", f.brokerSocket, "spire_workload_api", f.workloadAPI)
+	if err := brokerChecks(f, hostcheck.System); err != nil {
+		return nil, nil, fmt.Errorf("broker mode: %w", err)
+	}
+	td, err := spiffeid.TrustDomainFromString(f.cfg.TrustDomain)
+	if err != nil {
+		return nil, nil, err
+	}
+	own := identity.OpenWorkload(ctx, f.workloadAPI, td, log)
+	conn, err := identity.DialBroker(f.brokerSocket, own, td)
+	if err != nil {
+		own.Close()
+		return nil, nil, err
+	}
+	return identity.NewBroker(conn, own, f.cfg.TrustDomain, log), func() { conn.Close(); own.Close() }, nil
+}
+
+// brokerChecks refuses Broker mode on a host where an agent could reach
+// SPIRE's Workload API, and with it its own SVID (docs/broker-identity.md,
+// "The mitigation"): the Workload API's and the Broker API's sockets must
+// be where the OCI hook forbids every agent to mount, as the settings file
+// the hook reads names them, and the Workload API's directory must be
+// closed to all but the services.
+func brokerChecks(f flags, acc hostcheck.Accounts) error {
+	workload := strings.TrimPrefix(f.workloadAPI, "unix://")
+	if err := hostcheck.SocketsForbidden([]string{workload, f.brokerSocket}, forbidden.Sources(f.file)); err != nil {
+		return err
+	}
+	return hostcheck.WorkloadDir(filepath.Dir(workload), serviceUIDs(), acc)
+}
+
+// serviceUIDs may reach the Workload API: redoma xds's own, and the fixed
+// ids of redoma-sds and redoma-relay (README.md).
+func serviceUIDs() []uint32 {
+	return []uint32{961, 963, uint32(os.Getuid())}
+}
+
 // sources is where the running agents come from: the launcher's state, and
-// the OCI hook's registrations when the registration socket is set.
+// the OCI hook's registrations when the registration socket is set, with
+// the pidfds systemd's store kept for them.
 func sources(f flags, log *slog.Logger) (agent.Source, error) {
 	active := f.active
 	active.Interval, active.Log = f.cfg.ScanInterval, log
+	store, stored, err := fdstore.FromEnv()
+	if err != nil {
+		log.Error("the descriptors systemd passed back", "err", err)
+	}
+	if store.Socket == "" {
+		log.Warn("not started by systemd with a notify socket: the agents' pidfds do not survive a restart, and their containers then need one in Broker mode")
+	}
 	if f.registerSocket == "" {
+		for _, files := range stored {
+			for _, file := range files {
+				file.Close()
+			}
+		}
 		return &active, nil
 	}
 	l, err := hooksource.Listen(f.registerSocket)
@@ -188,6 +272,8 @@ func sources(f flags, log *slog.Logger) (agent.Source, error) {
 		Interval:     f.cfg.ScanInterval,
 		BoundTimeout: f.boundTimeout,
 		Log:          log,
+		Store:        store,
+		Stored:       stored,
 	}
 	return agent.Merge(log, &active, hooks), nil
 }

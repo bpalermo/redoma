@@ -36,6 +36,10 @@ type Request struct {
 	// Netns is the path of the bind mount of the container's network
 	// namespace (register only).
 	Netns string `json:"netns,omitempty"`
+	// Pidfd says that a pidfd of the container's process comes with the
+	// request (register only), as SCM_RIGHTS data: WriteRequest and
+	// ReadRequest.
+	Pidfd bool `json:"pidfd,omitempty"`
 }
 
 // Response is the control plane's answer.

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -100,6 +101,8 @@ func newHook(cp *fakeCP, m *fakeMounter) (*Hook, *bytes.Buffer) {
 		// No mounts, on the host or in the container: the mountinfo
 		// checks have their own tests.
 		Mountinfo: func(string) ([]mountEntry, error) { return nil, nil },
+		// No pidfd: TestCreateRuntimeSendsThePidfd sends one.
+		BindProcess: func(int, string, string) (*os.File, error) { return nil, nil },
 		// The forbidden paths in the tests' tree (TestMain).
 		Forbidden: testForbidden,
 		Graphroot: testGraphroot,
@@ -150,6 +153,7 @@ func TestCreateRuntimeNeedsItsOwnNetns(t *testing.T) {
 		want       string
 	}{
 		"--network host":        {`[{"type":"pid"},{"type":"mount"}]`, "--network host"},
+		"--pid host":            {`[{"type":"network"},{"type":"mount"}]`, "--pid host"},
 		"--network container:x": {`[{"type":"network","path":"/proc/4100/ns/net"}]`, "joins the network namespace /proc/4100/ns/net"},
 		"--network ns:agent":    {`[{"type":"network","path":"/run/netns/redoma-foo"}]`, "joins the network namespace /run/netns/redoma-foo"},
 		"a pod sibling":         {`[{"type":"network","path":"/run/netns/netns-0c1f"}]`, "joins"},
@@ -192,7 +196,7 @@ func TestSpecIsReadStrictly(t *testing.T) {
 		config string
 		want   string // "" for accepted
 	}{
-		"--network none": {`{"linux":{"namespaces":[{"type":"network"}]}}`, ""},
+		"--network none": {`{"linux":{"namespaces":[{"type":"pid"},{"type":"network"}]}}`, ""},
 		// crun matches keys exactly and runc folds case: a spec key in
 		// another case is refused, since the two would read it apart.
 		"a key in another case": {`{"Linux":{"namespaces":[{"type":"network"}]}}`, "in another case"},
@@ -204,7 +208,7 @@ func TestSpecIsReadStrictly(t *testing.T) {
 		"optionſ":               {`{"linux":{"namespaces":[{"type":"network"}]},"mounts":[{"option\u017f":["rbind"]}]}`, "in another case"},
 		"ſource":                {`{"linux":{"namespaces":[{"type":"network"}]},"mounts":[{"\u017fource":"/run/redoma-xds"}]}`, "in another case"},
 		"a Kelvin sign":         {`{"linux":{"namespaces":[{"type":"network"}]},"x":{"key":1,"\u212aey":2}}`, "differ only in case"},
-		"free annotation keys":  {`{"linux":{"namespaces":[{"type":"network"}]},"annotations":{"Mounts":"x","Process":"y"}}`, ""},
+		"free annotation keys":  {`{"linux":{"namespaces":[{"type":"pid"},{"type":"network"}]},"annotations":{"Mounts":"x","Process":"y"}}`, ""},
 		"a repeated key":        {`{"linux":{"namespaces":[{"type":"network","path":"","path":"/run/netns/x"}]}}`, `"path" appears twice`},
 		"a repeated top key":    {`{"linux":{"namespaces":[{"type":"network"}]},"linux":{}}`, `"linux" appears twice`},
 		"same key, two objects": {`{"linux":{"namespaces":[{"type":"pid"},{"type":"network"}]}}`, ""},
@@ -243,6 +247,97 @@ func TestCreateRuntimeRegisters(t *testing.T) {
 	want := register.Request{Op: register.OpRegister, Container: cid, Agent: "beta", Netns: target}
 	if len(cp.requests) != 1 || cp.requests[0] != want {
 		t.Errorf("requests %+v, want %+v", cp.requests, want)
+	}
+}
+
+// TestCreateRuntimeSendsThePidfd: the register carries the descriptor
+// BindProcess gave, as SCM_RIGHTS data over the unix socket, for the PID the
+// runtime's state names and the namespace the hook mounted.
+func TestCreateRuntimeSendsThePidfd(t *testing.T) {
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM|syscall.SOCK_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conns := make([]net.Conn, 2)
+	for i, fd := range fds {
+		f := os.NewFile(uintptr(fd), "socket")
+		conns[i], err = net.FileConn(f)
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	type got struct {
+		req  register.Request
+		file *os.File
+		err  error
+	}
+	gotC := make(chan got, 1)
+	go func() {
+		defer conns[1].Close()
+		req, f, err := register.ReadRequest(conns[1])
+		gotC <- got{req, f, err}
+		_ = register.Write(conns[1], register.Response{})
+	}()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	m := &fakeMounter{mounted: map[string]int{}}
+	h, _ := newHook(&fakeCP{}, m)
+	h.Dial = func(context.Context) (net.Conn, error) { return conns[0], nil }
+	var bound []any
+	h.BindProcess = func(pid int, netns, container string) (*os.File, error) {
+		bound = []any{pid, netns, container}
+		return w, nil
+	}
+	if err := h.CreateRuntime(t.Context(), state(t, true)); err != nil {
+		t.Fatal(err)
+	}
+	target := "/run/netns/redoma-oci-" + cid
+	if len(bound) != 3 || bound[0] != 4242 || bound[1] != target || bound[2] != cid {
+		t.Errorf("BindProcess(%v), want (4242, %s, %s)", bound, target, cid)
+	}
+	g := <-gotC
+	if g.err != nil {
+		t.Fatal(g.err)
+	}
+	defer g.file.Close()
+	if !g.req.Pidfd || g.req.Agent != "beta" {
+		t.Errorf("request %+v, want agent beta with a pidfd", g.req)
+	}
+	if _, err := g.file.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 1)
+	if _, err := r.Read(buf); err != nil || buf[0] != 'x' {
+		t.Errorf("the descriptor received is not the one bound: %q, %v", buf, err)
+	}
+	if _, err := w.Write([]byte("x")); err == nil {
+		t.Error("the hook kept its pidfd open after the register")
+	}
+}
+
+// TestCreateRuntimeRefusesAnUnboundProcess: a process BindProcess refuses
+// (its PID reused) fails the start before any register, and the mount is
+// undone.
+func TestCreateRuntimeRefusesAnUnboundProcess(t *testing.T) {
+	cp := &fakeCP{answer: func(register.Request) string { return "" }}
+	m := &fakeMounter{mounted: map[string]int{}}
+	h, _ := newHook(cp, m)
+	h.BindProcess = func(int, string, string) (*os.File, error) {
+		return nil, errors.New("its network namespace is not the one mounted: the PID was reused")
+	}
+	err := h.CreateRuntime(t.Context(), state(t, true))
+	if err == nil || !strings.Contains(err.Error(), "PID was reused") {
+		t.Fatalf("CreateRuntime = %v, want the binding's error", err)
+	}
+	if m.has("/run/netns/redoma-oci-" + cid) {
+		t.Error("the namespace is still mounted")
+	}
+	if got := strings.Join(cp.ops(), ","); got != "unregister" {
+		t.Errorf("requests %s, want only the undo's unregister", got)
 	}
 }
 
