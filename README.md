@@ -75,10 +75,12 @@ release's tag without its `v`. A release candidate, tagged
 `v<VERSION>-rc.<n>`, is a prerelease: its files are named
 `redoma_<VERSION>-rc.<n>_<arch>.deb`, while the packages inside are version
 `<VERSION>~rc.<n>`, which sorts below the release. With a release's files
-downloaded:
+downloaded, check them against `SHA256SUMS` and each one's build
+provenance (made by this repository's release workflow), then install:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
+gh attestation verify redoma_<tag>_amd64.deb -R bpalermo/redoma
 sudo apt install ./redoma_<tag>_amd64.deb   # or redoma_<tag>_arm64.deb
 ```
 
@@ -86,6 +88,7 @@ For example, for `v0.1.0-rc.1`:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
+gh attestation verify redoma_0.1.0-rc.1_amd64.deb -R bpalermo/redoma
 sudo apt install ./redoma_0.1.0-rc.1_amd64.deb
 ```
 
@@ -214,23 +217,23 @@ credential mode; it is not implemented yet.
 The agents run an image with `redoma-shim` as its entrypoint and Claude
 Code's native binary in it. It comes in two parts:
 
-- **`redoma-base`** will be published, public, with every release from
-  v0.1.0-rc.2 on, once the release workflow pushes it:
-  `ghcr.io/bpalermo/redoma-base:<version>`, for amd64 and arm64. Until
-  then, build it with `//runtime:base_load`. Debian bookworm with git, jq, python3, ripgrep, a shell and the
+- **`redoma-base`**, published, public, with every release from
+  v0.1.0-rc.2 on: `quay.io/redoma/redoma-base:<version>`, for amd64 and
+  arm64. Debian bookworm with git, jq, python3, ripgrep, a shell and the
   usual tools, the CA bundle, and `redoma-shim` as the entrypoint. No
   Claude Code. Its `org.opencontainers.image.version` label is the version
   of the redoma package of the same release (`0.1.0~rc.2` for the image
-  tagged `0.1.0-rc.2`). Each release's notes on GitHub will give the
-  image's digest, and the image will have a build provenance attestation.
+  tagged `0.1.0-rc.2`). Each release's notes on GitHub give the image's
+  digest. The digest is signed with cosign, keyless, by this repository's
+  release workflow, and has a build provenance attestation.
 - **Claude Code**, which you download yourself under Anthropic's terms, and
   you are responsible for complying with them. That is why redoma never
   publishes an image containing it. You add it in an image of your own
   built FROM the base, and keep that image local or in a private registry
   of your own.
 
-Once the base is published, an image of your own, pinned to the base's
-digest from its release's notes, with Claude Code's native binary for the image's architecture (`package/claude`
+An image of your own, pinned to the base's digest from its release's notes,
+with Claude Code's native binary for the image's architecture (`package/claude`
 of the npm package `@anthropic-ai/claude-code-linux-x64` or `-arm64`,
 unmodified) next to the Containerfile. An image inherits its base's
 labels, so it sets its own: otherwise it would claim the base's Apache-2.0
@@ -238,7 +241,7 @@ license, name and description, and its source label would link it to this
 repository.
 
 ```dockerfile
-FROM ghcr.io/bpalermo/redoma-base:<version>@sha256:<digest>
+FROM quay.io/redoma/redoma-base:<version>@sha256:<digest>
 COPY --chmod=0755 claude /usr/local/bin/claude
 LABEL org.opencontainers.image.title="<your image>" \
       org.opencontainers.image.description="<your description>" \
@@ -250,14 +253,23 @@ LABEL org.opencontainers.image.title="<your image>" \
 sudo podman build -t localhost/redoma-runtime:dev .
 ```
 
-To check the base against the package installed on the host, and its
-provenance by the digest you pinned:
+To check the base's signature and provenance by the digest you pinned:
+it was signed by this repository's release workflow, on a release tag, and
+nothing else.
+
+```sh
+cosign verify quay.io/redoma/redoma-base@sha256:<digest> \
+  --certificate-identity-regexp '^https://github\.com/bpalermo/redoma/\.github/workflows/release\.yml@refs/tags/v.*$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify oci://quay.io/redoma/redoma-base@sha256:<digest> -R bpalermo/redoma
+```
+
+To check the base against the package installed on the host:
 
 ```sh
 sudo podman image inspect localhost/redoma-runtime:dev \
   --format '{{ index .Labels "org.opencontainers.image.version" }}'
 dpkg-query -W -f '${Version}\n' redoma      # the same version
-gh attestation verify oci://ghcr.io/bpalermo/redoma-base@sha256:<digest> -R bpalermo/redoma
 ```
 
 To give the agents Claude Code's managed settings, add
