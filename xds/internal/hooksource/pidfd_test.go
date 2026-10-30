@@ -176,10 +176,8 @@ func TestRestartUnderTheSameID(t *testing.T) {
 	mu.Lock()
 	files[cidA] = second
 	mu.Unlock()
-	// No poststop came for the first run (it can come late, or never). The
-	// namespace is left as recorded: a new one at the same path would race the
-	// rescan, which drops a registration whose namespace changed.
-	renewed := e.registered(t, cidA, "beta", 7)
+	// No poststop came for the first run (it can come late, or never).
+	renewed := e.reRegistered(t, cidA, "beta", 8)
 	if renewed.Agent.Process == nil || !renewed.Agent.Process.Alive() {
 		t.Fatalf("agent %+v, want the second run's live process", renewed.Agent)
 	}
@@ -189,9 +187,10 @@ func TestRestartUnderTheSameID(t *testing.T) {
 	if store.held(cidA) != 1 {
 		t.Errorf("the store holds %d descriptors for the container, want 1", store.held(cidA))
 	}
-	want := []string{"remove " + cidA, "add " + cidA, "remove " + cidA, "add " + cidA}
-	if !slices.Equal(store.ops, want) {
-		t.Errorf("store ops %v, want %v", store.ops, want)
+	// The rescan may have dropped the first run in between (one more
+	// remove): either way the new run's pidfd is stored last, after a remove.
+	if n := len(store.ops); n < 4 || !slices.Equal(store.ops[n-2:], []string{"remove " + cidA, "add " + cidA}) {
+		t.Errorf("store ops %v, want them to end with remove, add", store.ops)
 	}
 }
 
@@ -282,7 +281,7 @@ func TestReRegisterWithoutAPidfd(t *testing.T) {
 	var mu sync.Mutex
 	e := newEnvWith(t, "", withPidfds(store, map[string]*os.File{cidA: f}, &mu))
 	old := e.registered(t, cidA, "beta", 7)
-	renewed := e.registered(t, cidA, "beta", 7)
+	renewed := e.reRegistered(t, cidA, "beta", 8)
 	if renewed.Agent.Process != nil {
 		t.Errorf("agent %+v, want no process", renewed.Agent)
 	}
@@ -292,8 +291,33 @@ func TestReRegisterWithoutAPidfd(t *testing.T) {
 	if store.held(cidA) != 0 {
 		t.Errorf("the store holds %d descriptors for the container, want none", store.held(cidA))
 	}
-	want := []string{"remove " + cidA, "add " + cidA, "remove " + cidA}
-	if !slices.Equal(store.ops, want) {
-		t.Errorf("store ops %v, want %v", store.ops, want)
+	if n := len(store.ops); n < 3 || store.ops[n-1] != "remove "+cidA || slices.Contains(store.ops[2:], "add "+cidA) {
+		t.Errorf("store ops %v, want one add, then removes only", store.ops)
+	}
+}
+
+// reRegistered registers name again for container, its new run in a new
+// namespace at the same path (inode ino), and returns the new run's start.
+// The rescan may see the namespace replaced before the register and drop
+// the first run: that Removed event, of the first run's namespace, may
+// come first, and only it.
+func (e *env) reRegistered(t *testing.T, container, name string, ino uint64) agent.Event {
+	t.Helper()
+	path := register.NetnsPath("/run/netns", container)
+	e.stat.set(path, agent.NetnsID{Dev: 4, Ino: ino})
+	reply := e.call(t, regReq(container, name))
+	for {
+		ev := e.next(t)
+		if ev.Removed && ev.Agent.ID == name && ev.Agent.NetnsID.Ino != ino {
+			continue
+		}
+		if ev.Removed || ev.Agent.ID != name || ev.Bound == nil || ev.Agent.NetnsID.Ino != ino {
+			t.Fatalf("event %+v, want %s started again in namespace %d with a Bound", ev, name, ino)
+		}
+		ev.Bound <- nil
+		if got := answer(t, reply); got != "" {
+			t.Fatalf("register: %s", got)
+		}
+		return ev
 	}
 }
