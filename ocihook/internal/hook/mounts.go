@@ -10,27 +10,15 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/bpalermo/redoma/common/forbidden"
 )
 
 // ForbiddenSources are the host paths no agent may have mounted, nor
-// anything inside them, nor any directory above them (which would hold
-// them): the control plane's and SPIRE's sockets, the launcher's state and
-// configuration, Podman's own, from which a container could start another
-// one or read another's files (named volumes, --secret files), and the
-// kernel's views of other processes, descriptors and devices, which lead
-// anywhere.
-var ForbiddenSources = []string{
-	"/run/redoma-xds",
-	"/run/redoma-relay",
-	"/run/redoma-relay-lead",
-	"/run/redoma-spire",
-	"/run/redoma",
-	"/etc/redoma",
-	"/run/podman",
-	"/var/lib/containers",
-	"/proc",
-	"/dev",
-}
+// anything inside them, nor any directory above them (forbidden.Base). The
+// command adds the directories of SPIRE's sockets the settings name
+// (forbidden.Sources).
+var ForbiddenSources = forbidden.Base
 
 // Graphroot and Runroot are Podman's rootful storage and its run state,
 // containers-storage.conf's defaults. The hook does not read the host's

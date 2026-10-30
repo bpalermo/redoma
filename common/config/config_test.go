@@ -17,15 +17,19 @@ agent_annotation = example.org/agent
 
 spire_admin_socket = /run/spire/admin.sock
 spire_workload_api = unix:///run/spire/agent.sock
+identity_api = broker
+spire_broker_socket = /run/spire-broker/broker.sock
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := Config{
-		TrustDomain:      "example.org",
-		AgentAnnotation:  "example.org/agent",
-		SpireAdminSocket: "/run/spire/admin.sock",
-		WorkloadAPI:      "unix:///run/spire/agent.sock",
+		TrustDomain:       "example.org",
+		AgentAnnotation:   "example.org/agent",
+		SpireAdminSocket:  "/run/spire/admin.sock",
+		WorkloadAPI:       "unix:///run/spire/agent.sock",
+		IdentityAPI:       IdentityBroker,
+		SpireBrokerSocket: "/run/spire-broker/broker.sock",
 	}
 	if c != want {
 		t.Errorf("Parse = %+v, want %+v", c, want)
@@ -62,10 +66,35 @@ func TestParseRefuses(t *testing.T) {
 		"spire_admin_socket = admin.sock":            "spire_admin_socket",
 		"spire_workload_api = /run/spire/agent.sock": "spire_workload_api",
 		"spire_workload_api = tcp://192.0.2.1:8081":  "spire_workload_api",
+		"identity_api = Broker":                      "identity_api",
+		"identity_api =":                             "identity_api",
+		"spire_broker_socket = broker.sock":          "spire_broker_socket",
+		// SPIRE refuses a broker socket in the Workload API's directory,
+		// or in any directory below it.
+		"spire_broker_socket = /run/redoma-spire/workload/broker.sock":                                   "spire_broker_socket",
+		"spire_broker_socket = /run/redoma-spire/workload/b/broker.sock":                                 "spire_broker_socket",
+		"spire_workload_api = unix:///run/s/agent.sock\nspire_broker_socket = /run/s/../s/x/broker.sock": "spire_broker_socket",
 	} {
 		if _, err := Parse(strings.NewReader(in)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("Parse(%q) = %v, want an error with %q", in, err, want)
 		}
+	}
+}
+
+// TestBrokerSocketBesideTheWorkloadAPI: a sibling directory, or one whose
+// name only starts like the Workload API's, is no subdirectory of it.
+func TestBrokerSocketBesideTheWorkloadAPI(t *testing.T) {
+	for _, in := range []string{
+		"spire_broker_socket = /run/redoma-spire/broker/broker.sock",
+		"spire_broker_socket = /run/redoma-spire/workload-broker/broker.sock",
+		"spire_workload_api = unix:///run/s/w/agent.sock\nspire_broker_socket = /run/s/broker.sock",
+	} {
+		if _, err := Parse(strings.NewReader(in)); err != nil {
+			t.Errorf("Parse(%q) = %v", in, err)
+		}
+	}
+	if s := Default().SpireSockets(); len(s) != 3 || s[1] != "/run/redoma-spire/workload/agent.sock" {
+		t.Errorf("SpireSockets = %q", s)
 	}
 }
 

@@ -62,7 +62,7 @@ go_deps.gazelle_override(
     directives = ["gazelle:proto disable_global"],
     path = "github.com/spiffe/spire-api-sdk",
 )
-use_repo(go_deps, "co_honnef_go_tools", "com_github_envoyproxy_go_control_plane", "com_github_envoyproxy_go_control_plane_envoy", "com_github_google_go_cmp", "com_github_spf13_cobra", "com_github_spiffe_go_spiffe_v2", "com_github_spiffe_spire_api_sdk", "com_github_uudashr_gocognit", "in_gopkg_yaml_v3", "org_golang_google_grpc", "org_golang_google_grpc_cmd_protoc_gen_go_grpc", "org_golang_google_protobuf")
+use_repo(go_deps, "co_honnef_go_tools", "com_github_envoyproxy_go_control_plane", "com_github_envoyproxy_go_control_plane_envoy", "com_github_google_go_cmp", "com_github_spf13_cobra", "com_github_spiffe_go_spiffe_v2", "com_github_spiffe_spire_api_sdk", "com_github_uudashr_gocognit", "in_gopkg_yaml_v3", "org_golang_google_grpc", "org_golang_google_grpc_cmd_protoc_gen_go_grpc", "org_golang_google_protobuf", "org_golang_x_sys")
 
 # The runtime image's Debian packages (//runtime): bookworm, for amd64 and
 # arm64, from snapshot.debian.org at one instant, so a resolution never

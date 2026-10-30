@@ -62,7 +62,11 @@ type namespace struct {
 //     (libpod creates /run/netns/netns-<uuid> and passes its path);
 //   - a user namespace entry (--userns, anything but the host's) makes
 //     Podman create a bridge's namespace without a path and attach the
-//     network after the runtime made it (postConfigureNetNS).
+//     network after the runtime made it (postConfigureNetNS);
+//   - no PID namespace (--pid host): the agent would see the host's
+//     processes, and reach through /proc/<pid>/root of one running as its
+//     uid every file that process can, a SPIRE socket's directory
+//     included, with no mount at all.
 //
 // The spec is read strictly: bundle must be an absolute path, keys match
 // exactly (as the runtime's own parser does, unlike encoding/json's
@@ -129,9 +133,18 @@ func checkNamespaces(nss []namespace) error {
 		return ErrHostNetns
 	case network.Path != "":
 		return fmt.Errorf("the container joins the network namespace %s (--network container:, ns:, a pod, or a bridge libpod made): an agent runs --network none", network.Path)
+	case !seen[pidNamespace]:
+		return ErrHostPid
 	}
 	return nil
 }
+
+// pidNamespace is the PID namespace's type in linux.namespaces (a value
+// of the spec, not one of its keys).
+const pidNamespace = "pid"
+
+// ErrHostPid is ownNetns refusing a container in the host's PID namespace.
+var ErrHostPid = errors.New("the container is in the host's PID namespace (--pid host): it would see the host's processes, and their files through /proc/<pid>/root; an agent's PID namespace is its own")
 
 // namespaces reads linux.namespaces from a spec, with exact keys, refusing
 // a repeated key anywhere in the document.
@@ -320,6 +333,10 @@ type Hook struct {
 	// Timeout bounds the wait for the control plane at createRuntime.
 	Timeout time.Duration
 	Mount   Mounter
+	// BindProcess opens a pidfd for the container's process, the one whose
+	// network namespace is mounted at netns; nil is BindProcess. An error,
+	// or no file (a test's), registers the container without one.
+	BindProcess func(pid int, netns, container string) (*os.File, error)
 	// Dial connects to the control plane's registration socket.
 	Dial func(ctx context.Context) (net.Conn, error)
 	// Log takes the hook's messages (the runtime keeps its stderr).
@@ -377,7 +394,28 @@ func (h *Hook) CreateRuntime(ctx context.Context, st State) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, h.Timeout)
 	defer cancel()
-	err = h.call(ctx, register.Request{Op: register.OpRegister, Container: st.ID, Agent: name, Netns: target})
+	// A PID found in another container's cgroup was reused, maybe before the
+	// mount, which may then be of another container's namespace: the start
+	// fails. A process that cannot be bound otherwise is registered without
+	// its pidfd: in Delegated mode nothing needs one, and in Broker mode
+	// redoma xds then serves the agent no SVID (it fails closed). The start
+	// does not depend on a check (the container's own cgroup) only a host
+	// can confirm.
+	proc, err := h.bindProcess()(st.Pid, target, st.ID)
+	switch {
+	case errors.Is(err, ErrPIDReused):
+		err = fmt.Errorf("the container's process: %w", err)
+	case err != nil:
+		h.logf("container %s: its process cannot be bound to a pidfd (%v); registering it without one, so in Broker mode agent %s gets no SVID", st.ID, err, name)
+		proc = nil
+		err = nil
+	}
+	if err == nil {
+		err = h.call(ctx, register.Request{Op: register.OpRegister, Container: st.ID, Agent: name, Netns: target, Pidfd: proc != nil}, proc)
+	}
+	if proc != nil {
+		proc.Close()
+	}
 	if err == nil {
 		h.logf("container %s is agent %s, its listeners bound in %s", st.ID, name, target)
 		return nil
@@ -385,7 +423,7 @@ func (h *Hook) CreateRuntime(ctx context.Context, st State) error {
 	// Undo: the start fails, and nothing of the claim may stay.
 	undo, cancelUndo := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelUndo()
-	if uerr := h.call(undo, register.Request{Op: register.OpUnregister, Container: st.ID}); uerr != nil {
+	if uerr := h.call(undo, register.Request{Op: register.OpUnregister, Container: st.ID}, nil); uerr != nil {
 		h.logf("container %s: unregistering after a failed register: %v", st.ID, uerr)
 	}
 	if merr := h.Mount.Unmount(target); merr != nil {
@@ -406,14 +444,22 @@ func (h *Hook) Poststop(ctx context.Context, st State) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := h.call(ctx, register.Request{Op: register.OpUnregister, Container: st.ID}); err != nil {
+	if err := h.call(ctx, register.Request{Op: register.OpUnregister, Container: st.ID}, nil); err != nil {
 		h.logf("container %s: unregistering: %v (the control plane's rescan will)", st.ID, err)
 	}
 	return h.Mount.Unmount(register.NetnsPath(h.NetnsDir, st.ID))
 }
 
-// call sends one request and returns the control plane's error, if any.
-func (h *Hook) call(ctx context.Context, req register.Request) error {
+func (h *Hook) bindProcess() func(pid int, netns, container string) (*os.File, error) {
+	if h.BindProcess != nil {
+		return h.BindProcess
+	}
+	return BindProcess
+}
+
+// call sends one request, with proc if it is not nil, and returns the
+// control plane's error, if any.
+func (h *Hook) call(ctx context.Context, req register.Request, proc *os.File) error {
 	conn, err := h.Dial(ctx)
 	if err != nil {
 		return err
@@ -425,7 +471,7 @@ func (h *Hook) call(ctx context.Context, req register.Request) error {
 	// The control plane may answer and close before reading the request (it
 	// refuses a peer that is not root first): the write then fails, and the
 	// answer is still there to read.
-	werr := register.Write(conn, req)
+	werr := register.WriteRequest(conn, req, proc)
 	var resp register.Response
 	if err := register.Read(conn, &resp); err != nil {
 		if werr != nil {

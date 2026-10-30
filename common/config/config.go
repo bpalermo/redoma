@@ -37,18 +37,37 @@ type Config struct {
 	// SpireAdminSocket is the SPIRE agent's admin socket, where redoma xds
 	// reaches the Delegated Identity API (spire_admin_socket).
 	SpireAdminSocket string
-	// WorkloadAPI is the SPIRE agent's Workload API address the relay gets
-	// its own SVID from (spire_workload_api).
+	// WorkloadAPI is the SPIRE agent's Workload API address the relay, and
+	// redoma xds in Broker mode, get their own SVIDs from
+	// (spire_workload_api).
 	WorkloadAPI string
+	// IdentityAPI is how redoma xds obtains the agents' SVIDs
+	// (identity_api): IdentityDelegated or IdentityBroker.
+	IdentityAPI string
+	// SpireBrokerSocket is the SPIRE agent's Broker API socket, which redoma
+	// xds uses in Broker mode (spire_broker_socket).
+	SpireBrokerSocket string
 }
+
+// The values of identity_api.
+const (
+	// IdentityDelegated is SPIRE's Delegated Identity API, on the admin
+	// socket: redoma xds hands SPIRE the agents' selectors.
+	IdentityDelegated = "delegated"
+	// IdentityBroker is the SPIFFE Broker API: redoma xds names each agent's
+	// process, and SPIRE's attestors decide its selectors.
+	IdentityBroker = "broker"
+)
 
 // Default is what a missing file, or a key it leaves out, means.
 func Default() Config {
 	return Config{
-		TrustDomain:      "redoma.internal",
-		AgentAnnotation:  "redoma/agent",
-		SpireAdminSocket: "/run/redoma-spire/admin/admin.sock",
-		WorkloadAPI:      "unix:///run/redoma-spire/workload/agent.sock",
+		TrustDomain:       "redoma.internal",
+		AgentAnnotation:   "redoma/agent",
+		SpireAdminSocket:  "/run/redoma-spire/admin/admin.sock",
+		WorkloadAPI:       "unix:///run/redoma-spire/workload/agent.sock",
+		IdentityAPI:       IdentityDelegated,
+		SpireBrokerSocket: "/run/redoma-spire/broker/broker.sock",
 	}
 }
 
@@ -81,10 +100,24 @@ func Load(path string, required bool) (Config, error) {
 
 // keys are the settings, by their name in the file.
 var keys = map[string]func(*Config) *string{
-	"trust_domain":       func(c *Config) *string { return &c.TrustDomain },
-	"agent_annotation":   func(c *Config) *string { return &c.AgentAnnotation },
-	"spire_admin_socket": func(c *Config) *string { return &c.SpireAdminSocket },
-	"spire_workload_api": func(c *Config) *string { return &c.WorkloadAPI },
+	"trust_domain":        func(c *Config) *string { return &c.TrustDomain },
+	"agent_annotation":    func(c *Config) *string { return &c.AgentAnnotation },
+	"spire_admin_socket":  func(c *Config) *string { return &c.SpireAdminSocket },
+	"spire_workload_api":  func(c *Config) *string { return &c.WorkloadAPI },
+	"identity_api":        func(c *Config) *string { return &c.IdentityAPI },
+	"spire_broker_socket": func(c *Config) *string { return &c.SpireBrokerSocket },
+}
+
+// WorkloadSocket is the path of the Workload API's socket: WorkloadAPI
+// without its unix:// scheme.
+func (c Config) WorkloadSocket() string {
+	return strings.TrimPrefix(c.WorkloadAPI, "unix://")
+}
+
+// SpireSockets are the paths of SPIRE's sockets redoma uses: the admin
+// socket, the Workload API's and the Broker API's.
+func (c Config) SpireSockets() []string {
+	return []string{c.SpireAdminSocket, c.WorkloadSocket(), c.SpireBrokerSocket}
 }
 
 // Parse reads a file's content over Default.
@@ -137,6 +170,23 @@ func (c Config) Validate() error {
 	}
 	if !strings.HasPrefix(c.WorkloadAPI, "unix:///") {
 		return fmt.Errorf("spire_workload_api %q: not a unix:/// address", c.WorkloadAPI)
+	}
+	if c.IdentityAPI != IdentityDelegated && c.IdentityAPI != IdentityBroker {
+		return fmt.Errorf("identity_api %q: not %s or %s", c.IdentityAPI, IdentityDelegated, IdentityBroker)
+	}
+	return c.validateBrokerSocket()
+}
+
+// validateBrokerSocket refuses a broker socket that is not an absolute
+// path, or that is in the Workload API socket's directory or below it,
+// which SPIRE refuses too (the same prefix match: the directory and /).
+func (c Config) validateBrokerSocket() error {
+	if !filepath.IsAbs(c.SpireBrokerSocket) {
+		return fmt.Errorf("spire_broker_socket %q: not an absolute path", c.SpireBrokerSocket)
+	}
+	dir := filepath.Dir(filepath.Clean(c.WorkloadSocket()))
+	if strings.HasPrefix(filepath.Clean(c.SpireBrokerSocket), strings.TrimSuffix(dir, "/")+"/") {
+		return fmt.Errorf("spire_broker_socket %q: in the directory of the Workload API's socket, %s, or below it (SPIRE refuses that)", c.SpireBrokerSocket, dir)
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//common/config",
+        "//common/forbidden",
         "//ocihook/internal/hook",
         "@com_github_spf13_cobra//:cobra",
     ],
@@ -23,6 +24,7 @@ exports_files(glob([
 go_test(
     name = "ocihook_test",
     srcs = [
+        "forbidden_test.go",
         "hooksd_test.go",
         "serviceids_test.go",
     ],

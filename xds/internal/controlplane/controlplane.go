@@ -82,6 +82,12 @@ type Config struct {
 	// Relay, if set, gives every agent a third listener, its relay
 	// listener, and a cluster to redoma-relay (CDS) once its SVID is there.
 	Relay *cds.Relay
+	// SVIDAfterBound, set in Broker mode, subscribes the identity of an
+	// agent whose Source waits for its bind (the OCI hook) only once Envoy
+	// has bound its listeners and the Source is told: SPIRE attests the
+	// agent's process through the Podman API, which waits for the
+	// container's start, held by the hook until then.
+	SVIDAfterBound bool
 }
 
 type running struct {
@@ -91,6 +97,10 @@ type running struct {
 	svid      *identity.X509SVID
 	gen       uint64
 	cancel    context.CancelFunc
+	// sub is the context of its identity subscription, and watching
+	// whether that has started (see Config.SVIDAfterBound).
+	sub      context.Context
+	watching bool
 }
 
 // event is a change sent to Run by the Source or a subscription.
@@ -276,17 +286,29 @@ func (c *Controller) stop(a *running) {
 func (c *Controller) start(ctx context.Context, a agent.Agent) {
 	c.gen++
 	sub, cancel := context.WithCancel(ctx)
-	r := &running{agent: a, gen: c.gen, cancel: cancel}
+	r := &running{agent: a, gen: c.gen, cancel: cancel, sub: sub}
 	c.agents[a.ID] = r
 	delete(c.removedIn, a.Netns)
-	if b, ok := c.bound[a.ID]; ok {
+	b, waited := c.bound[a.ID]
+	if waited {
 		// The snapshot publish sets next is the first with its listeners.
 		b.version = c.version + 1
 	}
 	c.dirty = true
 	c.log.Info("agent running", "agent", a.ID, "netns", a.Netns)
 	c.readEgress(r)
-	gen := r.gen
+	if !waited || !c.cfg.SVIDAfterBound {
+		c.watch(r)
+	}
+}
+
+// watch subscribes a running agent's identity, once.
+func (c *Controller) watch(r *running) {
+	if r.watching {
+		return
+	}
+	r.watching = true
+	a, gen, sub := r.agent, r.gen, r.sub
 	go c.id.WatchX509SVID(sub, a, func(s *identity.X509SVID) {
 		c.send(sub, func(c *Controller) { c.setSVID(a.ID, gen, s) })
 	})

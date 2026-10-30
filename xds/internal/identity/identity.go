@@ -1,11 +1,17 @@
-// Package identity fetches the agents' SPIFFE identities from SPIRE's
-// Delegated Identity API, on the agent's admin socket, as the one authorized
-// delegate (uid 961, redoma-sds).
+// Package identity fetches the agents' SPIFFE identities from SPIRE, as the
+// one process SPIRE lets obtain them on the agents' behalf (uid 961,
+// redoma-sds), through one of two APIs:
 //
-// An agent never talks to SPIRE. Its identity is subscribed by the selectors
-// its agent.Source gives, which SPIRE takes as attested because the delegate
-// sent them: which namespace is which agent is decided by the Source and the
-// listeners, not by SPIRE.
+//   - Client, the Delegated Identity API on the SPIRE agent's admin socket.
+//     An agent's identity is subscribed by the selectors its agent.Source
+//     gives, which SPIRE takes as attested because the delegate sent them:
+//     which namespace is which agent is decided by the Source and the
+//     listeners, not by SPIRE.
+//   - Broker, the SPIFFE Broker API (docs/broker-identity.md). An agent is
+//     named by its container's process, whose pidfd the Source holds, and
+//     SPIRE's attestors decide its selectors.
+//
+// An agent never talks to SPIRE.
 package identity
 
 import (
@@ -104,7 +110,7 @@ func New(conn grpc.ClientConnInterface, trustDomain string, log *slog.Logger) *C
 // SVID stays current meanwhile, since it is valid until it expires.
 func (c *Client) WatchX509SVID(ctx context.Context, a agent.Agent, update func(*X509SVID)) {
 	want := AgentID(c.trustDomain, a.ID)
-	c.retry(ctx, "x509-svid", slog.String("agent", a.ID), func(ctx context.Context) (bool, error) {
+	retry(ctx, c.log, c.MinBackoff, c.MaxBackoff, "x509-svid", slog.String("agent", a.ID), func(ctx context.Context) (bool, error) {
 		stream, err := c.api.SubscribeToX509SVIDs(ctx, &delegatedidentityv1.SubscribeToX509SVIDsRequest{Selectors: selectors(a)})
 		if err != nil {
 			return false, err
@@ -128,7 +134,7 @@ func (c *Client) WatchX509SVID(ctx context.Context, a agent.Agent, update func(*
 // time SPIRE sends the bundles, and with nil if the trust domain's is
 // missing, until ctx ends. Other trust domains' bundles are ignored.
 func (c *Client) WatchX509Bundle(ctx context.Context, update func([]byte)) {
-	c.retry(ctx, "x509-bundle", slog.String("trust_domain", c.trustDomain), func(ctx context.Context) (bool, error) {
+	retry(ctx, c.log, c.MinBackoff, c.MaxBackoff, "x509-bundle", slog.String("trust_domain", c.trustDomain), func(ctx context.Context) (bool, error) {
 		stream, err := c.api.SubscribeToX509Bundles(ctx, &delegatedidentityv1.SubscribeToX509BundlesRequest{})
 		if err != nil {
 			return false, err
@@ -166,28 +172,37 @@ func (c *Client) FetchJWTSVID(ctx context.Context, a agent.Agent, audience []str
 	return nil, fmt.Errorf("SPIRE returned no JWT SVID for %s", want)
 }
 
-// retry runs a subscription until ctx ends, waiting with jittered
-// exponential backoff between attempts.
-func (c *Client) retry(ctx context.Context, what string, attr slog.Attr, run func(context.Context) (received bool, err error)) {
-	delay := c.MinBackoff
+// errFinal ends a subscription for good: retry does not run it again.
+var errFinal = errors.New("not resubscribed")
+
+// retry runs a subscription until ctx ends, or it returns an error that
+// wraps errFinal, waiting with jittered exponential backoff between
+// attempts: from minWait, doubling on each failure in a row, up to maxWait,
+// and from minWait again after an attempt that delivered anything.
+func retry(ctx context.Context, log *slog.Logger, minWait, maxWait time.Duration, what string, attr slog.Attr, run func(context.Context) (received bool, err error)) {
+	delay := minWait
 	for {
 		received, err := run(ctx)
 		if ctx.Err() != nil {
 			return
 		}
+		if errors.Is(err, errFinal) {
+			log.Warn("SPIRE stream ended; not resubscribing", "stream", what, attr, "err", err)
+			return
+		}
 		if received {
-			delay = c.MinBackoff
+			delay = minWait
 		}
 		// Up to a quarter less, so subscriptions that failed together do not
 		// all come back at once.
 		wait := delay - time.Duration(rand.Int64N(int64(delay)/4+1))
-		c.log.Warn("Delegated Identity stream ended; resubscribing", "stream", what, attr, "err", err, "in", wait)
+		log.Warn("SPIRE stream ended; resubscribing", "stream", what, attr, "err", err, "in", wait)
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(wait):
 		}
-		delay = min(2*delay, c.MaxBackoff)
+		delay = min(2*delay, maxWait)
 	}
 }
 

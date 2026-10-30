@@ -39,6 +39,11 @@ var (
 func T(p string) string { return filepath.Join(tree, p) }
 
 func TestMain(m *testing.M) {
+	if os.Getenv("REDOMA_HOOK_CHILD") != "" {
+		// A process for TestBindProcess to hold: it runs until stdin closes.
+		_, _ = os.Stdin.Read(make([]byte, 1))
+		os.Exit(0)
+	}
 	dir, err := os.MkdirTemp("", "hook-tree-")
 	if err != nil {
 		panic(err)
@@ -67,6 +72,7 @@ func TestMain(m *testing.M) {
 	}
 	for _, f := range []string{
 		"/run/redoma-xds/xds.sock", "/run/redoma-relay/relay.sock", "/run/podman/podman.sock", "/run/redoma/names/a",
+		"/run/redoma-spire/workload/agent.sock",
 		"/var/lib/containers/storage/overlay-containers/" + cid + "/userdata/shm",
 		"/var/lib/containers/storage/overlay-containers/" + cid + "/userdata/passwd",
 		"/var/lib/containers/storage/overlay-containers/" + cid + "/userdata/config.json",
@@ -129,21 +135,24 @@ func TestCreateRuntimeChecksTheMounts(t *testing.T) {
 		mounts string
 		want   string
 	}{
-		"the launcher's":                  {`[{"destination":"/work","type":"bind","source":"` + T("/srv/redoma/work/a") + `","options":["rbind","rw"]},{"destination":"/tmp","type":"tmpfs","source":"tmpfs"}]`, ""},
-		"none":                            {``, ""},
-		"its own shm":                     {bind(userdata + cid + "/userdata/shm"), ""},
-		"its own passwd":                  {bind(userdata + cid + "/userdata/passwd"), ""},
-		"Podman's runroot files":          {bind(T("/run/containers/storage/overlay-containers/" + cid + "/userdata/hosts")), ""},
-		"another container's shm":         {bind(userdata + other + "/userdata/shm"), "reaches " + T("/var/lib/containers")},
-		"its own config.json":             {bind(userdata + cid + "/userdata/config.json"), "reaches " + T("/var/lib/containers")},
-		"its own userdata":                {bind(userdata + cid + "/userdata"), "reaches " + T("/var/lib/containers")},
-		"a --secret":                      {bind(userdata + cid + "/userdata/secrets"), "reaches " + T("/var/lib/containers")},
-		"a named volume":                  {bind(T("/var/lib/containers/storage/volumes/v/_data")), "reaches " + T("/var/lib/containers")},
-		"the xds socket's directory":      {bind(T("/run/redoma-xds")), "reaches " + T("/run/redoma-xds")},
-		"the xds socket":                  {bind(T("/run/redoma-xds/xds.sock")), "reaches " + T("/run/redoma-xds")},
-		"not normalized":                  {bind(T("/run/./redoma-relay-lead/../redoma-relay-lead/")), "reaches " + T("/run/redoma-relay-lead")},
-		"the relay":                       {bind(T("/run/redoma-relay/relay.sock")), "reaches " + T("/run/redoma-relay")},
-		"SPIRE's workload API":            {bind(T("/run/redoma-spire/workload")), "reaches " + T("/run/redoma-spire")},
+		"the launcher's":             {`[{"destination":"/work","type":"bind","source":"` + T("/srv/redoma/work/a") + `","options":["rbind","rw"]},{"destination":"/tmp","type":"tmpfs","source":"tmpfs"}]`, ""},
+		"none":                       {``, ""},
+		"its own shm":                {bind(userdata + cid + "/userdata/shm"), ""},
+		"its own passwd":             {bind(userdata + cid + "/userdata/passwd"), ""},
+		"Podman's runroot files":     {bind(T("/run/containers/storage/overlay-containers/" + cid + "/userdata/hosts")), ""},
+		"another container's shm":    {bind(userdata + other + "/userdata/shm"), "reaches " + T("/var/lib/containers")},
+		"its own config.json":        {bind(userdata + cid + "/userdata/config.json"), "reaches " + T("/var/lib/containers")},
+		"its own userdata":           {bind(userdata + cid + "/userdata"), "reaches " + T("/var/lib/containers")},
+		"a --secret":                 {bind(userdata + cid + "/userdata/secrets"), "reaches " + T("/var/lib/containers")},
+		"a named volume":             {bind(T("/var/lib/containers/storage/volumes/v/_data")), "reaches " + T("/var/lib/containers")},
+		"the xds socket's directory": {bind(T("/run/redoma-xds")), "reaches " + T("/run/redoma-xds")},
+		"the xds socket":             {bind(T("/run/redoma-xds/xds.sock")), "reaches " + T("/run/redoma-xds")},
+		"not normalized":             {bind(T("/run/./redoma-relay-lead/../redoma-relay-lead/")), "reaches " + T("/run/redoma-relay-lead")},
+		"the relay":                  {bind(T("/run/redoma-relay/relay.sock")), "reaches " + T("/run/redoma-relay")},
+		"SPIRE's workload API":       {bind(T("/run/redoma-spire/workload")), "reaches " + T("/run/redoma-spire")},
+		// SPIRE makes the socket 0777: once the file itself is mounted, no
+		// permission of its directory applies, and this check is all there is.
+		"the Workload API socket itself":  {bind(T("/run/redoma-spire/workload/agent.sock")), "reaches " + T("/run/redoma-spire")},
 		"the launcher's state":            {bind(T("/run/redoma/names/a")), "reaches " + T("/run/redoma")},
 		"/etc/redoma":                     {bind(T("/etc/redoma")), "reaches " + T("/etc/redoma")},
 		"Podman's socket":                 {bind(T("/run/podman/podman.sock")), "reaches " + T("/run/podman")},

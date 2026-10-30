@@ -1,9 +1,9 @@
 # The agents' identities through SPIRE's Broker API
 
-Status: design, not implemented. It moves `redoma xds` from SPIRE's
-Delegated Identity API to the SPIFFE Broker API, behind a setting, with
-the Delegated Identity API kept as the default until a host has run on the
-Broker API.
+Status: implemented behind `identity_api = broker`. It moves `redoma xds`
+from SPIRE's Delegated Identity API to the SPIFFE Broker API, behind a
+setting, with the Delegated Identity API kept as the default until a host
+has run on the Broker API.
 
 ## Why
 
@@ -60,10 +60,15 @@ SubscribeToX509SVID stream -> redoma xds checks pidfd and SPIFFE ID -> SDS -> En
    the namespace from the container's init PID, it opens a pidfd for that
    PID (`pidfd_open(2)`) and binds it to the process exactly (see "Binding
    the pidfd"). It sends the pidfd with its registration request, as
-   `SCM_RIGHTS` ancillary data on the registration socket.
+   `SCM_RIGHTS` ancillary data on the registration socket. A process found
+   in another container's cgroup fails the start (its PID was reused); one
+   it cannot bind otherwise does not stop the container: the hook logs why
+   and registers it without a pidfd.
 3. **redoma xds** receives the pidfd with the request, from root only (the
    socket's peer check is unchanged), and accepts the registration if the
-   descriptor is a pidfd of a live process. It keeps the pidfd for as long
+   descriptor is a pidfd of a live process; a registration without one is
+   accepted and logged, and in Broker mode that agent gets no SVID (it
+   fails closed). It keeps the pidfd for as long
    as the agent is registered, in its own table and in systemd's file
    descriptor store, so a restart of `redoma xds` gets it back (see "The
    file descriptor store"). The PID it names in a Broker request is the
@@ -148,8 +153,8 @@ carry the label is also unable to reach a SPIRE socket.
   Only keeping such users off the Workload API does: see the host
   requirements below.
 - **An image**: image labels become container labels unless the run
-  overrides them. The runtime image sets no `redoma.agent` label, and
-  Broker mode adds a test to `//runtime` that keeps it so. An agent run
+  overrides them. The runtime image sets no `redoma.agent` label (its only
+  labels are the two OCI ones of `//runtime:image_manifest`). An agent run
   without `--label`, from an image that has one, gets that image's SVID
   offered by SPIRE, and `redoma xds` refuses it because its SPIFFE ID is
   not the agent's (step 5).
@@ -174,8 +179,12 @@ of the ones that concern the agents are enforced by the OCI hook.
    `/run/redoma-spire`, which is in the list. This is the only thing that
    stops a bind mount of the Workload API socket file itself: SPIRE makes
    the socket `0777` when it creates it, so once the file is mounted into a
-   container no directory permission applies. Broker mode adds a mounts test
-   for exactly that case, a bind of the socket file.
+   container no directory permission applies (the hook's mounts test has
+   that case, a bind of the socket file). The hook also refuses an agent
+   without a PID namespace of its own (`--pid host`): it would see the
+   host's processes, and through `/proc/<pid>/root` of one running with its
+   uid reach every file that process can, a SPIRE socket's directory
+   included, with no mount at all.
 2. **The forbidden list follows the configuration.** Today
    `ForbiddenSources` names `/run/redoma-spire` as a constant, while
    `spire_workload_api`, `spire_admin_socket` and the new
@@ -190,8 +199,9 @@ of the ones that concern the agents are enforced by the OCI hook.
    directory.** The Workload API socket's directory grants nothing to
    others, and its group has no members but the services that need it:
    `redoma-sds` (961) and `redoma-relay` (963). That stops an agent that
-   has the whole directory, or a path through it, mounted, which layer 1
-   already refuses; it does nothing against a mount of the socket file. And
+   reaches the whole directory, or a path through it, by a mount or through
+   another process's `/proc/<pid>/root`, both of which layer 1 already
+   refuses; it does nothing against a mount of the socket file. And
    the condition it relies on, that an agent runs with no service uid or gid
    and no capability, is enforced by the same hook. In Broker mode
    `redoma xds` refuses to start when the directory grants any permission to
@@ -256,14 +266,41 @@ starts):
 1. bind-mount the namespace from `/proc/<pid>/ns/net`, as today;
 2. `pidfd_open(pid)`;
 3. check that `/proc/<pid>/ns/net` is the namespace it mounted (same device
-   and inode), then that the pidfd still reports the process alive.
+   and inode), that `/proc/<pid>/cgroup` names the container's cgroup (a
+   path element `libpod-<id>`, with or without `.scope`, on every line with
+   a path), then that the pidfd still reports the process alive
+   (`hook.BindProcess`).
 
-If the PID was reused before step 2, step 3's namespace differs; if after,
-the pidfd reports the process exited. Either way the hook refuses the
-container's start. A pidfd that passes refers to the process whose
-namespace is the agent's, with no start-time comparison, and `redoma xds`
-never needs to read another process's `/proc`: the unit keeps
-`ProtectProc=invisible`.
+If the held process was killed (by root, or the OOM killer) and its PID
+reused before step 1, the hook mounted the other process's namespace, and
+step 3's cgroup is not the container's. If the PID was reused between steps
+1 and 2, step 3's namespace differs. If after step 2, the pidfd reports the
+process exited.
+
+What the hook does then depends on what the failure proves:
+
+- **The process is in another container's cgroup** (a path element
+  `libpod-<another ID>`, `hook.ErrPIDReused`): the PID was reused, maybe
+  before the mount, and the namespace mounted may be that container's. Its
+  model and egress listeners must not be bound there, so the start fails,
+  and the mount is undone.
+- **Anything else** (in no container's cgroup yet, another namespace, the
+  process gone): nothing proves the namespace mounted is not the
+  container's. The hook logs the failure and registers the container
+  without a pidfd: the start goes on, in Delegated mode exactly as before,
+  and in Broker mode `redoma xds` serves that agent no SVID and logs which
+  container. Such a failure does not fail the start because the cgroup
+  check rests on the runtime having moved the process into its cgroup by
+  createRuntime, which only a host can confirm (see the migration's
+  step 3).
+
+The hook's security refusals are unchanged and still fail the start: a
+host PID namespace, a joined namespace, a forbidden mount. A pidfd that
+passes refers to the container's own process, with no start-time
+comparison, and `redoma xds` never needs to read another process's `/proc`:
+the unit keeps `ProtectProc=invisible`. Should a check above ever miss,
+the SPIFFE ID filter still keeps another container's SVID from being
+served as the agent's.
 
 ### The file descriptor store
 
@@ -278,22 +315,31 @@ FileDescriptorStoreMax=1024
 FileDescriptorStorePreserve=yes
 ```
 
+- **A name is not unique to a run.** `podman start` and `podman restart`
+  keep a container's ID, so two runs of one container share a name, and
+  `FDSTOREREMOVE=1` removes every descriptor of a name. So a register first
+  removes the name, then stores the new pidfd: the store never holds an
+  older run's pidfd next to the current one, and a removal is only ever of
+  the registration `redoma xds` currently has under that name.
 - **After a restart**, systemd passes the stored descriptors back
   (`LISTEN_FDS`, `LISTEN_FDNAMES`). `redoma xds` reads the registration
-  file, then matches each registration to the descriptor of the same name.
-  A descriptor is used only if it is a pidfd (its fdinfo has a `Pid:`
-  line) of a live process; one with no registration, or of a process that
-  exited, is closed and removed from the store (`FDSTOREREMOVE=1`).
+  file, then gives each registration the descriptor of its name, only when
+  exactly one descriptor of that name is a pidfd (its fdinfo has a `Pid:`
+  line) of a live process. Several live ones give it none (logged), and the
+  others are closed. Every name is then removed from the store and the
+  pidfds kept are added back, so the store holds exactly the registrations'.
 - **Unregistering** (poststop, or the rescan that finds a namespace gone)
-  closes the pidfd and removes it from the store. systemd also drops a
-  stored pidfd by itself once the process is reaped (it polls stored
-  descriptors and drops one that reports `POLLHUP`).
-- **When the store is lost**: a reboot loses it, but also every container;
+  closes the pidfd and removes it from the store. redoma does not rely on
+  systemd dropping a stored pidfd by itself: systemd drops a stored
+  descriptor that reports `POLLHUP`, which a pidfd of a reaped process does
+  only from Linux 6.9 (pidfs).
+- **When the store is lost**: a reboot loses it, but also every container.
   `FileDescriptorStorePreserve=yes` (systemd 254 and later) keeps it across
-  `systemctl stop` and `restart`, and older systemd keeps it only across
-  the unit's own automatic restarts. A store lost while agents run (an old
-  systemd and a manual restart, `redoma xds` started outside systemd, the
-  store full) leaves registrations without a pidfd. Such an agent keeps its
+  a stop and a start of the unit too; older systemd keeps it across
+  `systemctl restart` and the unit's own restarts, and loses it on a stop
+  and a start. A store lost while agents run (an old systemd and a stop and
+  a start, `redoma xds` started outside systemd, the store full) leaves
+  registrations without a pidfd. Such an agent keeps its
   listeners and, in Broker mode, gets no SVID: `redoma xds` logs the
   container to restart, and restarting it registers it again with a new
   pidfd. In Delegated mode a missing pidfd changes nothing.
@@ -310,9 +356,9 @@ an inspect takes the same lock. An attestation started while the hook waits
 would wait for the hook in turn. The hook waits for Envoy to bind the
 agent's listeners, which never depends on the SVID, so there is no deadlock.
 To keep the wait short, `redoma xds` opens an agent's SVID stream only after
-the agent's listeners are bound and the hook has been answered. The first
-attestation can still wait briefly, while Podman finishes starting the
-container after the hook.
+the agent's listeners are bound and the hook is told
+(`controlplane.Config.SVIDAfterBound`). The first attestation can still
+wait briefly, while Podman finishes starting the container after the hook.
 
 ## SPIRE agent configuration
 
@@ -448,7 +494,12 @@ A host moves one step at a time; until the last, setting
    second.
 3. Upgrade redoma to a version with Broker mode. Its hook sends a pidfd; a
    registration made by an older hook has none, so restart the agents, now
-   with `--label redoma.agent=<name>` next to the annotation.
+   with `--label redoma.agent=<name>` next to the annotation. Then check
+   that each registration carries its pidfd: `redoma xds` logs every hook
+   registration with `pidfd=true` or `false`, and the hook logs any process
+   it could not bind. A `false` means the runtime had not moved the
+   container's process into its `libpod-<id>` cgroup by createRuntime, or
+   another check failed: do not go on to step 4 until it is understood.
 4. Set `identity_api = broker` and restart `redoma xds`. Envoy keeps its
    listeners and the SVIDs it holds across the restart; each agent's SVID
    is then served from a Broker stream. Check that every agent's relay
@@ -461,21 +512,18 @@ redoma's own path: this change adds Broker mode with Delegated the default.
 A later release makes `broker` the default, and a release after that
 removes Delegated mode.
 
-## The work
+## Where it is
 
-- **Broker mode in `redoma xds`.** The setting and its validation; the
-  pidfd in the registration, its binding in the hook, and the file
-  descriptor store; the checks around every attestation; the Broker client
-  (mTLS with the Workload API SVID, the metadata header, the subscription
-  after the listeners are bound, the SPIFFE ID filter on X.509 and JWT
-  responses); the bundle from the Workload API; the forbidden list derived
-  from the configured sockets, and the startup checks. Tests cover both
-  modes against fake SPIRE servers, a process that exits during an
-  attestation, a pidfd bound to the wrong namespace, descriptors matched
-  after a restart and a store that lost one, a bind mount of the socket
-  file, a socket outside the forbidden list, the directory checks, and the
-  configuration's validation.
-- **Nothing about the label in the hook.** The label is set on
-  `podman run` by whoever starts the agent, documented in README.md once
-  Broker mode is the default; the hook cannot set it or read it, and a
-  mismatch with the annotation gives the agent no SVID at all.
+- **The setting:** `identity_api` and `spire_broker_socket`, with their
+  validation (`common/config`), and the flags of `redoma xds`
+  (`--identity-api`, `--spire-broker-socket`, `--spire-workload-api`).
+- **The hook:** the PID namespace check, `hook.BindProcess`, the pidfd in
+  the register (`register.WriteRequest`, `register.ReadRequest`), and the
+  forbidden paths derived from the settings (`forbidden.Sources`).
+- **redoma xds:** the pidfds and systemd's store (`hooksource`,
+  `fdstore`), the Broker client and redoma xds's own SVID (`identity.Broker`,
+  `identity.Workload`), the subscription after the bind (`controlplane`),
+  and the checks at start (`hostcheck`).
+- **The label** is set on `podman run` by whoever starts the agent: the
+  hook cannot set it or read it, and a mismatch with the annotation gives
+  the agent no SVID at all.

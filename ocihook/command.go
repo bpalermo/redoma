@@ -27,6 +27,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bpalermo/redoma/common/config"
+	"github.com/bpalermo/redoma/common/forbidden"
 	"github.com/bpalermo/redoma/ocihook/internal/hook"
 )
 
@@ -57,7 +58,7 @@ func Command() *cobra.Command {
 			if err := conf.Validate(); err != nil {
 				return err
 			}
-			return run(cmd.Context(), f, args[0], cmd.InOrStdin())
+			return run(cmd.Context(), newHook(f, conf), args[0], cmd.InOrStdin())
 		},
 	}
 	fl := cmd.Flags()
@@ -68,12 +69,12 @@ func Command() *cobra.Command {
 	return cmd
 }
 
-func run(ctx context.Context, f flags, stage string, stdin io.Reader) error {
-	var st hook.State
-	if err := json.NewDecoder(io.LimitReader(stdin, 1<<20)).Decode(&st); err != nil {
-		return fmt.Errorf("reading the container state on stdin: %w", err)
-	}
-	h := &hook.Hook{
+// newHook is the hook of f's flags. The paths it forbids an agent are
+// hook.ForbiddenSources and the directories of SPIRE's sockets conf names,
+// as written and as they resolve now (forbidden.Sources): a host that
+// moves a socket keeps it out of the agents' reach.
+func newHook(f flags, conf config.Config) *hook.Hook {
+	return &hook.Hook{
 		Annotation: f.annotation,
 		NetnsDir:   f.netnsDir,
 		Timeout:    f.timeout,
@@ -84,6 +85,14 @@ func run(ctx context.Context, f flags, stage string, stdin io.Reader) error {
 		},
 		Log:        os.Stderr,
 		ServiceIDs: serviceIDs(system, os.Stderr),
+		Forbidden:  forbidden.Sources(conf),
+	}
+}
+
+func run(ctx context.Context, h *hook.Hook, stage string, stdin io.Reader) error {
+	var st hook.State
+	if err := json.NewDecoder(io.LimitReader(stdin, 1<<20)).Decode(&st); err != nil {
+		return fmt.Errorf("reading the container state on stdin: %w", err)
 	}
 	switch stage {
 	case "create-runtime":
