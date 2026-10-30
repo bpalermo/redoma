@@ -55,5 +55,18 @@ git commit --quiet --allow-empty -m next
 expect STABLE_RELEASE_TAG none "the commit after a release"
 expect STABLE_LAST_RC_TAG 'v0\.1\.0-rc\.10' "a commit after the candidates: the newest it descends from"
 
+# A candidate of another VERSION, numbered higher, is not VERSION's: the
+# packages' snapshots stay <VERSION>~git..., not <VERSION>~rc.20....
+git tag v0.2.0-rc.20
+expect STABLE_LAST_RC_TAG 'v0\.1\.0-rc\.10' "a candidate of another version"
+
+# A candidate only on a branch this commit does not descend from is not one
+# it comes after.
+git switch --quiet -c side
+git commit --quiet --allow-empty -m side
+git tag v0.1.0-rc.30
+git switch --quiet -
+expect STABLE_LAST_RC_TAG 'v0\.1\.0-rc\.10' "a candidate on a branch not merged"
+
 [ "${fail}" = 0 ]
 echo "workspace status: snapshot, candidates and release as expected"
