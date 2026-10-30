@@ -28,8 +28,11 @@ jobs:
     outputs:
       prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
+      # The whole history: the check below needs the path from the tagged
+      # commit to main's head.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: bazel-contrib/setup-bazel@104e3eea9447cdaa4b00d0fb46191a3985d26ab3 # 0.19.1
@@ -40,25 +43,22 @@ jobs:
 
       # The packages' version is VERSION's: a tag that says otherwise would
       # publish packages that disagree with their release. Any other tag
-      # matching v* fails here.
+      # matching v* fails here (bazel/release-tag.sh, //bazel:release_tag_test).
       - name: the tag is v<VERSION> or v<VERSION>-rc.<n>
         id: tag
         env:
           TAG: ${{ github.ref_name }}
+        run: bash bazel/release-tag.sh VERSION "${TAG}"
+
+      # Releases are tagged on main, after CI passed there: a tag on any
+      # other commit (a branch, a pull request's head) publishes nothing.
+      - name: the tagged commit is on main
         run: |
-          version="$(tr -d '[:space:]' <VERSION)"
-          if [[ ${TAG} == "v${version}" ]]; then
-            deb="${version}"
-            prerelease=false
-          elif [[ ${TAG} =~ ^v${version//./\\.}-rc\.([0-9]+)$ ]]; then
-            deb="${version}~rc.${BASH_REMATCH[1]}"
-            prerelease=true
-          else
-            echo "::error::tag ${TAG}, but VERSION says v${version} or v${version}-rc.<n>" >&2
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::${GITHUB_SHA} is not on main: tag a commit of main" >&2
             exit 1
           fi
-          echo "deb=${deb}" >>"${GITHUB_OUTPUT}"
-          echo "prerelease=${prerelease}" >>"${GITHUB_OUTPUT}"
 
       # Only the packages' own test, from the tagged commit: their file
       # lists, control fields, stamped version and postinst. Not the rest of
