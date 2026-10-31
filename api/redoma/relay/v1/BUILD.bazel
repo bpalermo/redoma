@@ -1,6 +1,7 @@
 load("@protobuf//bazel:proto_library.bzl", "proto_library")
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 load("@rules_go//proto:def.bzl", "go_proto_library")
+load("//bazel:protoc.bzl", "resolved_protoc")
 
 proto_library(
     name = "relayv1_proto",
@@ -52,6 +53,10 @@ genrule(
     name = "relay_source_info",
     srcs = ["relay.proto"],
     outs = ["relay_source_info.binpb"],
-    cmd = "$(execpath @protobuf//:protoc) --include_source_info --descriptor_set_out=$@ --proto_path=api $(execpath relay.proto)",
-    tools = ["@protobuf//:protoc"],
+    cmd = "$(execpath :protoc) --include_source_info --descriptor_set_out=$@ --proto_path=api $(execpath relay.proto)",
+    tools = [":protoc"],
 )
+
+# The protoc proto_library runs (the prebuilt one, .bazelrc), not
+# @protobuf//:protoc, which is always built from source.
+resolved_protoc(name = "protoc")
