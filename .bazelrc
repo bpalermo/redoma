@@ -15,12 +15,16 @@ build --stamp
 # protoc compiled from source with the C++ toolchain (minutes on a cold
 # cache, for every output base).
 common --@protobuf//bazel/toolchains:prefer_prebuilt_protoc
-# A protoc compiled from source anyway (toolchain resolution falling back
-# to it, or a target naming @protobuf//:protoc, which is always the
-# source-built one) fails loudly instead of slowly: this copt breaks the
-# compile of protoc's main.cc. --per_file_copt matches source paths, so it
-# names that file; a regex on protoc's output path would never fire.
+# A protoc compiled from source anyway fails loudly instead of slowly: this
+# copt breaks the compile of protoc's main.cc. --per_file_copt matches
+# source paths, so it names that file (a regex on protoc's output path
+# never fires). Both lines are needed: --per_file_copt reaches only
+# target-config compiles (a build of @protobuf//:protoc itself), and
+# --host_per_file_copt only exec-config ones, where protoc is built as a
+# tool (proto toolchain resolution falling back to it, or a genrule with
+# @protobuf//:protoc in its tools).
 common --per_file_copt=external/protobuf[^/]*/src/google/protobuf/compiler/main\.cc@--THIS_CC_TOOLCHAIN_IS_BROKEN
+common --host_per_file_copt=external/protobuf[^/]*/src/google/protobuf/compiler/main\.cc@--THIS_CC_TOOLCHAIN_IS_BROKEN
 
 test --test_output=errors
 # GitHub Actions sets CI; the tests that skip where unix sockets are refused
