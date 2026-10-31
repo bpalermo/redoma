@@ -873,6 +873,15 @@ linux/amd64 and linux/arm64 (an index of both):
   architectures' version label to `deb_version.txt` and the tag to it.
   `//runtime:claude_code_test` checks that each tarball is the version
   pinned and the architecture it was fetched for.
+- **No layer lists a path twice.** A tar may hold two entries for one
+  path, but containers/storage refuses to apply such a layer
+  ("duplicates of file paths not supported"), so Podman cannot pull the
+  image. Flattening several tarballs into one layer repeats their
+  directories (`./etc/` once per tarball), so every `flatten` that feeds a
+  layer sets `deduplicate = True`. `//runtime:base_layers_test_amd64` and
+  `_arm64`, `//runtime:image_layers_test_amd64` and `_arm64` list every
+  layer of each image (paths without `./` or a trailing `/`) and fail on
+  any path listed twice.
 - **The runtime image is never published from here.** Whoever runs
   redoma downloads Claude Code under Anthropic's terms and is responsible
   for complying with them, which is why redoma never publishes an image

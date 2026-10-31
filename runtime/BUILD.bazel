@@ -88,6 +88,9 @@ group(
 
 flatten(
     name = "system",
+    # Each input tarball has its own ./etc/ (and ./var/...) entry: one per
+    # path, or Podman refuses to pull the layer (base_layers_test).
+    deduplicate = True,
     tars = [
         ":cacerts",
         ":group",
@@ -288,6 +291,26 @@ sh_test(
     args = ["$(rlocationpath :base_deps)"],
     data = [":base_deps"],
 )
+
+# No layer of the base, or of the runtime image FROM it, lists a path
+# twice, per architecture: Podman (containers/storage) refuses to pull an
+# image whose layer does.
+[filegroup(
+    name = "%s_oci_layout_%s" % (image, arch),
+    srcs = [":%s_index_%s" % (image, arch)],
+    output_group = "oci_layout",
+) for arch in PLATFORMS for image in ("base", "image")]
+
+[sh_test(
+    name = "%s_layers_test_%s" % (image, arch),
+    srcs = ["base_layers_test.sh"],
+    args = [
+        arch,
+        "$(rlocationpath :%s_oci_layout_%s)" % (image, arch),
+        "4" if image == "base" else "5",
+    ],
+    data = [":%s_oci_layout_%s" % (image, arch)],
+) for arch in PLATFORMS for image in ("base", "image")]
 
 # The base's version label, read from each architecture's config as pushed,
 # is the packages' version.
