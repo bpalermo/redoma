@@ -535,7 +535,10 @@ constrain = create_pull_request arguments.head ^= agent/example/
   runs. An upstream `.conf` that does not parse publishes nothing for that
   upstream: no clusters, no egress listener, no route for any agent (so
   `/mcp/<upstream>` is a 404 everywhere), and the error is logged at every
-  scan.
+  scan. A `credential_for` line that names a tool outside its credential's
+  `credential_allows`, or a credential other than `default` with no
+  `credential_allows`, makes the upstream's `.conf` invalid in the same
+  way.
 - An agent has an upstream when its own file under that upstream exists.
   `redoma xds` then publishes the agent's route to it. Without the file,
   there is no route, and `/mcp/<upstream>` is a 404 for that agent.
