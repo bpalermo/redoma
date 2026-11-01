@@ -43,6 +43,7 @@ agent container (own netns)                   host
      v
   127.0.0.1:8081 agent_<name>_mcp  -- host Envoy --------------------------+
      http_filters, per agent:                                              |
+       header_mutation (remove x-mcp-*, mcp-param-* the agent sent)        |
        mcp (parse JSON-RPC: method, params.name, configured arguments)     |
        rbac (this agent's allowlist; anything else is a 403)               |
        router (route on the tool name: cluster per credential)             |
@@ -213,8 +214,12 @@ or later.
   a review comment id belongs to the pull request named. So, within an
   allowed repository, an agent may comment on or reply in any pull request
   or issue. A host that needs "its own pull requests only" needs the
-  `ext_proc` fallback, which can look the target up, or a repository the
-  agent's App can write nothing else in.
+  `ext_proc` fallback, which can look the target up. Narrowing by
+  credential does not help as designed: an upstream has one App token,
+  shared by every agent that uses it, so its reach is the union of theirs.
+  A credential per agent (a cluster and SDS file per agent and credential,
+  each from an installation scoped to that agent's repositories) would
+  make GitHub enforce each agent's repositories; that is an open question.
 
 ### The credential (`credential_injector`)
 
@@ -233,8 +238,9 @@ or later.
   them on the model listeners. The credential injector is also supported
   as an **upstream** filter (`status_upstream: alpha`, `:493`). That puts
   the credential on the cluster, not on the agent's listener: every route
-  to `mcp_github` gets the App token, and every route to `mcp_github_pr`
-  gets the person's token.
+  to `mcp_github` gets the App token, and the one route to `mcp_github_pr`,
+  which matches `create_pull_request` alone, gets the person's token (see
+  "The person's credential").
 - **Rotation.** An SDS secret from a file (`PathConfigSource`) is reloaded
   when the file is moved into place: Envoy watches the path for moves, or a
   `watched_directory` for moves into it
@@ -286,6 +292,36 @@ reaches the server's loopback.
   So redoma requires a static `--tools` list for this server, strips every
   `X-MCP-*` header the agent sends, and may set `X-MCP-Tools` itself per
   agent (below).
+- **Which headers are stripped, and how.** A route's
+  `request_headers_to_remove` takes exact names only
+  (`api/envoy/config/route/v3/route_components.proto:374-376`), so it cannot
+  remove a family of headers. The agent's listener therefore runs
+  `envoy.filters.http.header_mutation` before the router, with one
+  `remove_on_match` request mutation per prefix: a `key_matcher` string
+  matcher, prefix, `ignore_case`
+  (`api/envoy/config/common/mutation_rules/v3/mutation_rules.proto:93-111`,
+  `api/envoy/extensions/filters/http/header_mutation/v3/header_mutation.proto:22-24`).
+  That filter is alpha, `security_posture: unknown`
+  (`extensions_metadata.yaml:835-841`), like the credential injector, and
+  sees only headers. Removed:
+  - `x-mcp-*`: the server's per-request configuration above, which only
+    the operator may set. The per-agent `X-MCP-Tools` is added after the
+    removal, by the route (the router applies a route's header additions
+    after the listener's filters have run).
+  - `mcp-param-*`: projections of tool arguments into headers. The server
+    does not dispatch on them (it reads them only for CORS,
+    `pkg/http/middleware/cors.go:18-30`). Envoy checks the body's
+    arguments, not these headers, so any copy that could disagree with the
+    body is removed.
+
+  Kept, because the protocol needs them:
+  - `Mcp-Session-Id` and `MCP-Protocol-Version`.
+  - `Mcp-Method` and `Mcp-Name`. With protocol version `2026-07-28` the MCP
+    filter requires them and refuses a request whose headers disagree with
+    its body (`source/extensions/filters/http/mcp/mcp_filter.cc:422-425`,
+    `:494-540`, `:798-828`). With an earlier version and `BODY`, the filter
+    ignores them, and the server reads only `Mcp-Method`, to refuse one
+    method (`pkg/http/handler.go:249`).
 - **Image:** `ghcr.io/github/github-mcp-server:v2.0.3`, an OCI index,
   `sha256:250bc6ce70788207608ef74cef4397230ff2e8481218da74d6093e4bd9101132`
   (linux/amd64
@@ -299,7 +335,9 @@ reaches the server's loopback.
 ## Layered limits
 
 No single layer is trusted to stop a dangerous call. Each of the three
-below would stop a merge on its own.
+below would stop a merge on its own, on either credential's route. For an
+approval the picture differs, and the third layer is weaker on the person's
+route (see "The person's credential" below).
 
 1. **The server's own flags, first.** GitHub's server is started with an
    explicit `--tools` list, the union of what any agent on the host may
@@ -322,7 +360,48 @@ below would stop a merge on its own.
      the API.
    - Repository rulesets that let the App create and update only branches
      under the agents' prefixes, and block deletion and force-push.
+   - A ruleset on the default branch requiring an approving review and the
+     required checks, with neither the App nor the person's token in its
+     bypass list. Contents and pull requests write would let the App merge
+     an approved, green pull request, so this ruleset is what stops a merge
+     at GitHub, not the App's permissions.
    - The App installed on the agents' repositories only.
+
+### The person's credential
+
+`create_pull_request` is sent with a person's token, not the App's: the
+pull request's author is whoever opens it. Its squash commit on the
+default branch is then authored by that person, so the published history
+names someone who answers for it, with the agent's commits as its contents.
+
+- **Its scope:** a fine-grained token on the agents' repositories only,
+  with Pull requests read and write, Contents read and Metadata read.
+  Nothing else.
+- **What GitHub stops on it:**
+  - Contents read means it cannot push, change files or merge (a merge
+    writes contents). The default branch's ruleset stops a merge too.
+  - It **can** do anything Pull requests write allows as that person:
+    comment, edit or close pull requests, and approve or request changes
+    on pull requests other people opened. GitHub refuses an approval only
+    of the person's own pull requests.
+
+  So on this route GitHub is no backstop against an approval in that
+  person's name.
+- **So the route is narrowed by its match, not only by RBAC.** Envoy routes
+  to `mcp_github_pr` only a request whose extracted metadata is `method` =
+  `tools/call` and `params.name` = `create_pull_request`, both exact. A
+  route's `dynamic_metadata` matchers must all match
+  (`api/envoy/config/route/v3/route_components.proto:778-782`), after the
+  MCP filter has run with `clear_route_cache`. Every other request,
+  `tools/list` included, goes to `mcp_github` under the App's token.
+  - In the configuration, a credential other than `default` names exactly
+    one tool per line (`credential_for.<tool>`), never a pattern, and
+    `redoma xds` refuses a file that routes a review, merge or comment tool
+    to it.
+  - RBAC and the server's `--tools` ceiling still apply on top. If a
+    request names `pull_request_review_write`, it never reaches the person's
+    token: it is not routed there, the server has not registered it, and
+    RBAC has not allowed it. Each of these is enough on its own.
 
 Never allowed at any layer, for GitHub:
 
@@ -339,8 +418,9 @@ Never allowed at any layer, for GitHub:
 Two files per upstream, plus one per agent per upstream, in the style of
 the egress allowlists. All of them are root's and writable by no one else,
 like `agents.txt`, and strict: an unknown key, a key given twice (list keys
-excepted) or a value that does not parse invalidates the file, and an
-invalid file publishes nothing for it ("An error never widens access").
+excepted) or a value that does not parse invalidates the file. What an
+invalid file does depends on which it is, and none widens access ("An error
+never widens access"; see "Who enables what").
 
 `/etc/redoma/mcp/<upstream>.conf`, the upstream:
 
@@ -365,9 +445,9 @@ credential_header = Authorization
 credential_prefix = Bearer
 # Which tools use a credential other than default.
 credential_for.create_pull_request = pr
-# Request headers removed before the upstream sees them; may end in *.
-strip_header = X-MCP-*
-strip_header = Mcp-*
+# Request header name prefixes removed from the agent's requests (any case).
+strip_header_prefix = x-mcp-
+strip_header_prefix = mcp-param-
 # Optional: a header set per agent, {tools} being the agent's list.
 agent_header.X-MCP-Tools = {tools}
 max_request_bytes = 1048576
@@ -378,7 +458,9 @@ max_request_bytes = 1048576
 
 ```
 # /etc/redoma/mcp/github/example.conf
-tool = get_me
+# Tools that take no repository and so no constraint (the * lines below
+# do not apply to them; a tool may not be listed both ways).
+tool_unconstrained = get_me
 tool = pull_request_read
 tool = list_pull_requests
 tool = create_pull_request
@@ -387,6 +469,8 @@ tool = add_reply_to_pull_request_comment
 tool = create_branch
 tool = push_files
 # Constraints: <tool or *> <argument path> = <value>, or ^= for a prefix.
+# * means every tool listed with tool =; an argument a constraint names must
+# be present, so a tool without it is never allowed under that constraint.
 constrain = * arguments.owner = example-org
 constrain = * arguments.repo = example-repo
 constrain = create_branch arguments.branch ^= agent/example/
@@ -396,12 +480,21 @@ constrain = create_pull_request arguments.head ^= agent/example/
 
 **Who enables what.**
 - An upstream exists when its `.conf` exists and parses, and its container
-  runs.
+  runs. An upstream `.conf` that does not parse publishes nothing for that
+  upstream: no clusters, no egress listener, no route for any agent (so
+  `/mcp/<upstream>` is a 404 everywhere), and the error is logged at every
+  scan.
 - An agent has an upstream when its own file under that upstream exists.
   `redoma xds` then publishes the agent's route to it. Without the file,
   there is no route, and `/mcp/<upstream>` is a 404 for that agent.
-- A file that exists but does not parse publishes a route whose RBAC
-  allows nothing.
+- An agent file that exists but does not parse still publishes the agent's
+  route, with an RBAC policy that allows nothing: every call is a 403, and
+  the error is logged. The route stays so the agent's failure says
+  "denied", not "no such server".
+- An invalid `_default.conf` fails every agent's list for that upstream,
+  as a bad `egress/_default.txt` fails every agent's egress list: each
+  agent with a file gets the deny-all route, and agents without one still
+  have no route.
 - `_default.conf` and any other underscore name can never be an agent's
   (`allowlist.ValidName` refuses the underscore).
 - The host switch is the presence of `/etc/redoma/mcp/`; nothing in it,
@@ -411,8 +504,8 @@ constrain = create_pull_request arguments.head ^= agent/example/
 with `REJECT_NO_MCP`, `BODY`, `reject_duplicate_keys`,
 `max_request_body_size` and the extraction rules the constraints need;
 the RBAC policy; routes that match the extracted tool name (with
-`clear_route_cache`) to the credential's cluster; `request_headers_to_remove`
-and the agent's headers; and the clusters, each with its upstream
+`clear_route_cache`) to the credential's cluster; the `header_mutation`
+filter's prefix removals and the route's per-agent headers; and the clusters, each with its upstream
 credential injector and source namespace. It never contacts the upstream
 or reads a credential.
 
@@ -623,3 +716,9 @@ a workflow started by hand.
    before the digest moves. Should redoma check a release's tool list
    against the allowlists at start, and refuse a tool name it no longer
    has?
+10. **A credential per agent?** One App token per upstream is shared by
+    every agent that uses it, so GitHub enforces only the union of their
+    repositories. A cluster and SDS file per agent and credential, each
+    token from an installation (or a token request) scoped to that agent's
+    repositories, would make GitHub enforce each agent's own. It costs one
+    minter output and one cluster per agent and upstream.
