@@ -17,7 +17,7 @@ func TestHookForbidsTheConfiguredSockets(t *testing.T) {
 	conf.WorkloadAPI = "unix:///srv/spire/workload/agent.sock"
 	conf.SpireBrokerSocket = "/srv/spire/broker/broker.sock"
 	conf.SpireAdminSocket = "/srv/spire/admin/admin.sock"
-	h := newHook(flags{socket: "/run/redoma-xds/register.sock", netnsDir: "/run/netns", annotation: "redoma/agent", timeout: time.Second}, conf)
+	h := newHook(flags{socket: "/run/redoma/xds/register.sock", netnsDir: "/run/netns", annotation: "redoma/agent", timeout: time.Second}, conf)
 	for _, want := range append(slices.Clone(hook.ForbiddenSources), "/srv/spire/workload", "/srv/spire/broker", "/srv/spire/admin") {
 		if !slices.Contains(h.Forbidden, want) {
 			t.Errorf("the hook does not forbid %s: %q", want, h.Forbidden)

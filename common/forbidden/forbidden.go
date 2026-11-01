@@ -17,12 +17,15 @@ import (
 // Podman's own, from which a container could start another one or read
 // another's files (named volumes, --secret files), and the kernel's views of
 // other processes, descriptors and devices, which lead anywhere.
+//
+// /run/redoma holds every runtime directory of redoma's and its host's:
+// xds/ (the xDS and registration sockets), relay/ (the agents' socket),
+// lead/ (the lead's socket), names/ (the agents' name files), envoy/
+// (Envoy's admin socket) and a launcher's active/. One entry forbids them
+// all, and any added later.
 var Base = []string{
-	"/run/redoma-xds",
-	"/run/redoma-relay",
-	"/run/redoma-relay-lead",
-	"/run/redoma-spire",
 	"/run/redoma",
+	"/run/redoma-spire",
 	"/etc/redoma",
 	"/run/podman",
 	"/var/lib/containers",

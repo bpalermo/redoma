@@ -25,7 +25,7 @@ import (
 // recorded namespace is bound in it at once, one in another namespace waits
 // for Envoy's report like any replacement.
 //
-// The file lives in /run/redoma-xds, a tmpfs: a reboot, which also restarts
+// The file lives in /run/redoma/xds, a tmpfs: a reboot, which also restarts
 // Envoy and clears every namespace, clears it too. A file that cannot be
 // read is logged and ignored; agents replaced while this process was down
 // then keep their old listeners until they are restarted.

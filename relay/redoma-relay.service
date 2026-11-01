@@ -1,7 +1,7 @@
 # redoma-relay: carries tasks, questions and messages between the lead and
 # the agents in their containers. The agents' streams arrive through the host
-# Envoy over mutual TLS on /run/redoma-relay/relay.sock; the lead's API
-# (redoma msg, redoma mcp) is /run/redoma-relay-lead/lead.sock.
+# Envoy over mutual TLS on /run/redoma/relay/relay.sock; the lead's API
+# (redoma msg, redoma mcp) is /run/redoma/lead/lead.sock.
 #
 # Installed by the redoma package in /usr/lib/systemd/system. Its SVID comes
 # from the host SPIRE agent's Workload API (spire_workload_api in
@@ -28,12 +28,15 @@ User=redoma-relay
 Group=redoma-relay
 SupplementaryGroups=redoma-lead
 
-# /run/redoma-relay (relay.sock), which a containerized Envoy bind-mounts,
-# and /run/redoma-relay-lead (lead.sock), which it never sees: both 0750,
+# /run/redoma/relay (relay.sock), which a containerized Envoy bind-mounts,
+# and /run/redoma/lead (lead.sock), which it never sees: both 0750,
 # and the relay gives each its socket's group (redoma-relay and
 # redoma-lead) at start. Kept across restarts: a container that bind-mounts
-# the directory would be left looking at a deleted one.
-RuntimeDirectory=redoma-relay redoma-relay-lead
+# the directory would be left looking at a deleted one. systemd makes the
+# parent, /run/redoma, root 0755 when it is missing, and owns and removes
+# only the innermost directories, so the units sharing /run/redoma never
+# touch each other's.
+RuntimeDirectory=redoma/relay redoma/lead
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
 # /var/lib/redoma-relay, 0700: the queues, which must outlive a reboot.

@@ -35,6 +35,44 @@ func TestSourcesFollowTheSettings(t *testing.T) {
 	}
 }
 
+// TestBaseCoversTheRuntimeDirectory: /run/redoma, each of its directories
+// and anything in them are forbidden; a sibling that only starts with the
+// same name is not forbidden by that entry, and the per-service directories
+// of before are no longer listed.
+func TestBaseCoversTheRuntimeDirectory(t *testing.T) {
+	for _, p := range []string{
+		"/run/redoma",
+		"/run/redoma/",
+		"/run/redoma/xds",
+		"/run/redoma/xds/xds.sock",
+		"/run/redoma/xds/register.sock",
+		"/run/redoma/relay",
+		"/run/redoma/relay/relay.sock",
+		"/run/redoma/lead",
+		"/run/redoma/lead/lead.sock",
+		"/run/redoma/names",
+		"/run/redoma/names/a",
+		"/run/redoma/envoy",
+		"/run/redoma/envoy/admin.sock",
+		"/run/redoma/active/a",
+		"/run/./redoma/lead/../xds",
+	} {
+		if !Under(p, Base) {
+			t.Errorf("%s is not under Base", p)
+		}
+	}
+	for _, p := range []string{"/run/redomax", "/run/redomax/xds", "/run/redoma-xds", "/run/redoma-relay"} {
+		if Under(p, []string{"/run/redoma"}) {
+			t.Errorf("%s is under /run/redoma", p)
+		}
+	}
+	for _, p := range []string{"/run/redoma-xds", "/run/redoma-relay", "/run/redoma-relay-lead", "/run/redoma-names"} {
+		if Under(p, Base) {
+			t.Errorf("%s, a path of before /run/redoma held them all, is still under Base", p)
+		}
+	}
+}
+
 func TestUnder(t *testing.T) {
 	sources := []string{"/run/redoma-spire", "/srv/x/"}
 	for path, want := range map[string]bool{

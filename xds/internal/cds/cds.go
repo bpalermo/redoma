@@ -50,7 +50,7 @@ func RelayClusterName(repo string) string {
 
 // Relay is where redoma-relay is and who it is.
 type Relay struct {
-	// Socket is its unix socket (/run/redoma-relay/relay.sock), as Envoy
+	// Socket is its unix socket (/run/redoma/relay/relay.sock), as Envoy
 	// sees it.
 	Socket string
 	// ID is its SPIFFE ID, which its certificate must carry.

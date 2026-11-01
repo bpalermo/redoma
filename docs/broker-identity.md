@@ -312,7 +312,7 @@ served as the agent's.
 `redoma xds` puts each pidfd in systemd's file descriptor store
 (`sd_notify` with `FDSTORE=1`), named `FDNAME=<container ID>`: the OCI
 container ID that already names the registration in
-`/run/redoma-xds/registrations.json`. The unit gains:
+`/run/redoma/xds/registrations.json`. The unit gains:
 
 ```
 NotifyAccess=main

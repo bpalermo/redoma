@@ -62,7 +62,7 @@ func Command() *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.socket, "socket", "/run/redoma-xds/register.sock", "redoma xds's registration socket")
+	fl.StringVar(&f.socket, "socket", "/run/redoma/xds/register.sock", "redoma xds's registration socket")
 	fl.StringVar(&f.netnsDir, "netns-dir", "/run/netns", "where the container's network namespace is mounted; the host Envoy must see mounts there")
 	fl.StringVar(&f.annotation, "annotation", "", "the annotation naming the agent (default: the settings file's agent_annotation)")
 	fl.DurationVar(&f.timeout, "timeout", 30*time.Second, "how long createRuntime waits for Envoy's listeners before failing the start")
