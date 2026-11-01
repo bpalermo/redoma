@@ -67,8 +67,9 @@ upstream container (own netns, --network none)                             |
   speaks plain HTTP to its own loopback; no SVID is presented on this hop,
   and none needs to be.
 - **The upstream's side.** Each upstream server runs in a rootful Podman
-  container of its own, `--network none`, in its own network namespace,
-  like an agent. Envoy binds an egress listener in that namespace, holding
+  container of its own, `--network none`, in its own network namespace
+  like an agent, and in a user namespace of its own (`--userns=auto`).
+  Envoy binds an egress listener in that namespace, holding
   the upstream's own allowlist (GitHub's server needs `api.github.com`).
   Envoy reaches the server's port on that namespace's loopback through a
   cluster whose source address is in that namespace. Nothing else can
@@ -89,19 +90,25 @@ upstream container (own netns, --network none)                             |
   (`examples/envoy.yaml`) does not change: everything comes over LDS and
   CDS.
 - The OCI hook registers an upstream container (annotation
-  `redoma/upstream=<name>`) as it registers an agent: it mounts the
-  namespace at `/run/netns/redoma-mcp-<container ID>`, applies the same
-  process, mount and namespace checks, and registers it with `redoma xds`
-  under its upstream name. An upstream name is never an agent name: a
-  container carrying both annotations is refused, and the two namespaces
-  of names are kept apart in `agent.Merge`.
+  `redoma/upstream=<name>`) much as it registers an agent. At createRuntime
+  it mounts the namespace at `/run/netns/redoma-mcp-<container ID>` and
+  applies the same process and mount checks. The user and network namespace checks differ, because an
+  upstream runs with `--userns=auto` (see "Users"): the hook registers it
+  with `redoma xds`, under its upstream name, only from its poststart
+  stage, once the namespace has no interface but `lo`. That needs a new
+  hook definition in `ocihook/hooks.d`, a `poststart` stage matching the
+  annotation `redoma/upstream`, beside the existing createRuntime and
+  poststop ones. An upstream name is never an agent name: a container
+  carrying both annotations is refused, and the two namespaces of names
+  are kept apart in `agent.Merge`.
 - The shim gains `--mcp-upstream=<name>` (repeatable): an `http` entry in
   its `--mcp-config` and `mcp__<name>__*` in `--allowedTools`. This only
   decides what claude is offered; it grants nothing.
 - A systemd template unit, `redoma-mcp@.service`, runs one upstream
-  container from its configuration file (image by digest, arguments,
-  user), so starting a new upstream is `systemctl enable --now
-  redoma-mcp@<name>`.
+  container from its configuration file (image by digest, arguments), with
+  `--userns=auto`, so starting a new upstream is `systemctl enable --now
+  redoma-mcp@<name>`. One instance of each upstream serves every agent
+  that has it; there is no per-agent instance.
 
 ## What was verified
 
@@ -161,16 +168,17 @@ or later.
     listeners.** That is the larger risk, because the Envoy is shared.
 
   **Decision:** use the filter, with the layers below so that no single
-  bug grants a dangerous tool. Keep a fallback ready: an `ext_proc`
-  service that redoma owns (`envoy.filters.http.ext_proc` is stable and
-  `robust_to_untrusted_downstream_and_upstream`,
-  `extensions_metadata.yaml:526-532`), which parses the JSON-RPC body in Go
-  and returns the same allow or deny. It is generic code, written once. Lua
-  is not the fallback: it is stable and robust
-  (`extensions_metadata.yaml:672-678`), but Envoy's Lua has no JSON
-  parser, and a hand-written one in Lua would be weaker than the C++ one it
-  replaces. Running the MCP listeners in a second Envoy, so that a crash
-  spares the model and relay listeners, is an open question.
+  bug grants a dangerous tool.
+  - **No fallback.** redoma has no second parser of MCP requests, in
+    `ext_proc` or anywhere else. A bug in the filter is fixed in Envoy,
+    upstream, and hosts take the Envoy release that fixes it; it is not
+    worked around in redoma.
+  - **One Envoy.** The MCP listeners run on the same host Envoy as the
+    model, egress and relay listeners, not a second one. The accepted risk:
+    a crash in this alpha filter takes down every listener of every agent,
+    model and relay included, until Envoy restarts. A second Envoy would
+    contain that, at the cost of a second process, bootstrap and xDS client
+    to run and keep in step; that cost is not taken.
 
 ### RBAC on the tool name, per agent
 
@@ -213,13 +221,10 @@ or later.
   tell whether a pull request number is one of the agent's own, or whether
   a review comment id belongs to the pull request named. So, within an
   allowed repository, an agent may comment on or reply in any pull request
-  or issue. A host that needs "its own pull requests only" needs the
-  `ext_proc` fallback, which can look the target up. Narrowing by
-  credential does not help as designed: an upstream has one App token,
-  shared by every agent that uses it, so its reach is the union of theirs.
-  A credential per agent (a cluster and SDS file per agent and credential,
-  each from an installation scoped to that agent's repositories) would
-  make GitHub enforce each agent's repositories; that is an open question.
+  or issue. "Its own pull requests only" is not expressible in this design:
+  it would need a lookup at the backend, which nothing on the path does.
+  Narrowing by credential does not help either (see "One credential per
+  upstream").
 
 ### The credential (`credential_injector`)
 
@@ -251,6 +256,11 @@ or later.
   the token they were sent with. redoma never reads the file. An expired
   or missing token is GitHub's 401, returned to the agent as the tool's
   error; there is no fallback to another credential.
+- **One credential per upstream.** Each credential an upstream's `.conf`
+  names (`default`, and `pr` for GitHub) is one per redoma install, shared
+  by every agent that uses the upstream. The trade-off: GitHub enforces
+  only the union of those agents' repositories, and each agent's own
+  repositories are held by Envoy's RBAC alone.
 
 ### Reaching a server in another namespace
 
@@ -336,7 +346,7 @@ reaches the server's loopback.
     That safety belongs to this server version, not to the pattern. A
     release that routed or authorized on `Mcp-Param-*` would let a client on
     an older protocol send a header that disagrees with the body. Checking
-    that is part of every image upgrade (open question 9).
+    that is a step of the upgrade checklist (see "Upgrading an upstream").
     - Pinning `MCP-Protocol-Version` to `2026-07-28` in RBAC would close
       the gap generically, but at a cost. Every client that does not speak
       that version yet would be refused, including the agent's Claude Code
@@ -355,9 +365,11 @@ reaches the server's loopback.
   `sha256:cecac9a377c81f5ebfd20a9aabc7b9ff6a3a92393af6aa4b75875fe884e037b9`,
   linux/arm64
   `sha256:be672d50a0de2c6f9c4b81527828ad1b81fb4108b33f98b5876c2abc8d4ca488`).
-  Its config runs as user 0 with entrypoint `/server/github-mcp-server`, so
-  the unit gives it `--user`. Its HTTP client is Go's default transport,
-  which honours `HTTPS_PROXY`.
+  Its config runs as user 0 with entrypoint `/server/github-mcp-server`.
+  Under `--userns=auto` (see "Users") that root is an unprivileged host uid
+  of its own; the unit still gives it a non-root `--user` inside its
+  namespace. Its HTTP client is Go's default transport, which honours
+  `HTTPS_PROXY`.
 
 ## Layered limits
 
@@ -381,7 +393,7 @@ on its own:
 
 1. **The server's own flags, first.** GitHub's server is started with an
    explicit `--tools` list, the union of what any agent on the host may
-   call, and `--lockdown-mode` for public repositories. Toolsets are not
+   call, and `--lockdown-mode` (see "Untrusted text"). Toolsets are not
    used: they are coarse. `repos` holds `delete_repository`,
    `create_repository` and `fork_repository` next to `get_file_contents`;
    `pull_requests` holds `merge_pull_request`, `update_pull_request_branch`
@@ -389,6 +401,9 @@ on its own:
    that is not in the static universe is not registered at all, whatever
    the request says. Envoy also sets `X-MCP-Tools` per agent to that
    agent's list, so `tools/list` shows each agent only its own tools.
+   One instance of the server serves every agent (it is stateless), so
+   this ceiling is the host's, not an agent's: an agent's own limit is
+   layer 2.
 2. **Envoy's RBAC, per agent.** The allowlist above, with argument
    constraints. It is the only per-agent layer, and the one that does not
    depend on the upstream's code.
@@ -433,34 +448,74 @@ names someone who answers for it, with the agent's commits as its contents.
   (`api/envoy/config/route/v3/route_components.proto:778-782`), after the
   MCP filter has run with `clear_route_cache`. Every other request,
   `tools/list` included, goes to `mcp_github` under the App's token.
-  - In the configuration, a credential other than `default` names exactly
-    one tool per line (`credential_for.<tool>`), never a pattern. The
+  - In the configuration, a credential other than `default` is given to
+    tools one tool per line (`credential_for.<tool>`), never a pattern. The
     upstream's own `.conf` lists the only tools that may be sent with that
     credential (`credential_allows.<credential>`): for GitHub's `pr`,
-    `create_pull_request` alone. `redoma xds` refuses a file in which a
-    `credential_for` line names a tool outside its credential's allow
-    list, or names a credential that has no allow list. An allow list,
-    not a deny list. A deny list would have to name every review, comment
-    and merge tool, and at v2.0.3 there are many (`pull_request_review_write`,
-    `create_pull_request_review`, `submit_pending_pull_request_review`,
-    `add_pull_request_review_comment`, `resolve_review_thread`,
-    `update_issue_comment` and more). It would also fail open on the next
-    release's new tool. The check is generic: redoma knows no upstream's
-    tools, and the list lives with the upstream's configuration.
+    `create_pull_request` alone. **The credential rule**, which makes the
+    upstream's `.conf` invalid when any part fails:
+    - every credential other than `default` that the file defines
+      (`credential.<name>`) has a `credential_allows.<name>`, whether or not
+      a `credential_for` line uses it;
+    - every `credential_for` line names a credential the file defines, and
+      a tool in that credential's `credential_allows`;
+    - every `credential_allows` names a credential the file defines.
+
+    An allow list, not a deny list. A deny list would have to name every
+    review, comment and merge tool, and at v2.0.3 there are many (those
+    under "Never allowed at any layer", plus comment tools such as
+    `update_issue_comment`). It would also fail open on the next release's
+    new tool. The check is generic: redoma knows no upstream's tools, and
+    the list lives with the upstream's configuration.
   - RBAC and the server's `--tools` ceiling still apply on top. If a
     request names `pull_request_review_write`, it never reaches the person's
     token: it is not routed there, the server has not registered it, and
     RBAC has not allowed it. Each of these is enough on its own.
 
-Never allowed at any layer, for GitHub:
+Never allowed at any layer, for GitHub (tool names at v2.0.3):
 
-- merging, auto-merge, updating a branch from its base;
-- reviews (`pull_request_review_write`, `add_comment_to_pending_review`);
+- merging, auto-merge, updating a branch from its base
+  (`merge_pull_request`, `update_pull_request_branch`);
+- reviews: writing, submitting, deleting or commenting in one, and
+  resolving its threads (`pull_request_review_write`,
+  `create_pull_request_review`, `submit_pending_pull_request_review`,
+  `delete_pending_pull_request_review`, `add_comment_to_pending_review`,
+  `add_pull_request_review_comment`, `resolve_review_thread`,
+  `unresolve_review_thread`). Replying in an existing thread,
+  `add_reply_to_pull_request_comment`, is a comment, not a review, and
+  may be allowed;
 - statuses and check runs;
 - anything under Actions;
-- repository administration, deleting or creating repositories, forks;
-- deleting files or branches;
-- Copilot assignments.
+- repository administration, deleting or creating repositories, forks
+  (`create_repository`, `delete_repository`, `fork_repository`,
+  `create_repository_ruleset`);
+- deleting files or branches (`delete_file`);
+- Copilot assignments and reviews (`assign_copilot_to_issue`,
+  `assign_copilot_to_issue_with_intent`, `request_copilot_review`).
+
+### Untrusted text
+
+Agents may read public repositories, other owners' included, and what they
+read (issues, comments, code) is written by anyone. GitHub's server runs
+with `--lockdown-mode`, which filters content from authors without push
+access on public repositories. GitHub calls it best-effort, not an
+authorization boundary, and so does this design: it reduces what reaches
+the model, and grants or refuses nothing. An operator who wants an agent to
+read only some repositories narrows its allowlist with `owner` and `repo`
+constraints (`constrain = * arguments.owner = ...`); nothing refuses public
+repositories by default.
+
+### CI on same-repository branches
+
+A pull request from a branch of the same repository runs the base
+repository's workflows with its secrets and a token that may write, and
+with the branch's own code: build scripts and tests run as CI. Refusing
+`.github/workflows` changes (the App has no `workflows` permission) does
+not stop changes to what those workflows execute, so an agent's branch can
+reach the CI secrets. Publishing to a fork and opening the pull request
+across repositories would make CI treat it as a fork's, without secrets.
+That is a hardening choice for each deployment (how its repositories and
+CI are set up), not something redoma requires or provides.
 
 ## Configuration
 
@@ -476,8 +531,10 @@ never widens access"; see "Who enables what").
 ```
 # /etc/redoma/mcp/github.conf
 image = ghcr.io/github/github-mcp-server@sha256:250bc6ce70788207608ef74cef4397230ff2e8481218da74d6093e4bd9101132
-user = 965:965
 port = 8082
+# What a tool named in an allowlist but missing from the server's tools/list
+# does: refuse (the default), warn or off. See "Who enables what".
+tool_check = refuse
 # The server's arguments, one per line, in order.
 arg = http
 arg = --listen-host=127.0.0.1
@@ -495,8 +552,7 @@ credential_prefix = Bearer
 # Which tools use a credential other than default, one tool per line.
 credential_for.create_pull_request = pr
 # The only tools a credential other than default may carry (a list key, one
-# tool per line). Required for every such credential; xds refuses a
-# credential_for line naming a tool outside it.
+# tool per line). See "The credential rule" for what makes the file invalid.
 credential_allows.pr = create_pull_request
 # Request header name prefixes removed from the agent's requests (any case).
 strip_header_prefix = x-mcp-
@@ -532,16 +588,59 @@ constrain = create_pull_request arguments.head ^= agent/example/
 
 **Who enables what.**
 - An upstream exists when its `.conf` exists and parses, and its container
-  runs. An upstream `.conf` that does not parse publishes nothing for that
-  upstream: no clusters, no egress listener, no route for any agent (so
-  `/mcp/<upstream>` is a 404 everywhere), and the error is logged at every
-  scan. A `credential_for` line that names a tool outside its credential's
-  `credential_allows`, or a credential other than `default` with no
-  `credential_allows`, makes the upstream's `.conf` invalid in the same
-  way.
+  runs and is registered. **An upstream that fails** publishes no egress
+  listener and no route for any agent (so `/mcp/<upstream>` is a 404
+  everywhere), and the error is logged at every scan. The one exception
+  is the tool check's own listener and the `default` cluster it routes to
+  (below), which stay published so that the check can run again; no agent
+  reaches either. An upstream fails when its `.conf` does not parse, when
+  the file breaks "The credential rule" (under "The person's credential"),
+  or when the tool check refuses it.
+- **The tool check.** When an upstream's container registers, and when
+  `redoma xds` starts, it asks the upstream for its tools (`initialize`,
+  then `tools/list`, following its cursor) and compares them with every
+  tool name its configuration names: the `.conf`'s `credential_for` and
+  `credential_allows`, `_default.conf`'s `tool` and `tool_unconstrained`
+  lines, and each agent file's. A name the server does not list is a
+  mismatch. The answer is kept for the container's life, so an allowlist
+  edited later is compared at the next scan without asking again. The
+  upstream's `tool_check` decides what a mismatch does:
+  - `refuse` (the default): the file that names the tool is invalid, with
+    the effect any invalid file of its kind has (below): a mismatch in the
+    `.conf` fails the upstream, one in `_default.conf` fails every agent's
+    list for the upstream, and one in an agent's file fails that agent's
+    list alone. The error names each missing tool and the file that names
+    it, and is logged at every scan;
+  - `warn`: the mismatch is logged, and everything is published as if
+    there were none (the call fails at the server instead);
+  - `off`: no check, and no request is made.
+
+  The effect follows the file, as a parse error does, so that one agent's
+  stale allowlist costs that agent its route's tools and no other agent
+  anything, while a `.conf` or `_default.conf` that names a tool the
+  server does not have is wrong for every agent it serves. Under `refuse`,
+  an upstream that cannot be asked (it does not answer, or answers with an
+  error) fails, since no file can be checked, and is asked again at the
+  next scan; under `warn` that is logged and the upstream published.
+
+  The question goes through Envoy, not to the server directly: per
+  upstream, `redoma xds` publishes a check listener on a unix socket in
+  `/run/redoma/xds` (see "The runtime layout"), routed to the upstream's
+  `default` cluster (so Envoy injects the credential, which `redoma xds`
+  never reads) and allowing only the lifecycle methods and `tools/list`.
+  The request carries no `X-MCP-*` header, so the server lists its whole
+  static universe. The check is generic: it compares names, and redoma's
+  code names no upstream's tools.
 - An agent has an upstream when its own file under that upstream exists.
   `redoma xds` then publishes the agent's route to it. Without the file,
   there is no route, and `/mcp/<upstream>` is a 404 for that agent.
+- The route stays published for as long as the agent is, between turns
+  too. The shim offers the tools to claude only during a turn, but Envoy
+  cannot tell a turn's call from another process's in the container, so
+  outside a turn the agent can still call its allowed tools. Publishing
+  the route only while the relay reports an open task would close that,
+  at a cost in coupling (xds following the relay's tasks) not worth paying
+  for tools the agent is allowed anyway.
 - An agent file that exists but does not parse still publishes the agent's
   route, with an RBAC policy that allows nothing: every call is a 403, and
   the error is logged. The route stays so the agent's failure says
@@ -562,7 +661,8 @@ the RBAC policy; routes that match the extracted tool name (with
 `clear_route_cache`) to the credential's cluster; the `header_mutation`
 filter's prefix removals and the route's per-agent headers; and the
 clusters, each with its upstream credential injector and source namespace.
-It never contacts the upstream or reads a credential.
+It never reads a credential, and contacts an upstream only for the tool
+check, through Envoy.
 
 ### The runtime layout
 
@@ -573,16 +673,75 @@ Following the rc.4 rule that every runtime directory is under
 |---|---|---|
 | `/run/redoma/mcp-credentials` | root, 0700 | the upstreams' SDS files, written by their minters, read by Envoy (root) alone |
 | `/run/netns/redoma-mcp-<container ID>` | the hook | each upstream container's namespace, as for agents |
+| `/run/redoma/xds/mcp-check-<upstream>.sock` | root (Envoy binds it), 0666, in `redoma-sds`'s 0750 directory | the tool check's listener, which only `redoma xds` and root reach |
+
+**The check socket's access is its directory's.** Envoy binds the
+listener's socket (a `Pipe` address, which has only a `path` and a `mode`,
+`api/envoy/config/core/v3/address.proto:23-34` at v1.40.0). It runs as
+root, so the socket is root's; after the bind it applies `mode` with a
+`chmod` and changes no owner (`source/common/network/socket_impl.cc:73-79`
+at v1.40.0). A mode of `0600` or `0660` would therefore keep `redoma xds`
+(uid 961, not in root's group) out. The listener's mode is `0666`, and
+what limits it is `/run/redoma/xds`, which `redoma-xds.service` makes
+`0750` `redoma-sds` (`RuntimeDirectory=redoma/xds`,
+`RuntimeDirectoryMode=0750`): only uid 961, members of group `redoma-sds`
+(the host Envoy, a supplementary member, see README.md "Envoy") and root
+can reach a path in it. These are the same principals that already reach
+`xds.sock` in that directory, so the check socket adds none. No agent or
+upstream container can mount it (the hook refuses all of `/run/redoma`).
 
 No agent or upstream container may mount any of `/run/redoma`; the hook
 already refuses it. An upstream's container gets no credential file, no
 workspace and no host socket: its arguments, its egress listener and the
 requests Envoy forwards are all it has.
 
-**Users.** Each upstream runs under a uid of its own, from its `user` key.
-The hook refuses that uid to agents (it joins `hook.ServiceIDs` through
-the configuration) and refuses an agent's uid to upstreams. 965 is
-proposed for GitHub's.
+**Users.** Each upstream container runs rootful with Podman's
+`--userns=auto`: at its start Podman gives it a user namespace of its own,
+mapped to a range of unprivileged host uids and gids that no other
+`--userns=auto` container holds. There are no fixed uids, nothing is
+added to `/etc/passwd` or `/etc/group`, and the upstream's `.conf` has no
+`user` key. Podman 4.9 supports this in rootful mode, where it allocates
+the ranges from the subordinate ids of the user `containers` (podman-run(1)
+of Podman 4.9.3, `--userns=mode`, value `auto`: "The `--userns=auto` flag
+requires that the user name `containers` be specified in the /etc/subuid
+and /etc/subgid files, with an unused range of subordinate user IDs that
+Podman containers are allowed to allocate"). So:
+
+- **Install** needs a `containers` entry in both `/etc/subuid` and
+  `/etc/subgid`, with a range that holds no host uid or gid in use: not
+  root's, not redoma's services' (961, 963, 964), not any agent's.
+- **The hook** refuses an agent whose uid, gid or any `additionalGids`
+  entry falls in those ranges, so no agent shares an id with an upstream's
+  process. For an upstream it requires the opposite of an agent: a `user`
+  namespace entry, whose uid and gid mappings lie wholly inside the
+  `containers` ranges and map no host id 0.
+- **`--network none` is proven differently.** For an agent the hook reads
+  "a network namespace with no path and no user namespace" as proof of
+  `--network none`; with a user namespace, Podman creates the network
+  namespace without a path for any network mode and attaches the network
+  after the runtime made it, so that proof does not hold (see AGENTS.md,
+  "The OCI hook"). For an upstream, the hook mounts the namespace at
+  createRuntime as for an agent, but registers it with `redoma xds` only
+  from its poststart hook, once Podman has configured the network, and
+  only when the namespace has no interface but `lo`. An upstream not
+  registered gets no cluster, no egress listener and no requests, so it
+  never sees a credential, whatever network it has (open question 1).
+
+### Upgrading an upstream
+
+An upgrade is a digest change of `image` in the upstream's `.conf`, and a
+restart of its unit. The tool check (see "Who enables what") then compares
+the new release's tools with the allowlists, so a tool renamed or removed
+is caught at start without redoma knowing any tool. What a tool list cannot
+show stays a written checklist, gone through before the digest moves:
+
+- the release's flags, and whether `--tools` is still a ceiling over every
+  request header;
+- the request headers it reads (`X-MCP-*` and any new family the agent's
+  listener must strip), and whether it now routes or authorizes on a
+  header such as `Mcp-Param-*` rather than the body;
+- the parser its dispatch uses (case, duplicate keys) against Envoy's;
+- what a renamed or new tool does, before any allowlist names it.
 
 ## Pushing
 
@@ -615,8 +774,8 @@ There are two ways to publish an agent's work.
 
 **Through a host push, as a second upstream.** A small redoma MCP server,
 `redoma git-push`, offers one tool, `push(repo, branch)`, served through the
-same pattern: its own container and uid, Envoy's RBAC, the App token
-injected by Envoy. It reads the agent's workspace (bind-mounted read-only
+same pattern: its own container and user namespace, Envoy's RBAC, the App
+token injected by Envoy. It reads the agent's workspace (bind-mounted read-only
 into its container, per agent) as data, never running git there:
 - `openat2` beneath the workspace, no symlinks;
 - no configuration read at all; alternates and shallow repositories
@@ -645,24 +804,27 @@ plugs into the same pattern as any other upstream, with no special case.
 
 ## Network
 
-- Once an agent publishes through an upstream, its egress allowlist no
-  longer needs `github.com` or `api.github.com`, and should not have them:
-  a container with no GitHub host has no direct path to GitHub, whatever
-  it holds. The upstream's own egress listener has them instead, scoped to
-  that upstream's namespace.
-- **Fetching its own repositories** (to rebase, to read a branch) still
-  needs git over HTTPS. Public repositories can stay reachable anonymously
-  through the agent's egress (`github.com`, with no credential in the
-  container, so what it can do there is what anyone anonymous can).
-  Private ones need either a read-only git endpoint on the host (an
-  upstream of its own, `upload-pack` only) or the API's read tools
-  (`get_file_contents`, `list_commits`).
-- **Public dependencies** (release archives that redirect to
-  `objects.githubusercontent.com` and similar) go through the agent's
-  egress allowlist as today. A CONNECT tunnel is opaque, so Envoy cannot
-  tell paths apart there; prefer mirrors that avoid GitHub (a Go module
-  proxy, a Bazel download mirror).
-- No GitHub host belongs in `egress/_default.txt`.
+- **Every tool an agent uses goes through an MCP upstream.** Agents get no
+  direct git or GitHub egress: no GitHub host (`github.com`,
+  `api.github.com`, `*.githubusercontent.com`) is in any agent's egress
+  allowlist, `_default.txt` or its own. A container with no GitHub host
+  has no direct path to GitHub, whatever it holds. The upstreams' own
+  egress listeners have those hosts instead, each scoped to its upstream's
+  namespace.
+- **Fetching repositories** (to rebase, to read a branch, to read another
+  repository) is a read-only git upstream too, never git over the agent's
+  egress: either an existing MCP server whose tools are read-only git
+  (clone or fetch, read files, trees and logs at a ref), or one added
+  later as an upstream, in the same pattern. Until there is one, reads
+  are GitHub's server's read tools (`get_file_contents`, `list_commits`,
+  `pull_request_read`), which read through the API and need no git. How a
+  clone or fetch reaches the agent's workspace through MCP is open
+  (open question 2); until it is answered, an agent that needs one keeps
+  its GitHub egress (see "Rollout").
+- **Dependencies hosted on GitHub** (release archives that redirect to
+  `objects.githubusercontent.com` and similar) are not fetched from
+  GitHub: they come through mirrors that are not GitHub (a Go module
+  proxy, a Bazel download mirror) in the agent's egress allowlist.
 
 ## Audit
 
@@ -678,22 +840,25 @@ request, with:
 - the status, duration and bytes;
 - a request id, which the upstream can log too.
 
-Bodies are not logged. A digest of the body is not available to the access
-log without another filter; if hosts need one, the `ext_proc` fallback can
-record it. GitHub's own audit log names the App or the person for each
-write.
+Bodies are not logged, and a digest of the body is not available to the
+access log without another filter. GitHub's own audit log names the App or
+the person for each write.
 
 ## Rollout
 
-1. The generic pieces: the hook's upstream registration, the MCP listener,
-   RBAC, routes and clusters in `redoma xds`, the shim's `--mcp-upstream`,
-   and `redoma-mcp@.service`. Plus unit tests against fake upstreams.
+1. The generic pieces: the hook's upstream registration (its poststart
+   stage and definition), the MCP listener, RBAC, routes, clusters and the
+   tool check in `redoma xds`, the shim's `--mcp-upstream`, and
+   `redoma-mcp@.service`. Plus unit tests against fake upstreams.
 2. GitHub's server as the first upstream: read tools only for a first host.
 3. Writes (`create_pull_request`, comments, replies), with the second
    credential.
 4. Publishing through `create_branch` and `push_files`. Then, if needed,
    `redoma git-push`.
-5. GitHub hosts removed from the agents' egress allowlists.
+5. A read-only git upstream, once open question 2 (how a clone or fetch
+   is served) has an answer.
+6. GitHub hosts removed from the agents' egress allowlists, only after
+   step 5: until then an agent that needs a clone or fetch keeps them.
 
 **Identity modes.** Nothing here depends on how `redoma xds` gets the
 agents' SVIDs: the MCP listener's identity is its namespace in both
@@ -721,7 +886,15 @@ Agents move one at a time.
 
   Every resource is checked through deterministic packing (`lds.mustAny`).
 - the hook's registration of upstreams, and its refusal of an upstream
-  name used as an agent's, or an agent's uid used by an upstream.
+  name used as an agent's, of an agent whose ids fall in the `containers`
+  ranges, and of an upstream without a `--userns=auto` user namespace;
+- the hook's poststart stage for upstreams: it registers a namespace with
+  only `lo`, and refuses (leaves unregistered, and unmounts) one with any
+  other interface, read from a fake namespace listing; and the poststart
+  definition in `ocihook/hooks.d`, held to its annotation and stage like
+  the existing definitions;
+- the tool check against a fake upstream, under each `tool_check` value:
+  a missing tool, an upstream that does not answer, a paged `tools/list`.
 
 An integration test, on a host with Envoy, runs a fake MCP server as an
 upstream. It checks the following:
@@ -736,44 +909,39 @@ a workflow started by hand.
 
 ## Open questions
 
-1. **A second Envoy for the MCP listeners?** The MCP filter is alpha. A
-   crash would take the model and relay listeners of every agent with it.
-   A separate Envoy for MCP costs a second process and bootstrap.
-2. **When to switch to the `ext_proc` fallback.** Before the first host,
-   or only if the MCP filter is still alpha by then, or on the first
-   finding against it?
-3. **Same-repository branches run CI with the repository's secrets.** A
-   pull request from a branch of the same repository runs its workflows
-   with the base repository's secrets and a token that may write, and with
-   the branch's own code (build scripts, tests). Refusing workflow changes
-   does not stop changes to what those workflows execute. Should agents
-   publish to a fork the App owns and open the pull request across
-   repositories, so CI treats it as a fork's? That costs the agent access
-   to CI results until a maintainer approves the run.
-4. **Tool calls outside a turn.** The shim offers the tools only during a
-   turn, but Envoy cannot tell. Should `redoma xds` publish an agent's MCP
-   route only while the relay reports an open task for it?
-5. **Uids.** One per upstream (965 for GitHub's), or one shared by all
-   upstreams?
-6. **One upstream instance for all agents, or one per agent?** The GitHub
-   server is stateless, so one instance serves everyone. A per-agent
-   instance would give each agent its own `--tools` ceiling, at the cost of
-   one container per agent and upstream.
-7. **Untrusted text.** `--lockdown-mode` filters content from authors
-   without push access on public repositories. GitHub says it is
-   best-effort and not an authorization boundary. Is it enough, or should
-   public repositories be refused to agents entirely?
-8. **The read-only git endpoint**: needed by the first host that drops
-   GitHub egress, or does anonymous egress for public repositories cover
-   it?
-9. **Upgrading an upstream image** is a digest change in its `.conf`. Its
-   new tool names, flags and request headers must be checked as above
-   before the digest moves. Should redoma check a release's tool list
-   against the allowlists at start, and refuse a tool name it no longer
-   has?
-10. **A credential per agent?** One App token per upstream is shared by
-    every agent that uses it, so GitHub enforces only the union of their
-    repositories. A cluster and SDS file per agent and credential, each
-    token from an installation (or a token request) scoped to that agent's
-    repositories, would make GitHub enforce each agent's own. It costs one
-    minter output and one cluster per agent and upstream.
+1. **Proving `--network none` for an upstream.** The design registers an
+   upstream from its poststart hook, once its namespace shows only `lo`
+   (see "Users"). To be checked on Podman 4.9 with `--userns=auto`: that
+   poststart runs after the network is configured, that a poststart
+   failure leaves the container unregistered, and that nothing attaches
+   a network later.
+2. **How a clone or fetch is served.** A read-only git upstream answers
+   tool calls, and a clone is a pack written into the agent's workspace,
+   which a tool's result does not do on its own. Is it an existing MCP
+   server's tools, one added as an upstream, or reads at a ref only (files,
+   trees, logs), with no local clone at all?
+
+### Decided
+
+- **One Envoy** for MCP, model, egress and relay listeners; a crash of
+  the alpha MCP filter takes every listener down, an accepted risk (see
+  "The MCP filter").
+- **No `ext_proc` fallback.** A bug in the MCP filter is fixed in Envoy,
+  not worked around in redoma.
+- **CI secrets on same-repository branches** are a deployment's hardening
+  choice, out of redoma's scope (see "CI on same-repository branches").
+- **Routes are published whenever the agent is,** not only during a turn:
+  following the relay's tasks is not worth its complexity.
+- **Uids come from `--userns=auto`**, a host range per container from the
+  `containers` subordinate ids; no fixed uid (see "Users").
+- **One upstream instance** serves every agent that has it.
+- **Agents may read public repositories,** other owners' included.
+  Lockdown stays on as a best-effort filter; the per-agent allowlist's
+  `owner` and `repo` constraints narrow reads (see "Untrusted text").
+- **No direct git or GitHub egress for agents:** every tool, git reads
+  included, goes through an MCP upstream (see "Network").
+- **Upstream images are checked at start** against the allowlists,
+  `tool_check = refuse | warn | off` per upstream, `refuse` by default;
+  behaviour changes stay a checklist step (see "Upgrading an upstream").
+- **One credential per upstream per install,** shared by its agents;
+  GitHub enforces the union of their repositories.
