@@ -90,14 +90,17 @@ upstream container (own netns, --network none)                             |
   (`examples/envoy.yaml`) does not change: everything comes over LDS and
   CDS.
 - The OCI hook registers an upstream container (annotation
-  `redoma/upstream=<name>`) much as it registers an agent: it mounts the
-  namespace at `/run/netns/redoma-mcp-<container ID>`, applies the same
-  process and mount checks, and registers it with `redoma xds` under its
-  upstream name. The user and network namespace checks differ, because an
-  upstream runs with `--userns=auto` (see "Users"). An upstream name is
-  never an agent name: a
-  container carrying both annotations is refused, and the two namespaces
-  of names are kept apart in `agent.Merge`.
+  `redoma/upstream=<name>`) much as it registers an agent. At createRuntime
+  it mounts the namespace at `/run/netns/redoma-mcp-<container ID>` and
+  applies the same process and mount checks. The user and network namespace checks differ, because an
+  upstream runs with `--userns=auto` (see "Users"): the hook registers it
+  with `redoma xds`, under its upstream name, only from its poststart
+  stage, once the namespace has no interface but `lo`. That needs a new
+  hook definition in `ocihook/hooks.d`, a `poststart` stage matching the
+  annotation `redoma/upstream`, beside the existing createRuntime and
+  poststop ones. An upstream name is never an agent name: a container
+  carrying both annotations is refused, and the two namespaces of names
+  are kept apart in `agent.Merge`.
 - The shim gains `--mcp-upstream=<name>` (repeatable): an `http` entry in
   its `--mcp-config` and `mcp__<name>__*` in `--allowedTools`. This only
   decides what claude is offered; it grants nothing.
@@ -585,39 +588,49 @@ constrain = create_pull_request arguments.head ^= agent/example/
 
 **Who enables what.**
 - An upstream exists when its `.conf` exists and parses, and its container
-  runs. An upstream `.conf` that does not parse publishes nothing for that
-  upstream: no clusters, no egress listener, no route for any agent (so
-  `/mcp/<upstream>` is a 404 everywhere), and the error is logged at every
-  scan. A file that breaks "The credential rule" (under "The person's
-  credential") is invalid in the same way.
+  runs and is registered. **An upstream that fails** publishes no egress
+  listener and no route for any agent (so `/mcp/<upstream>` is a 404
+  everywhere), and the error is logged at every scan. The one exception
+  is the tool check's own listener and the `default` cluster it routes to
+  (below), which stay published so that the check can run again; no agent
+  reaches either. An upstream fails when its `.conf` does not parse, when
+  the file breaks "The credential rule" (under "The person's credential"),
+  or when the tool check refuses it.
 - **The tool check.** When an upstream's container registers, and when
   `redoma xds` starts, it asks the upstream for its tools (`initialize`,
   then `tools/list`, following its cursor) and compares them with every
-  tool name its configuration names: each agent file's `tool` and
-  `tool_unconstrained` lines, `_default.conf`'s, and the `.conf`'s
-  `credential_for` and `credential_allows`. A name the server does not
-  list is a mismatch. The answer is kept for the container's life, so an
-  allowlist edited later is compared at the next scan without asking
-  again. The upstream's `tool_check` decides what a mismatch does:
-  - `refuse` (the default): the upstream's configuration is invalid, as
-    above, and nothing is published for it; the error, naming each
-    missing tool and the file that names it, is logged at every scan;
+  tool name its configuration names: the `.conf`'s `credential_for` and
+  `credential_allows`, `_default.conf`'s `tool` and `tool_unconstrained`
+  lines, and each agent file's. A name the server does not list is a
+  mismatch. The answer is kept for the container's life, so an allowlist
+  edited later is compared at the next scan without asking again. The
+  upstream's `tool_check` decides what a mismatch does:
+  - `refuse` (the default): the file that names the tool is invalid, with
+    the effect any invalid file of its kind has (below): a mismatch in the
+    `.conf` fails the upstream, one in `_default.conf` fails every agent's
+    list for the upstream, and one in an agent's file fails that agent's
+    list alone. The error names each missing tool and the file that names
+    it, and is logged at every scan;
   - `warn`: the mismatch is logged, and everything is published as if
     there were none (the call fails at the server instead);
   - `off`: no check, and no request is made.
 
-  Under `refuse`, an upstream that cannot be asked (it does not answer, or
-  answers with an error) is treated as a mismatch, and asked again at the
-  next scan; under `warn` that is logged and the upstream published. The
-  question goes through Envoy, not to the server directly: per upstream,
-  `redoma xds` publishes a check listener on a unix socket of its own
-  under `/run/redoma/xds`, routed to the upstream's `default` cluster (so
-  Envoy injects the credential, which `redoma xds` never reads) and
-  allowing only the lifecycle methods and `tools/list`. That listener and
-  the cluster it routes to are all that is published for an upstream
-  before the check passes, and no agent reaches either. The request carries no `X-MCP-*` header, so the server lists
-  its whole static universe. The check is generic: it compares names, and
-  redoma's code names no upstream's tools.
+  The effect follows the file, as a parse error does, so that one agent's
+  stale allowlist costs that agent its route's tools and no other agent
+  anything, while a `.conf` or `_default.conf` that names a tool the
+  server does not have is wrong for every agent it serves. Under `refuse`,
+  an upstream that cannot be asked (it does not answer, or answers with an
+  error) fails, since no file can be checked, and is asked again at the
+  next scan; under `warn` that is logged and the upstream published.
+
+  The question goes through Envoy, not to the server directly: per
+  upstream, `redoma xds` publishes a check listener on a unix socket in
+  `/run/redoma/xds` (see "The runtime layout"), routed to the upstream's
+  `default` cluster (so Envoy injects the credential, which `redoma xds`
+  never reads) and allowing only the lifecycle methods and `tools/list`.
+  The request carries no `X-MCP-*` header, so the server lists its whole
+  static universe. The check is generic: it compares names, and redoma's
+  code names no upstream's tools.
 - An agent has an upstream when its own file under that upstream exists.
   `redoma xds` then publishes the agent's route to it. Without the file,
   there is no route, and `/mcp/<upstream>` is a 404 for that agent.
@@ -660,7 +673,22 @@ Following the rc.4 rule that every runtime directory is under
 |---|---|---|
 | `/run/redoma/mcp-credentials` | root, 0700 | the upstreams' SDS files, written by their minters, read by Envoy (root) alone |
 | `/run/netns/redoma-mcp-<container ID>` | the hook | each upstream container's namespace, as for agents |
-| `/run/redoma/xds/mcp-check/<upstream>.sock` | Envoy's listener, 0600 `redoma-sds` | the tool check's listener, which only `redoma xds` reaches |
+| `/run/redoma/xds/mcp-check-<upstream>.sock` | root (Envoy binds it), 0666, in `redoma-sds`'s 0750 directory | the tool check's listener, which only `redoma xds` and root reach |
+
+**The check socket's access is its directory's.** Envoy binds the
+listener's socket (a `Pipe` address, which has only a `path` and a `mode`,
+`api/envoy/config/core/v3/address.proto:23-34` at v1.40.0). It runs as
+root, so the socket is root's; after the bind it applies `mode` with a
+`chmod` and changes no owner (`source/common/network/socket_impl.cc:73-79`
+at v1.40.0). A mode of `0600` or `0660` would therefore keep `redoma xds`
+(uid 961, not in root's group) out. The listener's mode is `0666`, and
+what limits it is `/run/redoma/xds`, which `redoma-xds.service` makes
+`0750` `redoma-sds` (`RuntimeDirectory=redoma/xds`,
+`RuntimeDirectoryMode=0750`): only uid 961, members of group `redoma-sds`
+(the host Envoy, a supplementary member, see README.md "Envoy") and root
+can reach a path in it. These are the same principals that already reach
+`xds.sock` in that directory, so the check socket adds none. No agent or
+upstream container can mount it (the hook refuses all of `/run/redoma`).
 
 No agent or upstream container may mount any of `/run/redoma`; the hook
 already refuses it. An upstream's container gets no credential file, no
@@ -746,8 +774,8 @@ There are two ways to publish an agent's work.
 
 **Through a host push, as a second upstream.** A small redoma MCP server,
 `redoma git-push`, offers one tool, `push(repo, branch)`, served through the
-same pattern: its own container and user namespace, Envoy's RBAC, the App token
-injected by Envoy. It reads the agent's workspace (bind-mounted read-only
+same pattern: its own container and user namespace, Envoy's RBAC, the App
+token injected by Envoy. It reads the agent's workspace (bind-mounted read-only
 into its container, per agent) as data, never running git there:
 - `openat2` beneath the workspace, no symlinks;
 - no configuration read at all; alternates and shallow repositories
@@ -791,7 +819,8 @@ plugs into the same pattern as any other upstream, with no special case.
   are GitHub's server's read tools (`get_file_contents`, `list_commits`,
   `pull_request_read`), which read through the API and need no git. How a
   clone or fetch reaches the agent's workspace through MCP is open
-  (open question 2).
+  (open question 2); until it is answered, an agent that needs one keeps
+  its GitHub egress (see "Rollout").
 - **Dependencies hosted on GitHub** (release archives that redirect to
   `objects.githubusercontent.com` and similar) are not fetched from
   GitHub: they come through mirrors that are not GitHub (a Go module
@@ -817,15 +846,19 @@ the person for each write.
 
 ## Rollout
 
-1. The generic pieces: the hook's upstream registration, the MCP listener,
-   RBAC, routes and clusters in `redoma xds`, the shim's `--mcp-upstream`,
-   and `redoma-mcp@.service`. Plus unit tests against fake upstreams.
+1. The generic pieces: the hook's upstream registration (its poststart
+   stage and definition), the MCP listener, RBAC, routes, clusters and the
+   tool check in `redoma xds`, the shim's `--mcp-upstream`, and
+   `redoma-mcp@.service`. Plus unit tests against fake upstreams.
 2. GitHub's server as the first upstream: read tools only for a first host.
 3. Writes (`create_pull_request`, comments, replies), with the second
    credential.
 4. Publishing through `create_branch` and `push_files`. Then, if needed,
    `redoma git-push`.
-5. GitHub hosts removed from the agents' egress allowlists.
+5. A read-only git upstream, once open question 2 (how a clone or fetch
+   is served) has an answer.
+6. GitHub hosts removed from the agents' egress allowlists, only after
+   step 5: until then an agent that needs a clone or fetch keeps them.
 
 **Identity modes.** Nothing here depends on how `redoma xds` gets the
 agents' SVIDs: the MCP listener's identity is its namespace in both
@@ -855,6 +888,11 @@ Agents move one at a time.
 - the hook's registration of upstreams, and its refusal of an upstream
   name used as an agent's, of an agent whose ids fall in the `containers`
   ranges, and of an upstream without a `--userns=auto` user namespace;
+- the hook's poststart stage for upstreams: it registers a namespace with
+  only `lo`, and refuses (leaves unregistered, and unmounts) one with any
+  other interface, read from a fake namespace listing; and the poststart
+  definition in `ocihook/hooks.d`, held to its annotation and stage like
+  the existing definitions;
 - the tool check against a fake upstream, under each `tool_check` value:
   a missing tool, an upstream that does not answer, a paged `tools/list`.
 
