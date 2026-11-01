@@ -320,10 +320,29 @@ reaches the server's loopback.
     that lacks one of them or whose value differs from the body's argument
     (`mcp/streamable.go:1616-1631`, `mcp/streamable_headers.go:359-363` and
     `:402-442`).
-    Envoy's MCP filter does not read these headers. It checks the body,
-    and the SDK checks that the headers agree with the body, so a header
-    cannot carry a value other than the one RBAC allowed. Stripping them
-    would break every repository tool on that protocol version.
+    Envoy's MCP filter does not read these headers; it checks the body.
+    - **On protocol `2026-07-28`**, the SDK checks that the headers agree
+      with the body, so a header cannot carry a value other than the one
+      RBAC allowed. Stripping them would break every repository tool on
+      that version.
+    - **On an earlier version**, which the client is free to pick, nothing
+      checks them: the SDK skips the check below `2026-07-28`
+      (`mcp/streamable_headers.go:359-363`), and Envoy never reads them.
+      They are still harmless at v2.0.3, because nothing acts on them
+      either. Dispatch and its arguments come from the body, the same body
+      RBAC checked. The server reads `Mcp-Param-*` only to list them as
+      allowed CORS headers (`pkg/http/middleware/cors.go:18-30`, `:66`).
+
+    That safety belongs to this server version, not to the pattern. A
+    release that routed or authorized on `Mcp-Param-*` would let a client on
+    an older protocol send a header that disagrees with the body. Checking
+    that is part of every image upgrade (open question 9).
+    - Pinning `MCP-Protocol-Version` to `2026-07-28` in RBAC would close
+      the gap generically, but at a cost. Every client that does not speak
+      that version yet would be refused, including the agent's Claude Code
+      if it negotiates an earlier one, and so would `initialize`, which
+      carries no such header. The doc does not pin it. Pinning becomes an
+      option once the agents' client speaks `2026-07-28`.
   - `Mcp-Method` and `Mcp-Name`. With protocol version `2026-07-28` the MCP
     filter requires them and refuses a request whose headers disagree with
     its body (`source/extensions/filters/http/mcp/mcp_filter.cc:422-425`,
@@ -416,12 +435,18 @@ names someone who answers for it, with the agent's commits as its contents.
   `tools/list` included, goes to `mcp_github` under the App's token.
   - In the configuration, a credential other than `default` names exactly
     one tool per line (`credential_for.<tool>`), never a pattern. The
-    upstream's own `.conf` lists the tools that must never be sent with a
-    given credential (`credential_forbids.<credential>`). For GitHub's
-    `pr`, that is the review, merge and comment tools. `redoma xds` refuses
-    a file in which a `credential_for` line names a tool its credential
-    forbids. The check is generic: redoma knows no upstream's tools, and
-    the list lives with the upstream's configuration.
+    upstream's own `.conf` lists the only tools that may be sent with that
+    credential (`credential_allows.<credential>`): for GitHub's `pr`,
+    `create_pull_request` alone. `redoma xds` refuses a file in which a
+    `credential_for` line names a tool outside its credential's allow
+    list, or names a credential that has no allow list. An allow list,
+    not a deny list. A deny list would have to name every review, comment
+    and merge tool, and at v2.0.3 there are many (`pull_request_review_write`,
+    `create_pull_request_review`, `submit_pending_pull_request_review`,
+    `add_pull_request_review_comment`, `resolve_review_thread`,
+    `update_issue_comment` and more). It would also fail open on the next
+    release's new tool. The check is generic: redoma knows no upstream's
+    tools, and the list lives with the upstream's configuration.
   - RBAC and the server's `--tools` ceiling still apply on top. If a
     request names `pull_request_review_write`, it never reaches the person's
     token: it is not routed there, the server has not registered it, and
@@ -469,15 +494,10 @@ credential_header = Authorization
 credential_prefix = Bearer
 # Which tools use a credential other than default, one tool per line.
 credential_for.create_pull_request = pr
-# Tools never sent with a credential (a list key, one tool per line); xds
-# refuses a credential_for line that names one.
-credential_forbids.pr = merge_pull_request
-credential_forbids.pr = pull_request_review_write
-credential_forbids.pr = add_comment_to_pending_review
-credential_forbids.pr = add_issue_comment
-credential_forbids.pr = add_reply_to_pull_request_comment
-credential_forbids.pr = update_pull_request
-credential_forbids.pr = update_pull_request_branch
+# The only tools a credential other than default may carry (a list key, one
+# tool per line). Required for every such credential; xds refuses a
+# credential_for line naming a tool outside it.
+credential_allows.pr = create_pull_request
 # Request header name prefixes removed from the agent's requests (any case).
 strip_header_prefix = x-mcp-
 # Optional: a header set per agent, {tools} being the agent's list.
