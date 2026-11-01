@@ -97,10 +97,13 @@ mutual TLS with the agent's SVID, exactly like the relay:
   `agent_<name>_github` (the agent's SVID as client certificate, requiring
   `spiffe://<td>/host/github` of the server), with a route timeout. One
   listener, no new port in the container; the route and cluster exist only
-  for agents whose policy enables the tools.
+  for agents that have the tools (see "Who enables an agent").
 - **The client certificate is the identity, and nothing else is**, as for
   the relay: the bundle, exactly one URI SAN `spiffe://<td>/agent/<name>`,
-  a name `agents.txt` allows (`relay/internal/mtls`, shared).
+  a name `agents.txt` allows. The relay's checks are Go internal packages
+  today (`relay/internal/mtls` and its `mtlstest`, `relay/internal/svid`
+  for the service's own SVID); they move to `common/` first, unchanged, so
+  both services run the same code.
 - **Unary, at most once.** Each call carries an id the shim makes; the
   service keeps the ids of recent writes per agent and answers a repeated id
   with the first answer, so a shim that retries after a timeout does not
@@ -146,7 +149,7 @@ Names below are MCP names; each has one rpc.
 | `github_open_pr(repo, branch, base?, title, body, draft?)` | opens a pull request from `branch`; if one is open for it, returns that one | `pr` |
 | `github_update_pr(repo, number, title?, body?)` | edits the title or body of a pull request the agent may write to | `default` |
 | `github_comment(repo, number, body)` | comments on a pull request or issue the agent may write to | `default` |
-| `github_reply(repo, number, comment_id, body)` | replies in a review thread | `default` |
+| `github_reply(repo, number, comment_id, body)` | replies in a review thread of a pull request the agent may write to | `default` |
 | `github_read_pr(repo, number, parts, max_bytes?)` | metadata, the diff, the checks and statuses, the review threads (any of them) | `default` |
 | `github_list_prs(repo, branch?, state?)` | the pull requests of a head branch, or the agent's own | `default` |
 
@@ -154,6 +157,19 @@ Names below are MCP names; each has one rpc.
 default the ones whose head branch has the agent's branch prefix in the same
 repository; a policy can widen comments to any pull request or issue of the
 repository (`write_scope`).
+
+**Every target is checked before the write, never taken on the agent's
+word.** The service holds the credential, so a number or id the agent
+passes must not make it write somewhere the agent may not (a confused
+deputy). Before `github_update_pr`, `github_comment` or `github_reply`, the
+service reads the target with the same credential and checks it against
+the policy: the pull request or issue is in `repo`; under `write_scope =
+own`, it is a pull request whose head repository is `repo` itself (a fork's
+branch with the same name does not count) and whose head branch has the
+agent's prefix; for `github_reply`, `comment_id` is a review comment of that
+very pull request (the comment's pull request URL is the pull request
+read), and the reply goes to that pull request's endpoint. A target that
+does not check out is refused, and nothing is written.
 
 Not offered, on purpose, and not reachable through any argument:
 
@@ -221,6 +237,28 @@ invalid, and an invalid policy refuses every call ("An error never widens
 access"). The directory and files are root's and writable by no one else,
 like `agents.txt`.
 
+### Who enables an agent
+
+Two switches, read by two services, with one source each:
+
+- **`github_tools = on`** in `redoma.conf`, read by every subcommand, turns
+  the feature on for the host; off, `redoma xds` publishes no github route
+  or cluster for anyone, and `redoma github` refuses every call.
+- **The agent's own policy file**, `/etc/redoma/github/<name>.conf`, enables
+  that agent. `redoma xds` reads only whether it exists, at each scan, as it
+  re-reads the egress allowlists: it exists, the agent's relay listener gets
+  the github route and the agent gets its `agent_<name>_github` cluster;
+  it goes, both go in the next snapshot. `redoma xds` never parses it (an
+  underscore file, `_default.conf` or `_credentials.conf`, is never an
+  agent's: `allowlist.ValidName` refuses the underscore).
+  `redoma github` parses it and decides every call.
+
+Existence decides the route; content decides the calls. A file that exists
+but does not parse gives the agent a route to a service that refuses it
+everything, which widens nothing. The shim's `--github` flag only decides
+whether claude is offered the tools; it grants nothing, since the host
+checks every call.
+
 ```
 # /etc/redoma/github/example.conf
 repos = example-org/example-repo
@@ -240,6 +278,7 @@ max_push_bytes = 52428800
 max_blob_bytes = 10485760
 max_title_bytes = 256
 max_body_bytes = 65536
+allow_merges = false
 write_scope = own
 credential.push = app
 credential.pr = pr
@@ -268,6 +307,8 @@ What each enforces:
   must carry.
 - **Size limits**: commits per push, pack bytes, the largest blob, the
   title and body of a pull request or comment.
+- **`allow_merges`**: whether a pushed commit may have more than one parent
+  (`false` by default).
 - **`write_scope`**: `own` (pull requests whose head has the prefix) or
   `repo` (any pull request or issue of the listed repositories).
 - **`credential.*`**: which credential each class of call uses (see
@@ -314,8 +355,8 @@ another credential.
 **Files.** Each credential is a file, named in `/etc/redoma/github/_credentials.conf`:
 
 ```
-app = /run/redoma/github/credentials/app.json
-pr = /run/redoma/github/credentials/pr.json
+app = /run/redoma/github-credentials/app.json
+pr = /run/redoma/github-credentials/pr.json
 ```
 
 ```json
@@ -325,10 +366,19 @@ pr = /run/redoma/github/credentials/pr.json
 - `expires_at` is RFC 3339 and required (a token with no expiry is refused:
   a fine-grained token has one, and an App token's is an hour away).
 - The file is replaced whole (written aside and renamed), a regular file,
-  not a symlink, owned by root or the minter's user, group `redoma-github`,
-  mode 0440 at most; the directory root's, 0750, group `redoma-github`.
-  Under `/run/redoma`, so the OCI hook refuses to mount it into any
-  container.
+  not a symlink, owned by `redoma-github`, mode 0400, with no group or other
+  access. Its directory, `/run/redoma/github-credentials`, is a runtime
+  directory of its own, `redoma-github`'s, 0700, and not the socket's:
+  `/run/redoma/github` holds `github.sock`, whose group Envoy joins to dial
+  it, as it joins the relay's, so nothing reachable through that group may
+  sit there. No group reaches a token; the minter writes the files as root
+  (or through a helper that hands them over). Under `/run/redoma`, so the
+  OCI hook refuses to mount either directory into any container.
+  systemd's `LoadCredential=` would keep tokens out of any shared
+  directory too, but it copies them when the unit starts, so a renewed
+  token would need a restart every hour; it fits a long-lived `pr` token,
+  and a host may use it for that one (the path is then
+  `$CREDENTIALS_DIRECTORY/pr.json`).
 - The service reads the file at each call that needs it (cheap; or keeps it
   while its inode and mtime are unchanged), so a renewed token is used at
   once and no restart is needed.
@@ -388,17 +438,32 @@ repository as data, in process:
 3. **Read the objects.** Loose objects and pack files of `objects/`, by the
    id they claim, with every object's hash verified as it is read (an
    object is its hash, so a file the agent swaps in changes nothing it
-   could not have pushed anyway). `objects/info/alternates`, a commit graph
-   or a `shallow` file is refused (a shallow clone cannot prove what is
-   new). Reads are bounded (`max_push_bytes`, `max_blob_bytes`, a limit on
+   could not have pushed anyway). `objects/info/alternates` or a `shallow`
+   file is refused (alternates reach objects outside the workspace; a
+   shallow clone cannot prove what is new). Caches that git writes on its
+   own, such as `objects/info/commit-graph` (every `git gc` and auto-gc
+   writes one), multi-pack indexes and bitmaps, are ignored, never refused
+   and never trusted: every commit is read from its object. Reads are bounded (`max_push_bytes`, `max_blob_bytes`, a limit on
    objects walked), so a crafted pack cannot exhaust memory or time.
 4. **Copy what is new into a host repository.** The service keeps, per
    agent and repository, a bare repository of its own under
    `/var/lib/redoma-github/<name>/<owner>/<repo>.git`, fetched from GitHub
    with the host's credential (trusted contents, the service's own
-   configuration). The commits reachable from the agent's tip and not from
-   that mirror's refs are the push. Their objects are written into the
-   mirror, as data.
+   configuration). Before each push it fetches exactly these refs, and no
+   others: the default branch, each of `pr_bases`, and the branches under
+   the agent's prefix (into `refs/remotes/origin/`, so a ref of the agent's
+   repository never names one of them). Two sets come out of the walk:
+   - **checked**: every commit reachable from the agent's tip and not from
+     the default branch or `pr_bases`, the merge base up to the tip. All of
+     them go through "What a push checks", including commits already on the
+     agent's branch on GitHub: whoever put them there, they are published
+     under the agent's prefix again, and `max_commits` bounds the walk.
+   - **sent**: the objects of the commits reachable from the tip and not
+     from any fetched ref, which are written into the mirror, as data, and
+     pushed.
+
+   A commit on some other branch of the repository is never taken as
+   reviewed because the mirror has it: the mirror has nothing else.
 5. **Check, then push from the mirror** (see "What a push checks"): to
    `refs/heads/<branch>` on GitHub, from the commit id read in step 2,
    without force. When the branch exists on GitHub, its current commit must
@@ -423,17 +488,17 @@ unchecked, and none reaches a shell, which is never used.
 
 ### What a push checks
 
-On every new commit, not only the tip, because every commit of a pushed
-branch is published:
+On every checked commit (above), not only the tip, because every commit of
+a pushed branch is published:
 
 - the author and committer are `commit_author`, and with
   `require_signoff` the message has a matching `Signed-off-by:` trailer;
 - the commit touches no `protected_paths`, compared with each of its
   parents: an added, changed or deleted file, a rename from or to one, a
   mode change, a submodule (gitlink) or a symlink pointing into one;
-- no merge commits, unless the policy allows them (a merge brings in
-  commits the checks above would also have to see; they do see them, but
-  a policy that wants linear branches says so);
+- no merge commits unless `allow_merges = true` (a merge brings in commits
+  the checks above would also have to see; they do see them, but a policy
+  that wants linear branches says so);
 - no blob over `max_blob_bytes`, no more than `max_commits` commits and
   `max_push_bytes` of objects;
 - the commit and tree objects parse strictly (no duplicate tree entries,
@@ -507,8 +572,9 @@ trying the policy's edges looks like.
 ## Rollout
 
 1. **The service, read tools only**, behind `github_tools = on` in
-   `redoma.conf` (off by default; off installs nothing in Envoy and the
-   shim offers no github tools): `github_read_pr` and `github_list_prs`.
+   `redoma.conf` (off by default; off publishes nothing in Envoy for any
+   agent, and on publishes the route only for agents with a policy file:
+   see "Who enables an agent"): `github_read_pr` and `github_list_prs`.
    The user and its id in `deb/sysusers.conf`, the hook's `ServiceIDs` and
    `postinst`; the SPIRE entry `spiffe://<td>/host/github` (`unix:uid:965`)
    in README.md; the route and cluster in `redoma xds`.
