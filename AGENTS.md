@@ -415,7 +415,8 @@ definitions in `ocihook/hooks.d` match the default key; a host that changes
     components at a time, so `/run/redomax` is none of them), so neither
     `/run` nor `/` either, nor the directory
     of any SPIRE socket `/etc/redoma/redoma.conf` names, as written and as
-    it resolves (`forbidden.Sources`): a host that moves a socket keeps it
+    it resolves (`forbidden.Sources`), nor the directory of the hook's own
+    `--socket`, the same two ways: a host that moves a socket keeps it
     forbidden. This check is the one barrier against a bind of a SPIRE
     socket file itself, which SPIRE makes `0777`. The one exception is
     the container's own `shm`, `passwd` and `group` in its userdata under

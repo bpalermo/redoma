@@ -35,12 +35,33 @@ What changes with it:
   `/run/redoma/xds/xds.sock`. A bootstrap made from it follows.
 - The OCI hook forbids `/run/redoma` as a whole in place of each service's
   directory: every directory under it, now and later, is out of an agent's
-  reach.
+  reach. The old paths (`/run/redoma-xds`, `/run/redoma-relay`,
+  `/run/redoma-relay-lead`) are no longer forbidden. A host that keeps a
+  socket at one of them, through a drop-in or a flag, would leave it open
+  to an agent's bind mount, `lead.sock` included: move to the new paths.
+  The hook still forbids the directory of its own `--socket` wherever it
+  is, so redoma xds's sockets stay covered; the relay's do not.
 
-To upgrade: stop Envoy and both services, install the package, and change
-whatever names the old paths: the Envoy bootstrap, a containerized Envoy's
-bind mounts (`/run/redoma/xds` and `/run/redoma/relay`), unit drop-ins,
-launchers, and any client given an explicit `--socket`. A tool sandbox that
-allows the lead's socket by path allows `/run/redoma/lead/lead.sock`
-instead. Then start them again. The old directories are left empty until
-the next reboot, or remove them.
+To upgrade:
+
+1. Stop every agent container. A running agent registered by the OCI hook
+   is recorded in `/run/redoma-xds/registrations.json`, which the new
+   `redoma xds` does not read: it would start with no registrations and
+   close their pidfds, and those agents would keep running with no
+   listeners until restarted.
+2. Stop Envoy, `redoma-xds` and `redoma-relay`, and install the package.
+3. Change whatever names the old paths: the Envoy bootstrap, a
+   containerized Envoy's bind mounts (`/run/redoma/xds` and
+   `/run/redoma/relay`), unit drop-ins, launchers, and any client given an
+   explicit `--socket`. A tool sandbox that allows the lead's socket by
+   path allows `/run/redoma/lead/lead.sock` instead.
+4. Start the services and Envoy, then the agents.
+5. Remove the old directories, `/run/redoma-xds`, `/run/redoma-relay` and
+   `/run/redoma-relay-lead`: the units keep them
+   (`RuntimeDirectoryPreserve`) until the next reboot otherwise.
+
+Agents can instead keep running through the upgrade if, between steps 2
+and 4, `/run/redoma/xds/` is made (owner and group `redoma-sds`, 0750) and
+`state.json` and `registrations.json` are moved into it from
+`/run/redoma-xds/`, keeping their owner and mode, before `redoma-xds`
+starts. Stopping the agents is simpler and is the recommended way.

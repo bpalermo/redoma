@@ -20,6 +20,7 @@ import (
 	"net"
 	"os"
 	"os/user"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"time"
@@ -72,7 +73,10 @@ func Command() *cobra.Command {
 // newHook is the hook of f's flags. The paths it forbids an agent are
 // hook.ForbiddenSources and the directories of SPIRE's sockets conf names,
 // as written and as they resolve now (forbidden.Sources): a host that
-// moves a socket keeps it out of the agents' reach.
+// moves a socket keeps it out of the agents' reach. The directory of its own
+// --socket is forbidden too, the same two ways, so a host that keeps redoma
+// xds's sockets out of /run/redoma (a flag or a drop-in) still keeps them
+// from the agents.
 func newHook(f flags, conf config.Config) *hook.Hook {
 	return &hook.Hook{
 		Annotation: f.annotation,
@@ -85,8 +89,24 @@ func newHook(f flags, conf config.Config) *hook.Hook {
 		},
 		Log:        os.Stderr,
 		ServiceIDs: serviceIDs(system, os.Stderr),
-		Forbidden:  forbidden.Sources(conf),
+		Forbidden:  withDir(forbidden.Sources(conf), f.socket),
 	}
+}
+
+// withDir adds the directory of socket to sources, as written and as it
+// resolves now (when it does), sorted and without duplicates. A socket that
+// is not an absolute path adds nothing.
+func withDir(sources []string, socket string) []string {
+	if !filepath.IsAbs(socket) {
+		return sources
+	}
+	dir := filepath.Dir(filepath.Clean(socket))
+	out := append(slices.Clone(sources), dir)
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		out = append(out, real)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 func run(ctx context.Context, h *hook.Hook, stage string, stdin io.Reader) error {
