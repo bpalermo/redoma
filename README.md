@@ -191,13 +191,31 @@ see `docs/broker-identity.md`. The Delegated Identity API stays the default.
 
 ### Envoy
 
-`examples/envoy.yaml` is a bootstrap: ADS from `/run/redoma-xds/xds.sock`,
+`examples/envoy.yaml` is a bootstrap: ADS from `/run/redoma/xds/xds.sock`,
 the `anthropic` cluster for the model listeners and the `egress_dfp`
 cluster for the egress proxies. Envoy runs as root with the supplementary
 groups `redoma-sds` and `redoma-relay`, sees `/run/netns`, and reads
 `/etc/redoma/secrets/anthropic-key.yaml`. Envoy keeps its listeners while
 `redoma xds` restarts, and redoma knows to wait for a replaced namespace to
 be released before binding it again.
+
+### Runtime directories
+
+Everything redoma keeps at run time is under `/run/redoma` (root, 0755),
+one directory per user of it, each with its own owner and mode:
+
+| Directory | Owner, mode | Holds |
+|---|---|---|
+| `/run/redoma/xds` | `redoma-sds`, 0750 (`redoma-xds`'s `RuntimeDirectory`) | `xds.sock` (Envoy's ADS), `register.sock` (the OCI hook's), `state.json`, `registrations.json` |
+| `/run/redoma/relay` | `redoma-relay`, group `redoma-relay`, 0750 (`redoma-relay`'s) | `relay.sock`, the agents' socket, which Envoy dials |
+| `/run/redoma/lead` | `redoma-relay`, group `redoma-lead`, 0750 (`redoma-relay`'s) | `lead.sock`, the lead's socket (`redoma msg`, `redoma mcp`) |
+| `/run/redoma/envoy` | the host's Envoy unit, root 0700 | Envoy's admin socket, if the host gives it one |
+| `/run/redoma/names` | a launcher, root 0755 | its per-agent name files |
+| `/run/redoma/active` | a launcher, root | one file per agent it runs (see AGENTS.md, "Launchers") |
+
+An Envoy in a container bind-mounts `/run/redoma/xds` and
+`/run/redoma/relay`, never `/run/redoma/lead`. No agent container may have
+any of `/run/redoma` mounted: the OCI hook refuses it.
 
 ### Model API credential
 

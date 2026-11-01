@@ -1,6 +1,6 @@
 # redoma-xds: the host Envoy's control plane for the agent containers. Serves
 # the listeners of every running agent (LDS), their relay clusters (CDS) and
-# each agent's SPIFFE identity (SDS) over ADS on /run/redoma-xds/xds.sock,
+# each agent's SPIFFE identity (SDS) over ADS on /run/redoma/xds/xds.sock,
 # fetching the identities from SPIRE: the Delegated Identity API on the SPIRE
 # agent's admin socket, or the SPIFFE Broker API (identity_api and the
 # spire_* sockets in /etc/redoma/redoma.conf).
@@ -25,10 +25,13 @@ RestartSec=2
 User=redoma-sds
 Group=redoma-sds
 
-# /run/redoma-xds, 0750 redoma-sds: the socket's directory. Kept across
+# /run/redoma/xds, 0750 redoma-sds: the socket's directory. Kept across
 # restarts: a containerized Envoy bind-mounts the directory, and one
-# recreated would leave the container looking at the deleted one.
-RuntimeDirectory=redoma-xds
+# recreated would leave the container looking at the deleted one. systemd
+# makes the parent, /run/redoma, root 0755 when it is missing, and owns and
+# removes only the innermost directory, so the units sharing /run/redoma
+# never touch each other's.
+RuntimeDirectory=redoma/xds
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
 

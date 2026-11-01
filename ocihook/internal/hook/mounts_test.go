@@ -59,19 +59,19 @@ func TestMain(m *testing.M) {
 	testGraphroot = T(Graphroot)
 	other := strings.Repeat("e", 64)
 	for _, d := range []string{
-		"/run/redoma-relay", "/run/redoma-relay-lead", "/run/redoma-spire/workload", "/run/redoma/names",
+		"/run/redoma/relay", "/run/redoma/lead", "/run/redoma-spire/workload", "/run/redoma/names",
 		"/etc/redoma", "/run/podman", "/var/lib/containers/storage/volumes/v/_data",
 		"/var/lib/containers/storage/overlay-containers/" + cid + "/userdata/secrets",
 		"/var/lib/containers/storage/overlay-containers/" + other + "/userdata",
 		"/run/containers/storage/overlay-containers/" + cid + "/userdata",
-		"/srv/redoma/work/a", "/run/redoma-xds",
+		"/srv/redoma/work/a", "/run/redoma/xds",
 	} {
 		if err := os.MkdirAll(T(d), 0o755); err != nil {
 			panic(err)
 		}
 	}
 	for _, f := range []string{
-		"/run/redoma-xds/xds.sock", "/run/redoma-relay/relay.sock", "/run/podman/podman.sock", "/run/redoma/names/a",
+		"/run/redoma/xds/xds.sock", "/run/redoma/relay/relay.sock", "/run/podman/podman.sock", "/run/redoma/names/a",
 		"/run/redoma-spire/workload/agent.sock",
 		"/var/lib/containers/storage/overlay-containers/" + cid + "/userdata/shm",
 		"/var/lib/containers/storage/overlay-containers/" + cid + "/userdata/passwd",
@@ -119,11 +119,11 @@ func TestMain(m *testing.M) {
 func TestCreateRuntimeChecksTheMounts(t *testing.T) {
 	dir := t.TempDir()
 	link := filepath.Join(dir, "innocent")
-	if err := os.Symlink(T("/run/redoma-xds"), link); err != nil {
+	if err := os.Symlink(T("/run/redoma/xds"), link); err != nil {
 		t.Fatal(err)
 	}
 	dangling := filepath.Join(dir, "dangling")
-	if err := os.Symlink(T("/run/redoma-xds/not-yet"), dangling); err != nil {
+	if err := os.Symlink(T("/run/redoma/xds/not-yet"), dangling); err != nil {
 		t.Fatal(err)
 	}
 	bind := func(src string) string {
@@ -145,10 +145,10 @@ func TestCreateRuntimeChecksTheMounts(t *testing.T) {
 		"its own userdata":           {bind(userdata + cid + "/userdata"), "reaches " + T("/var/lib/containers")},
 		"a --secret":                 {bind(userdata + cid + "/userdata/secrets"), "reaches " + T("/var/lib/containers")},
 		"a named volume":             {bind(T("/var/lib/containers/storage/volumes/v/_data")), "reaches " + T("/var/lib/containers")},
-		"the xds socket's directory": {bind(T("/run/redoma-xds")), "reaches " + T("/run/redoma-xds")},
-		"the xds socket":             {bind(T("/run/redoma-xds/xds.sock")), "reaches " + T("/run/redoma-xds")},
-		"not normalized":             {bind(T("/run/./redoma-relay-lead/../redoma-relay-lead/")), "reaches " + T("/run/redoma-relay-lead")},
-		"the relay":                  {bind(T("/run/redoma-relay/relay.sock")), "reaches " + T("/run/redoma-relay")},
+		"the xds socket's directory": {bind(T("/run/redoma/xds")), "reaches " + T("/run/redoma")},
+		"the xds socket":             {bind(T("/run/redoma/xds/xds.sock")), "reaches " + T("/run/redoma")},
+		"not normalized":             {bind(T("/run/./redoma/lead/../lead/")), "reaches " + T("/run/redoma")},
+		"the relay":                  {bind(T("/run/redoma/relay/relay.sock")), "reaches " + T("/run/redoma")},
 		"SPIRE's workload API":       {bind(T("/run/redoma-spire/workload")), "reaches " + T("/run/redoma-spire")},
 		// SPIRE makes the socket 0777: once the file itself is mounted, no
 		// permission of its directory applies, and this check is all there is.
@@ -159,17 +159,17 @@ func TestCreateRuntimeChecksTheMounts(t *testing.T) {
 		"a parent: /run":                  {bind(T("/run")), "reaches"},
 		"a parent: /var/lib":              {bind(T("/var/lib")), "reaches " + T("/var/lib/containers")},
 		"the root":                        {bind("/"), "reaches"},
-		"a symlink to the xds socket":     {bind(link), "reaches " + T("/run/redoma-xds")},
+		"a symlink to the xds socket":     {bind(link), "reaches " + T("/run/redoma")},
 		"a symlink that does not resolve": {bind(dangling), "does not resolve"},
 		"a source that does not exist":    {bind(T("/srv/gone")), "does not resolve"},
-		"another process's root":          {bind("/proc/1/root/run/redoma-xds"), "/proc"},
+		"another process's root":          {bind("/proc/1/root/run/redoma/xds"), "/proc"},
 		"a descriptor":                    {bind("/dev/fd/3"), "/dev"},
 		"a device":                        {bind("/dev/null"), "reaches /dev"},
-		"a relative source":               {bind("../../../../run/redoma-xds"), "not an absolute path"},
+		"a relative source":               {bind("../../../../run/redoma/xds"), "not an absolute path"},
 		"a relative innocent source":      {bind("rootfs-extra"), "not an absolute path"},
-		"bind by options only":            {`[{"destination":"/x","source":"` + T("/run/redoma-xds") + `","options":["bind"]}]`, "reaches " + T("/run/redoma-xds")},
+		"bind by options only":            {`[{"destination":"/x","source":"` + T("/run/redoma/xds") + `","options":["bind"]}]`, "reaches " + T("/run/redoma")},
 		"another file system":             {`[{"destination":"/x","type":"ext4","source":"/dev/sda1"}]`, `type "ext4"`},
-		"an overlay":                      {`[{"destination":"/x","type":"overlay","source":"overlay","options":["lowerdir=/run/redoma-xds"]}]`, `type "overlay"`},
+		"an overlay":                      {`[{"destination":"/x","type":"overlay","source":"overlay","options":["lowerdir=/run/redoma/xds"]}]`, `type "overlay"`},
 	} {
 		expect(t, name, create(t, agentProcess, tc.mounts), tc.want)
 	}
@@ -178,13 +178,18 @@ func TestCreateRuntimeChecksTheMounts(t *testing.T) {
 func TestReach(t *testing.T) {
 	pl := newPolicy(ForbiddenSources, Graphroot, cid, nil, "")
 	for p, want := range map[string]string{
-		"/run/redoma":          "/run/redoma",
-		"/run/redoma/active":   "/run/redoma",
-		"/run/redoma-relayx":   "",
-		"/srv":                 "",
-		"/etc":                 "/etc/redoma",
-		"/var/lib/containersx": "",
-		"/proc/self/fd/3":      "/proc",
+		"/run/redoma":                "/run/redoma",
+		"/run/redoma/active":         "/run/redoma",
+		"/run/redoma/xds/xds.sock":   "/run/redoma",
+		"/run/redoma/relay":          "/run/redoma",
+		"/run/redoma/lead/lead.sock": "/run/redoma",
+		"/run/redoma/names/a":        "/run/redoma",
+		"/run/redoma/envoy":          "/run/redoma",
+		"/run/redomax":               "",
+		"/srv":                       "",
+		"/etc":                       "/etc/redoma",
+		"/var/lib/containersx":       "",
+		"/proc/self/fd/3":            "/proc",
 		"/var/lib/containers/storage/vfs-containers/" + cid + "/userdata/group":           "",
 		"/var/lib/containers/storage/overlay-containers/" + cid + "/userdata/secrets/key": "/var/lib/containers",
 		"/var/lib/containers/storage/overlay-containers/" + cid + "x/userdata/shm":        "/var/lib/containers",
@@ -289,8 +294,8 @@ func TestCheckMountinfo(t *testing.T) {
 		"the host's /dev/sda by any name": {line("0:5", "/sda", "/x"), "reaches /dev"},
 		"the host's /dev":                 {line("0:5", "/", "/x"), "reaches /dev"},
 		"the host's /dev/shm":             {line("0:41", "/", "/x"), "reaches /dev"},
-		"the xds directory":               {line("0:25", "/redoma-xds", "/x"), "reaches /run/redoma-xds"},
-		"the xds socket, any name":        {line("0:25", "/redoma-xds/xds.sock", "/x"), "reaches /run/redoma-xds"},
+		"the xds directory":               {line("0:25", "/redoma/xds", "/x"), "reaches /run/redoma"},
+		"the xds socket, any name":        {line("0:25", "/redoma/xds/xds.sock", "/x"), "reaches /run/redoma"},
 		"all of /run":                     {line("0:25", "/", "/x"), "reaches"},
 		"another container's passwd":      {line("8:1", "/var/lib/containers/storage/overlay-containers/"+strings.Repeat("e", 64)+"/userdata/passwd", "/y"), "reaches /var/lib/containers"},
 		"/etc/redoma":                     {line("8:1", "/etc/redoma", "/y"), "reaches /etc/redoma"},
@@ -299,8 +304,8 @@ func TestCheckMountinfo(t *testing.T) {
 	} {
 		expect(t, name, pl.checkMountinfo(host, parseMountinfo(base+tc.extra), rootfs), tc.want)
 	}
-	pivoted := parseMountinfo("80 79 0:60 / / rw - overlay overlay rw\n81 80 0:25 /redoma-relay-lead /x rw - tmpfs tmpfs rw\n")
-	expect(t, "pivoted", pl.checkMountinfo(host, pivoted, rootfs), "reaches /run/redoma-relay-lead")
+	pivoted := parseMountinfo("80 79 0:60 / / rw - overlay overlay rw\n81 80 0:25 /redoma/lead /x rw - tmpfs tmpfs rw\n")
+	expect(t, "pivoted", pl.checkMountinfo(host, pivoted, rootfs), "reaches /run/redoma")
 	expect(t, "before any mount", pl.checkMountinfo(host, parseMountinfo(hostMounts), rootfs), "")
 }
 
@@ -542,7 +547,7 @@ func TestCreateRuntimeReadsMountinfo(t *testing.T) {
 		want string
 	}{
 		"clean":      {"", false, ""},
-		"a bad bind": {"70 60 0:25 /redoma-xds ROOT/x rw - tmpfs tmpfs rw\n", false, "reaches /run/redoma-xds"},
+		"a bad bind": {"70 60 0:25 /redoma/xds ROOT/x rw - tmpfs tmpfs rw\n", false, "reaches /run/redoma"},
 		"unreadable": {"", true, "the container's mounts"},
 	} {
 		cp := &fakeCP{answer: func(register.Request) string { return "" }}

@@ -2,7 +2,7 @@
 # egress and relay listeners, its relay cluster, its SVID) comes from
 # redoma xds over ADS; the bootstrap holds only what every agent shares:
 #
-#   redoma_xds  the control plane, /run/redoma-xds/xds.sock (SotW only:
+#   redoma_xds  the control plane, /run/redoma/xds/xds.sock (SotW only:
 #               api_type GRPC, never DELTA_GRPC)
 #   anthropic   the model API, which the model listeners forward to
 #   egress_dfp  the CONNECT tunnels of the egress listeners; its DNS cache
@@ -50,7 +50,7 @@ static_resources:
               - endpoint:
                   address:
                     pipe:
-                      path: /run/redoma-xds/xds.sock
+                      path: /run/redoma/xds/xds.sock
     - name: anthropic
       type: LOGICAL_DNS
       dns_lookup_family: V4_PREFERRED

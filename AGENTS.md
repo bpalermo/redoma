@@ -153,6 +153,9 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
   `/etc/redoma/agents.txt`; `common/reliable`: the relay stream's
   at-least-once delivery, used by both of its ends; `common/sockettest`:
   the unix-socket test helpers; `common/version`: the stamped version.
+- `CHANGELOG.md`: what a host must act on, per release; a change that
+  breaks a host (a path, a flag's default, a unit) adds an entry under
+  "Unreleased".
 - `examples/`: an Envoy bootstrap and an SDS secret file, held to the code
   by `//xds/internal/lds:lds_test`.
 - `deb/`: the Debian package of the host side (see "The package").
@@ -189,6 +192,11 @@ goes in `common/config`, that file, and the table above.
 - **A launcher's state is read, never written.** `/run/redoma/active` and
   `/run/netns` belong to whatever starts the agents; `/etc/redoma` to the
   host's administrator.
+- **Every runtime directory is under `/run/redoma`**, one per user of it
+  (`xds`, `relay`, `lead`; the host's `envoy`, `names`, `active`), each
+  with its own owner and mode, the parent root 0755 (README.md, "Runtime
+  directories"). A new one goes there too, so the hook's single
+  `/run/redoma` entry keeps it from the agents.
 - **One goroutine owns the state.** `controlplane.Run` applies the Source's
   events and the subscriptions' updates, which reach it on a channel, and
   re-reads the allowlists on a timer; nothing is locked. A Source that stops
@@ -219,7 +227,7 @@ goes in `common/config`, that file, and the table above.
   snapshots.
 - **What Envoy holds outlives this process.** Envoy keeps its listeners
   while `redoma xds` is down, so `--state-file`
-  (`/run/redoma-xds/state.json`, a tmpfs cleared at boot) records, per
+  (`/run/redoma/xds/state.json`, a tmpfs cleared at boot) records, per
   namespace path, the namespace Envoy may hold listeners in. It is written
   before each snapshot that could bind something new. At start, an agent
   found in its recorded namespace is bound at once; one in another
@@ -276,7 +284,7 @@ goes in `common/config`, that file, and the table above.
 ## xDS served
 
 Over ADS, SotW only (the bootstrap's `api_type: GRPC`; delta streams are
-refused), on `/run/redoma-xds/xds.sock`, to any node (there is one client):
+refused), on `/run/redoma/xds/xds.sock`, to any node (there is one client):
 
 | Type | Name | What |
 |---|---|---|
@@ -298,7 +306,7 @@ HTTP/2 without TLS, only `/redoma.relay.v1.Relay/Connect` (anything else a
 idle timeout (the shim's heartbeat is every 30s), pings every 30s (10s to
 answer) and a connection idle timeout of an hour on both hops. Its route
 does not validate the cluster, which comes over CDS once the SVID is there.
-The cluster connects to `--relay-socket` (`/run/redoma-relay/relay.sock`)
+The cluster connects to `--relay-socket` (`/run/redoma/relay/relay.sock`)
 with TLS 1.3, the agent's SVID as its client certificate (`agent/<name>`),
 and requires of the relay a certificate of the bundle that carries
 `--relay-id` (`spiffe://<td>/host/relay`). One cluster per agent: a cluster
@@ -332,7 +340,7 @@ definitions in `ocihook/hooks.d` match the default key; a host that changes
   Envoy is never handed `/proc/<pid>` (PIDs are reused). `/run/netns` is
   where the host Envoy sees new namespaces (rslave in a container). The
   hook then registers `{container, agent, netns}` on
-  `/run/redoma-xds/register.sock` and waits for the answer, which comes
+  `/run/redoma/xds/register.sock` and waits for the answer, which comes
   once Envoy has reported a snapshot with the agent's listeners applied
   (`agent.Event.Bound`). A refusal or a timeout (`--timeout`, 30s; the
   control plane's `--bound-timeout` is 25s) fails the start, and the hook
@@ -400,12 +408,15 @@ definitions in `ocihook/hooks.d` match the default key; a host that changes
     source is not absolute (the runtime takes it against the bundle) or does
     not resolve on the host (it could not be checked: fail closed); a bind
     whose source, cleaned or resolved through symlinks, is, is inside, or
-    holds one of `hook.ForbiddenSources` (`/run/redoma-xds`,
-    `/run/redoma-relay`, `/run/redoma-relay-lead`, `/run/redoma-spire`,
-    `/run/redoma`, `/etc/redoma`, `/run/podman`, `/var/lib/containers`,
-    `/proc`, `/dev`), so neither `/run` nor `/` either, nor the directory
+    holds one of `hook.ForbiddenSources` (`/run/redoma`, which holds every
+    runtime directory: `xds`, `relay`, `lead`, `names`, `envoy`, `active`;
+    `/run/redoma-spire`, `/etc/redoma`, `/run/podman`,
+    `/var/lib/containers`, `/proc`, `/dev`; a path is matched whole
+    components at a time, so `/run/redomax` is none of them), so neither
+    `/run` nor `/` either, nor the directory
     of any SPIRE socket `/etc/redoma/redoma.conf` names, as written and as
-    it resolves (`forbidden.Sources`): a host that moves a socket keeps it
+    it resolves (`forbidden.Sources`), nor the directory of the hook's own
+    `--socket`, the same two ways: a host that moves a socket keeps it
     forbidden. This check is the one barrier against a bind of a SPIRE
     socket file itself, which SPIRE makes `0777`. The one exception is
     the container's own `shm`, `passwd` and `group` in its userdata under
@@ -478,7 +489,7 @@ definitions in `ocihook/hooks.d` match the default key; a host that changes
   when exactly one live pidfd is stored under it.
 - **poststop:** unregister (best effort) and unmount. A registration whose
   mount is gone (a crash, an unmount by hand) is removed by the rescan.
-  Registrations are recorded in `/run/redoma-xds/registrations.json`, so a
+  Registrations are recorded in `/run/redoma/xds/registrations.json`, so a
   restart of `redoma xds` keeps them.
 - **Selectors:** `redoma:agent:<name>` (`hooksource.Selectors`).
 
@@ -524,9 +535,9 @@ The lead talks to the agents through it, and only through it; agents never
 talk to each other. In each container, `redoma-shim` holds one long-lived
 bidi stream, `Relay.Connect` (`api/redoma/relay/v1/relay.proto`), to 127.0.0.1:7070
 in its namespace; the host Envoy's per-agent relay listener forwards it to
-`/run/redoma-relay/relay.sock` over mutual TLS with the agent's own SVID
+`/run/redoma/relay/relay.sock` over mutual TLS with the agent's own SVID
 (the container never sees it). The lead uses the `Lead` service on
-`/run/redoma-relay-lead/lead.sock` through `redoma msg` or `redoma mcp`.
+`/run/redoma/lead/lead.sock` through `redoma msg` or `redoma mcp`.
 
 - **The client certificate is the identity, and nothing else is.** A
   connection is accepted only with a certificate that chains to the trust
@@ -617,7 +628,7 @@ in its namespace; the host Envoy's per-agent relay listener forwards it to
 ## redoma msg and redoma mcp
 
 The lead's clients of the `Lead` service on
-`/run/redoma-relay-lead/lead.sock` (`--socket`), which only members of
+`/run/redoma/lead/lead.sock` (`--socket`), which only members of
 `redoma-lead` (964) reach: `redoma msg send`, `reply`, `cancel` and `watch`
 on the command line, and `redoma mcp`, the same as MCP tools on stdio for a
 lead that is a Claude Code session. Claude Code's Bash sandbox on Linux

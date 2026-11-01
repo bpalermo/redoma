@@ -88,9 +88,9 @@ func Command() *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&f.socket, "socket", "/run/redoma-relay/relay.sock", "the agents' socket, which the host Envoy connects to over mutual TLS")
+	fl.StringVar(&f.socket, "socket", "/run/redoma/relay/relay.sock", "the agents' socket, which the host Envoy connects to over mutual TLS")
 	fl.StringVar(&f.socketGroup, "socket-group", "redoma-relay", "the group of the agents' socket (the host Envoy joins it)")
-	fl.StringVar(&f.leadSocket, "lead-socket", "/run/redoma-relay-lead/lead.sock", "the lead's socket (redoma msg, redoma mcp), in a directory of its own: not the agents' socket's, which the Envoy container mounts")
+	fl.StringVar(&f.leadSocket, "lead-socket", "/run/redoma/lead/lead.sock", "the lead's socket (redoma msg, redoma mcp), in a directory of its own: not the agents' socket's, which the Envoy container mounts")
 	fl.StringVar(&f.leadGroup, "lead-group", "redoma-lead", "the group of the lead's socket, the users who may task agents")
 	fl.StringVar(&f.stateDir, "state-dir", "/var/lib/redoma-relay", "each agent's queue, its record and what the lead has not seen")
 	fl.StringVar(&f.workloadAPI, "workload-api", "", "the SPIRE Workload API the relay's SVID comes from (default: the settings file's spire_workload_api)")

@@ -15,7 +15,7 @@ import (
 	"github.com/bpalermo/redoma/xds/internal/lds"
 )
 
-var testRelay = cds.Relay{Socket: "/run/redoma-relay/relay.sock", ID: "spiffe://" + td + "/host/relay"}
+var testRelay = cds.Relay{Socket: "/run/redoma/relay/relay.sock", ID: "spiffe://" + td + "/host/relay"}
 
 func clusters(v view) []string {
 	if v.snap == nil {

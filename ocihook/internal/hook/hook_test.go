@@ -207,7 +207,7 @@ func TestSpecIsReadStrictly(t *testing.T) {
 		"additionalGidſ":        {`{"linux":{"namespaces":[{"type":"network"}]},"process":{"user":{"uid":1000,"additionalGid\u017f":[961,0]}}}`, "in another case"},
 		"capabilitieſ":          {`{"linux":{"namespaces":[{"type":"network"}]},"process":{"capabilitie\u017f":{"bounding":["CAP_SYS_ADMIN"]}}}`, "in another case"},
 		"optionſ":               {`{"linux":{"namespaces":[{"type":"network"}]},"mounts":[{"option\u017f":["rbind"]}]}`, "in another case"},
-		"ſource":                {`{"linux":{"namespaces":[{"type":"network"}]},"mounts":[{"\u017fource":"/run/redoma-xds"}]}`, "in another case"},
+		"ſource":                {`{"linux":{"namespaces":[{"type":"network"}]},"mounts":[{"\u017fource":"/run/redoma/xds"}]}`, "in another case"},
 		"a Kelvin sign":         {`{"linux":{"namespaces":[{"type":"network"}]},"x":{"key":1,"\u212aey":2}}`, "differ only in case"},
 		"free annotation keys":  {`{"linux":{"namespaces":[{"type":"pid"},{"type":"network"}]},"annotations":{"Mounts":"x","Process":"y"}}`, ""},
 		"a repeated key":        {`{"linux":{"namespaces":[{"type":"network","path":"","path":"/run/netns/x"}]}}`, `"path" appears twice`},

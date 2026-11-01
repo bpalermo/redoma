@@ -31,7 +31,7 @@ import (
 )
 
 // DefaultSocket is the relay's lead socket.
-const DefaultSocket = "/run/redoma-relay-lead/lead.sock"
+const DefaultSocket = "/run/redoma/lead/lead.sock"
 
 // subcommands are `redoma msg`'s, with their usage, in the order help
 // lists them.

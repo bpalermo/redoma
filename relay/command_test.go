@@ -50,7 +50,7 @@ func TestListen(t *testing.T) {
 }
 
 // TestListenSetsTheGroup: in a setgid directory of another group (as a
-// /run/redoma-relay of group redoma-lead would be), each socket still has
+// /run/redoma/relay of group redoma-lead would be), each socket still has
 // the group it was given: the agents' socket never the lead's group. Needs
 // a supplementary group to play the other one.
 func TestListenSetsTheGroup(t *testing.T) {
@@ -135,7 +135,7 @@ func TestSameGroupsRefused(t *testing.T) {
 // TestSetDir: a socket's directory gets the socket's group and DirMode,
 // losing a setgid bit; a symlink or a file is refused.
 func TestSetDir(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "redoma-relay-lead")
+	dir := filepath.Join(t.TempDir(), "lead")
 	if err := os.Mkdir(dir, 0o2777); err != nil {
 		t.Fatal(err)
 	}

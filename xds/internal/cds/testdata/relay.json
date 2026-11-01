@@ -14,7 +14,7 @@
         "endpoint": {
          "address": {
           "pipe": {
-           "path": "/run/redoma-relay/relay.sock"
+           "path": "/run/redoma/relay/relay.sock"
           }
          }
         }

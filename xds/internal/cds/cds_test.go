@@ -18,7 +18,7 @@ import (
 	_ "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 )
 
-var relay = Relay{Socket: "/run/redoma-relay/relay.sock", ID: "spiffe://redoma.internal/host/relay"}
+var relay = Relay{Socket: "/run/redoma/relay/relay.sock", ID: "spiffe://redoma.internal/host/relay"}
 
 func golden(t *testing.T, path string) *clusterv3.Cluster {
 	t.Helper()

@@ -59,7 +59,7 @@ func TestExampleBootstrap(t *testing.T) {
 	}
 	xdsCluster := dyn.GetAdsConfig().GetGrpcServices()[0].GetEnvoyGrpc().GetClusterName()
 	pipe := clusters[xdsCluster].GetLoadAssignment().GetEndpoints()[0].GetLbEndpoints()[0].GetEndpoint().GetAddress().GetPipe().GetPath()
-	if pipe != "/run/redoma-xds/xds.sock" {
+	if pipe != "/run/redoma/xds/xds.sock" {
 		t.Errorf("the ADS cluster %q connects to %q, not redoma xds's default socket", xdsCluster, pipe)
 	}
 
