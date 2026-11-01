@@ -43,7 +43,7 @@ agent container (own netns)                   host
      v
   127.0.0.1:8081 agent_<name>_mcp  -- host Envoy --------------------------+
      http_filters, per agent:                                              |
-       header_mutation (remove x-mcp-*, mcp-param-* the agent sent)        |
+       header_mutation (remove the x-mcp-* headers the agent sent)         |
        mcp (parse JSON-RPC: method, params.name, configured arguments)     |
        rbac (this agent's allowlist; anything else is a 403)               |
        router (route on the tool name: cluster per credential)             |
@@ -303,19 +303,27 @@ reaches the server's loopback.
   `api/envoy/extensions/filters/http/header_mutation/v3/header_mutation.proto:22-24`).
   That filter is alpha, `security_posture: unknown`
   (`extensions_metadata.yaml:835-841`), like the credential injector, and
-  sees only headers. Removed:
-  - `x-mcp-*`: the server's per-request configuration above, which only
-    the operator may set. The per-agent `X-MCP-Tools` is added after the
-    removal, by the route (the router applies a route's header additions
-    after the listener's filters have run).
-  - `mcp-param-*`: projections of tool arguments into headers. The server
-    does not dispatch on them (it reads them only for CORS,
-    `pkg/http/middleware/cors.go:18-30`). Envoy checks the body's
-    arguments, not these headers, so any copy that could disagree with the
-    body is removed.
+  sees only headers. Removed: `x-mcp-*` only, the server's per-request
+  configuration above, which only the operator may set. The per-agent
+  `X-MCP-Tools` is added after the removal, by the route (the router
+  applies a route's header additions after the listener's filters have
+  run).
 
   Kept, because the protocol needs them:
   - `Mcp-Session-Id` and `MCP-Protocol-Version`.
+  - `Mcp-Param-*`. The server annotates the `owner` and `repo` arguments of
+    its tools (`HeaderParams`, `pkg/inventory/server_tool.go:276-289`). From
+    protocol version `2026-07-28` (`minVersionForStandardHeaders`,
+    `mcp/streamable_headers.go:30` in go-sdk v1.8.0), a client sends them as
+    `Mcp-Param-owner` and `Mcp-Param-repo` headers (the SDK's own client
+    does, `:198-260`). The SDK's server refuses, with a 400, a `tools/call`
+    that lacks one of them or whose value differs from the body's argument
+    (`mcp/streamable.go:1616-1631`, `mcp/streamable_headers.go:359-363` and
+    `:402-442`).
+    Envoy's MCP filter does not read these headers. It checks the body,
+    and the SDK checks that the headers agree with the body, so a header
+    cannot carry a value other than the one RBAC allowed. Stripping them
+    would break every repository tool on that protocol version.
   - `Mcp-Method` and `Mcp-Name`. With protocol version `2026-07-28` the MCP
     filter requires them and refuses a request whose headers disagree with
     its body (`source/extensions/filters/http/mcp/mcp_filter.cc:422-425`,
@@ -334,10 +342,23 @@ reaches the server's loopback.
 
 ## Layered limits
 
-No single layer is trusted to stop a dangerous call. Each of the three
-below would stop a merge on its own, on either credential's route. For an
-approval the picture differs, and the third layer is weaker on the person's
-route (see "The person's credential" below).
+No single layer is trusted to stop a dangerous call. What each layer stops
+on its own:
+
+- **A merge.** Layers 1 and 2 each stop it on both routes:
+  `merge_pull_request` is not registered, and RBAC does not allow it.
+  - At GitHub, the person's route is safe because its token has Contents
+    read only.
+  - On the App's route, GitHub refuses a merge only while the pull request
+    lacks an approving review or a required check. The App's contents and
+    pull requests write would let it merge a pull request that is approved
+    and green. So, for an approved and green pull request, GitHub is no
+    backstop there, and layers 1 and 2 are what stop the merge.
+- **An approval.** Layers 1 and 2 each stop it on both routes. At GitHub,
+  neither credential's permissions do: Pull requests write allows
+  submitting a review, so GitHub is no backstop against an approval on
+  either route. On the person's route the approval would also carry a
+  person's name (see "The person's credential" below).
 
 1. **The server's own flags, first.** GitHub's server is started with an
    explicit `--tools` list, the union of what any agent on the host may
@@ -362,9 +383,8 @@ route (see "The person's credential" below).
      under the agents' prefixes, and block deletion and force-push.
    - A ruleset on the default branch requiring an approving review and the
      required checks, with neither the App nor the person's token in its
-     bypass list. Contents and pull requests write would let the App merge
-     an approved, green pull request, so this ruleset is what stops a merge
-     at GitHub, not the App's permissions.
+     bypass list. It stops a merge at GitHub until a pull request is
+     approved and green, and no longer (see above).
    - The App installed on the agents' repositories only.
 
 ### The person's credential
@@ -395,9 +415,13 @@ names someone who answers for it, with the agent's commits as its contents.
   MCP filter has run with `clear_route_cache`. Every other request,
   `tools/list` included, goes to `mcp_github` under the App's token.
   - In the configuration, a credential other than `default` names exactly
-    one tool per line (`credential_for.<tool>`), never a pattern, and
-    `redoma xds` refuses a file that routes a review, merge or comment tool
-    to it.
+    one tool per line (`credential_for.<tool>`), never a pattern. The
+    upstream's own `.conf` lists the tools that must never be sent with a
+    given credential (`credential_forbids.<credential>`). For GitHub's
+    `pr`, that is the review, merge and comment tools. `redoma xds` refuses
+    a file in which a `credential_for` line names a tool its credential
+    forbids. The check is generic: redoma knows no upstream's tools, and
+    the list lives with the upstream's configuration.
   - RBAC and the server's `--tools` ceiling still apply on top. If a
     request names `pull_request_review_write`, it never reaches the person's
     token: it is not routed there, the server has not registered it, and
@@ -443,11 +467,19 @@ credential.default = /run/redoma/mcp-credentials/github-app.yaml
 credential.pr = /run/redoma/mcp-credentials/github-pr.yaml
 credential_header = Authorization
 credential_prefix = Bearer
-# Which tools use a credential other than default.
+# Which tools use a credential other than default, one tool per line.
 credential_for.create_pull_request = pr
+# Tools never sent with a credential (a list key, one tool per line); xds
+# refuses a credential_for line that names one.
+credential_forbids.pr = merge_pull_request
+credential_forbids.pr = pull_request_review_write
+credential_forbids.pr = add_comment_to_pending_review
+credential_forbids.pr = add_issue_comment
+credential_forbids.pr = add_reply_to_pull_request_comment
+credential_forbids.pr = update_pull_request
+credential_forbids.pr = update_pull_request_branch
 # Request header name prefixes removed from the agent's requests (any case).
 strip_header_prefix = x-mcp-
-strip_header_prefix = mcp-param-
 # Optional: a header set per agent, {tools} being the agent's list.
 agent_header.X-MCP-Tools = {tools}
 max_request_bytes = 1048576
@@ -505,9 +537,9 @@ with `REJECT_NO_MCP`, `BODY`, `reject_duplicate_keys`,
 `max_request_body_size` and the extraction rules the constraints need;
 the RBAC policy; routes that match the extracted tool name (with
 `clear_route_cache`) to the credential's cluster; the `header_mutation`
-filter's prefix removals and the route's per-agent headers; and the clusters, each with its upstream
-credential injector and source namespace. It never contacts the upstream
-or reads a credential.
+filter's prefix removals and the route's per-agent headers; and the
+clusters, each with its upstream credential injector and source namespace.
+It never contacts the upstream or reads a credential.
 
 ### The runtime layout
 
