@@ -206,6 +206,15 @@ or later.
   arrays), so a tool whose target sits in a list (the paths in
   `push_files`, for example) is constrained only by the upstream and the
   backend.
+- **What RBAC cannot check** is anything that needs the backend's state.
+  Envoy sees the arguments, not what they point at. A constraint on
+  `owner` and `repo` keeps a comment in the allowed repositories. It cannot
+  tell whether a pull request number is one of the agent's own, or whether
+  a review comment id belongs to the pull request named. So, within an
+  allowed repository, an agent may comment on or reply in any pull request
+  or issue. A host that needs "its own pull requests only" needs the
+  `ext_proc` fallback, which can look the target up, or a repository the
+  agent's App can write nothing else in.
 
 ### The credential (`credential_injector`)
 
