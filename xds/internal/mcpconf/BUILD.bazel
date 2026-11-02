@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mcpconf",
+    srcs = [
+        "allowlist.go",
+        "mcpconf.go",
+        "upstream.go",
+    ],
+    importpath = "github.com/bpalermo/redoma/xds/internal/mcpconf",
+    visibility = ["//xds:__subpackages__"],
+    deps = [
+        "//common/allowlist",
+        "//xds/internal/egress",
+    ],
+)
+
+go_test(
+    name = "mcpconf_test",
+    srcs = [
+        "allowlist_test.go",
+        "upstream_test.go",
+    ],
+    embed = [":mcpconf"],
+)

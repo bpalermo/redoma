@@ -96,6 +96,21 @@ func Hosts(etcDir, repo string) ([]string, error) {
 	return hosts, nil
 }
 
+// Check returns an error unless h is a line an allowlist accepts: a host
+// name or a suffix wildcard. Other files that list egress hosts (an MCP
+// upstream's) hold their lines to it too.
+func Check(h string) error {
+	switch {
+	case strings.Contains(h, "*"):
+		if !isWildcard(h) {
+			return fmt.Errorf("%q: %s", h, wildcardHint)
+		}
+	case !hostName.MatchString(h):
+		return fmt.Errorf("not a host name: %q", h)
+	}
+	return nil
+}
+
 // read returns one file's host names and wildcards in file order; a missing
 // file has none.
 func read(path string) ([]string, error) {
@@ -116,13 +131,8 @@ func read(path string) ([]string, error) {
 		if h == "" {
 			continue
 		}
-		switch {
-		case strings.Contains(h, "*"):
-			if !isWildcard(h) {
-				return nil, fmt.Errorf("%s: %q: %s", path, h, wildcardHint)
-			}
-		case !hostName.MatchString(h):
-			return nil, fmt.Errorf("%s: not a host name: %q", path, h)
+		if err := Check(h); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 		hosts = append(hosts, h)
 	}

@@ -126,6 +126,12 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
     Both are re-read at every scan, so an edit to `_default.txt` republishes
     every agent's egress listener. `_default` can never be an agent's name
     (`allowlist.ValidName` refuses the underscore; a test holds that);
+  - `mcpconf`: the host MCP upstreams' configuration
+    (`docs/mcp-upstreams.md`): `<etc>/mcp/<upstream>.conf` and each
+    agent's allowlist `<etc>/mcp/<upstream>/<agent>.conf` (after
+    `_default.conf`), in `[set]`s that a call needs any one of. Root's
+    files, strict: a bad line refuses the whole file. It names no upstream
+    and no tool;
   - `modelauth`: how the model listeners inject the credential;
   - `rolesanywhere`: IAM Roles Anywhere's CreateSession signed with an
     SVID held in memory, the ARNs' validation, and `Tunnels`, the HTTP
