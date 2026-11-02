@@ -106,13 +106,18 @@ func (e *Error) Refused() bool {
 
 // Client calls CreateSession.
 type Client struct {
-	// HTTP sends the request; http.DefaultClient when nil. The request's URL
-	// is always https://<Profile.Host>/sessions: how the connection gets
-	// there (a dialer through a tunnel) is the client's business.
+	// HTTP sends the request (Tunnels.Client); required, never a default
+	// client, which would dial directly or through a proxy from the
+	// environment. The request's URL is always
+	// https://<Profile.Host>/sessions: how the connection gets there is the
+	// client's business.
 	HTTP *http.Client
 	// Now is the clock the request is signed at; time.Now when nil.
 	Now func() time.Time
 }
+
+// ErrNoHTTPClient is CreateSession's error for a Client without HTTP.
+var ErrNoHTTPClient = errors.New("rolesanywhere: no HTTP client")
 
 // maxAnswer bounds CreateSession's answer, a few kilobytes.
 const maxAnswer = 1 << 20
@@ -144,11 +149,10 @@ func (c *Client) CreateSession(ctx context.Context, p Profile, cert Certificate)
 	if err := sign(req, body, p.Region(), cert, now()); err != nil {
 		return Credentials{}, err
 	}
-	client := c.HTTP
-	if client == nil {
-		client = http.DefaultClient
+	if c.HTTP == nil {
+		return Credentials{}, ErrNoHTTPClient
 	}
-	resp, err := client.Do(req)
+	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return Credentials{}, err
 	}
