@@ -123,7 +123,10 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
     It also takes an MCP upstream's register (`register.Request.Upstream`,
     the namespace at `/run/netns/redoma-mcp-<container ID>`): no
     allowlist, no pidfd, and no wait for Envoy, since the hook sends it
-    from poststart;
+    from poststart. Upstreams' registrations are recorded apart, in
+    `<registrations file>.upstreams`, so an older redoma xds after a
+    downgrade, which reads the agents' file alone, never takes one for an
+    agent's;
   - `egress`: an agent's CONNECT allowlist, the hosts of
     `<etc>/egress/_default.txt` (every agent's) then those of
     `<etc>/egress/<name>.txt`, each host once. Both files take one host name
@@ -180,7 +183,10 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
   - `controlplane`: the snapshot, kept in step with all of the above; `mcp.go` publishes,
     for each MCP upstream that is up (registered, its file valid), its
     egress listener and cluster, and each agent with an allowlist file for
-    it a route in the agent's MCP listener;
+    it a route in the agent's MCP listener. An upstream whose namespace is
+    replaced at the same path waits, as an agent does, for Envoy to drop
+    the old listener (`upWaiting`, `pathClear`), and an upstream and an
+    agent never share a namespace (`refuseShared`);
   - `server`: ADS, LDS, CDS and SDS on the unix socket.
 - `ocihook/internal/hook`: the hook's createRuntime and poststop logic.
 - `relay/internal/`: `hub`, the relay's state and its two services; `mtls`,
@@ -594,7 +600,9 @@ annotated both is refused.
   resolved) read-only: only the options of `credentialOptions` (bind,
   rbind, ro, rro, idmap, nosuid, nodev, noexec, rprivate), `ro` or `rro`
   among them. An allowlist, because runtimes apply options in order and
-  recursively (`rrw` wins over `ro` in any position). No
+  recursively (`rrw` wins over `ro` in any position). Podman's `:ro` is
+  not recursive, so an upstream whose credential directory has a file
+  system mounted below it on the host is refused (`checkNoSubmounts`). No
   bind may be idmapped (`idmap`/`ridmap` options, or the mount's own
   mappings) except that directory: through one, the upstream's root owns
   what host root owns. `/etc/subuid` and `/etc/subgid` must be root's and

@@ -18,9 +18,6 @@ func unit(t *testing.T, name string) string {
 	return string(raw)
 }
 
-// TestUpstreamUnits: the units run this command's subcommands, stop the
-// container run names, and make the directory the credential's token_file
-// must be in.
 // TestTokenWithoutATokenFile: every start of an upstream runs the copy;
 // one without a token_file has nothing to copy, and succeeds, whatever the
 // source.
@@ -34,6 +31,9 @@ func TestTokenWithoutATokenFile(t *testing.T) {
 	}
 }
 
+// TestUpstreamUnits: the units run this command's subcommands, stop the
+// container run names, and make the directory the credential's token_file
+// must be in.
 func TestUpstreamUnits(t *testing.T) {
 	run := unit(t, "redoma-mcp@.service")
 	for _, want := range []string{
