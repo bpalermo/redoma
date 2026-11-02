@@ -565,6 +565,35 @@ line.
 Rootless Podman reads the same directory, so it runs the hook too, as the
 user, and is refused.
 
+### MCP upstreams
+
+A rootful container annotated `redoma/upstream=<name>` (`--upstream-annotation`)
+is a host MCP upstream's server (docs/mcp-upstreams.md), with its own three
+definitions (`redoma-upstream-*.json`). It is never an agent: a container
+annotated both is refused.
+
+- **createRuntime** (`hook/upstream.go`): the spec must give it a user
+  namespace of its own, network and PID namespaces created for it, and no
+  namespace joined; `linux.uidMappings` and `gidMappings` wholly inside the
+  `containers` ranges of `/etc/subuid` and `/etc/subgid` (where
+  `--userns=auto` allocates, and no host id in use lives); no privilege
+  to gain and no capability past an agent's; and an agent's mounts, plus
+  its own credential directory, `/run/redoma-mcp/<name>`, and nothing else
+  of `/run/redoma-mcp`. Its process ids are its user namespace's, so the
+  agent's uid and gid rules do not apply. The namespace is mounted at
+  `/run/netns/redoma-mcp-<container ID>`; nothing is registered yet.
+- **poststart**: with a user namespace Podman attaches a network after the
+  runtime made the namespace, so the spec cannot prove `--network none`.
+  The hook enters the namespace (`setns` on a thread that then exits) and
+  registers the upstream only when its interfaces are exactly `lo`;
+  otherwise, or when the register fails, it unmounts the namespace. A
+  poststart error is the runtime's warning, not a failed start: the
+  container runs, unregistered, and Envoy never sends it a request.
+- **poststop**: unregisters it and unmounts its namespace.
+- **Agents against upstreams**: an agent may not mount anything of
+  `/run/redoma-mcp`, and its uid, gid and additional gids may not be in
+  the `containers` ranges.
+
 ## Launchers
 
 A launcher is a host process (root) that starts agent containers itself

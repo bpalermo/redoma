@@ -100,6 +100,18 @@ func (h *Hook) checkSpec(raw []byte, st State) error {
 	if err := h.checkProcess(top); err != nil {
 		return err
 	}
+	if err := h.checkNotSubordinate(top); err != nil {
+		return err
+	}
+	forbidden, _, _ := h.storage()
+	return h.checkMountsOf(top, st, append(slicesClone(forbidden), h.tokenRoot()), "")
+}
+
+// checkMountsOf is the spec's devices and mounts, as the spec names them
+// and as the runtime has made them, against forbidden. allowed, if set, is
+// the one directory inside a forbidden path the container may have (an MCP
+// upstream's own credential directory).
+func (h *Hook) checkMountsOf(top map[string]json.RawMessage, st State, forbidden []string, allowed string) error {
 	if err := checkDevices(top); err != nil {
 		return err
 	}
@@ -114,8 +126,9 @@ func (h *Hook) checkSpec(raw []byte, st State) error {
 	if err := checkDeviceRules(linux); err != nil {
 		return err
 	}
-	forbidden, graphroot, runroot := h.storage()
+	_, graphroot, runroot := h.storage()
 	pl := newPolicy(forbidden, graphroot, st.ID, masked, containerRootfs(graphroot, runroot, st.ID))
+	pl.allowed = allowed
 	if err := pl.checkMounts(top); err != nil {
 		return err
 	}

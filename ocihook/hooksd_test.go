@@ -102,3 +102,40 @@ func TestHookDefinitions(t *testing.T) {
 		t.Errorf("NetnsPrefix %q changed: update AGENTS.md", register.NetnsPrefix)
 	}
 }
+
+// TestUpstreamHookDefinitions: the upstream's definitions run the same
+// binary at createRuntime (checks and the mount), poststart (the register,
+// once only lo is there) and poststop, only for containers with the
+// upstream annotation, with timeouts longer than the binary's own.
+func TestUpstreamHookDefinitions(t *testing.T) {
+	for file, stage := range map[string]string{
+		"redoma-upstream-create-runtime.json": "createRuntime",
+		"redoma-upstream-poststart.json":      "poststart",
+		"redoma-upstream-poststop.json":       "poststop",
+	} {
+		d := readDef(t, file)
+		arg := map[string]string{"createRuntime": "create-runtime", "poststart": "poststart", "poststop": "poststop"}[stage]
+		if d.Version != "1.0.0" || !slices.Equal(d.Stages, []string{stage}) || !slices.Equal(d.Hook.Args, []string{"redoma", "oci-hook", arg}) || d.Hook.Path != "/usr/bin/redoma" {
+			t.Errorf("%s: %+v", file, d)
+		}
+		if len(d.When.Annotations) != 1 || d.When.Annotations[`^redoma/upstream$`] == "" {
+			t.Errorf("%s: when %v, want the upstream annotation only", file, d.When.Annotations)
+		}
+		if d.Hook.Timeout == nil {
+			t.Fatalf("%s: no timeout", file)
+		}
+	}
+	// poststart waits for the control plane as long as --timeout (30s).
+	if limit := time.Duration(*readDef(t, "redoma-upstream-poststart.json").Hook.Timeout) * time.Second; limit <= 30*time.Second+5*time.Second {
+		t.Errorf("poststart timeout %v leaves the binary no room", limit)
+	}
+	match := regexp.MustCompile(readDef(t, "redoma-upstream-create-runtime.json").When.Annotations[`^redoma/upstream$`])
+	for name, want := range map[string]bool{"grafana": true, "Bad_Name": false, "../x": false, "_default": false} {
+		if match.MatchString(name) != want {
+			t.Errorf("createRuntime match of %q = %v", name, !want)
+		}
+	}
+	if register.UpstreamNetnsPrefix != "redoma-mcp-" {
+		t.Errorf("UpstreamNetnsPrefix %q changed: update docs/mcp-upstreams.md", register.UpstreamNetnsPrefix)
+	}
+}

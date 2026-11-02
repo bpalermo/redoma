@@ -53,6 +53,20 @@ type policy struct {
 	// ownRootfs is the container's own rootfs as its storage records it
 	// (containerRootfs), not as its spec says: "" when it is not known.
 	ownRootfs string
+	// allowed is a directory inside a forbidden path the container may have
+	// mounted, it or what is inside it, and nothing above it: an MCP
+	// upstream's own credential directory. "" for an agent.
+	allowed string
+}
+
+// exempt says that p, a host path, is allowed, or inside it, and f, the
+// forbidden path it relates to, is above allowed: f is forbidden for what
+// it holds besides allowed.
+func (pl policy) exempt(p, f string) bool {
+	if pl.allowed == "" || !strings.HasPrefix(pl.allowed, f+"/") {
+		return false
+	}
+	return p == pl.allowed || strings.HasPrefix(p, pl.allowed+"/")
 }
 
 func newPolicy(forbidden []string, graphroot, container string, masked []string, ownRootfs string) policy {
@@ -71,7 +85,7 @@ func (pl policy) reach(p string) string {
 		return ""
 	}
 	for _, f := range pl.forbidden {
-		if related(p, f) {
+		if related(p, f) && !pl.exempt(p, f) {
 			return f
 		}
 	}
@@ -274,7 +288,7 @@ func (pl policy) reaches(c mountEntry, p place, nullDev, rootfs string) bool {
 		return false
 	}
 	hostPath := filepath.Clean(p.host.point + "/" + strings.TrimPrefix(c.root, p.host.root))
-	return !pl.own.MatchString(hostPath)
+	return !pl.own.MatchString(hostPath) && !pl.exempt(hostPath, p.forbidden)
 }
 
 // isMasked says that point, in the container (under rootfs before the

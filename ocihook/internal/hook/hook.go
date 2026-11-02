@@ -241,7 +241,7 @@ var specKeys = strings.Fields(`ociVersion process root hostname domainname mount
 		path readonly destination type source options uidMappings gidMappings namespaces devices
 		major minor fileMode allow access cgroupsPath resources sysctl seccomp maskedPaths readonlyPaths
 		mountLabel rootfsPropagation personality intelRdt timeOffsets prestart createRuntime
-		createContainer startContainer poststart poststop`)
+		createContainer startContainer poststart poststop containerID hostID size`)
 
 // freeObjects are the keys whose object holds names of anything.
 var freeObjects = map[string]bool{"annotations": true, "sysctl": true, "unified": true}
@@ -327,6 +327,17 @@ type Mounter interface {
 type Hook struct {
 	// Annotation names the agent: <Annotation>=<agent name>.
 	Annotation string
+	// UpstreamAnnotation names an MCP upstream's container:
+	// <UpstreamAnnotation>=<upstream name>. "" has none.
+	UpstreamAnnotation string
+	// SubUID and SubGID are the subordinate id files (SubUID, SubGID unless
+	// a test sets its own).
+	SubUID, SubGID string
+	// TokenRoot is UpstreamTokenRoot unless a test sets its own.
+	TokenRoot string
+	// Interfaces lists a mounted network namespace's interfaces; nil is
+	// Interfaces.
+	Interfaces func(netns string) ([]string, error)
 	// NetnsDir is where namespaces are mounted (/run/netns): the host Envoy
 	// sees mounts made there.
 	NetnsDir string
@@ -363,9 +374,21 @@ func (h *Hook) logf(format string, args ...any) {
 // annotation is not an agent: nothing happens.
 func (h *Hook) CreateRuntime(ctx context.Context, st State) error {
 	name, ok := st.Annotations[h.Annotation]
-	if !ok {
+	upstream, isUpstream := st.Annotations[h.UpstreamAnnotation]
+	isUpstream = isUpstream && h.UpstreamAnnotation != ""
+	switch {
+	case ok && isUpstream:
+		return fmt.Errorf("container %s is annotated both agent %q and MCP upstream %q: it is one or the other", st.ID, name, upstream)
+	case isUpstream:
+		return h.createRuntimeUpstream(st, upstream)
+	case !ok:
 		return nil
 	}
+	return h.createRuntimeAgent(ctx, st, name)
+}
+
+// createRuntimeAgent registers an agent's container.
+func (h *Hook) createRuntimeAgent(ctx context.Context, st State, name string) error {
 	if !register.ValidContainer(st.ID) {
 		return fmt.Errorf("not a container ID: %q", st.ID)
 	}
@@ -436,11 +459,17 @@ func (h *Hook) CreateRuntime(ctx context.Context, st State) error {
 // control plane that cannot be reached is logged, not an error: the rescan
 // removes the registration once the mount is gone.
 func (h *Hook) Poststop(ctx context.Context, st State) error {
-	if _, ok := st.Annotations[h.Annotation]; !ok {
+	_, ok := st.Annotations[h.Annotation]
+	_, isUpstream := st.Annotations[h.UpstreamAnnotation]
+	isUpstream = isUpstream && h.UpstreamAnnotation != ""
+	if !ok && !isUpstream {
 		return nil
 	}
 	if !register.ValidContainer(st.ID) {
 		return fmt.Errorf("not a container ID: %q", st.ID)
+	}
+	if isUpstream && !ok {
+		return h.poststopUpstream(ctx, st)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

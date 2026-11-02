@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "hook": {
+    "path": "/usr/bin/redoma",
+    "args": ["redoma", "oci-hook", "poststart"],
+    "timeout": 40
+  },
+  "when": {
+    "annotations": {
+      "^redoma/upstream$": "^[a-z0-9][a-z0-9-]{0,40}$"
+    }
+  },
+  "stages": ["poststart"]
+}

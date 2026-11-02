@@ -45,6 +45,9 @@ drwxr-xr-x root/root usr/share/containers/oci/
 drwxr-xr-x root/root usr/share/containers/oci/hooks.d/
 -rw-r--r-- root/root usr/share/containers/oci/hooks.d/redoma-create-runtime.json
 -rw-r--r-- root/root usr/share/containers/oci/hooks.d/redoma-poststop.json
+-rw-r--r-- root/root usr/share/containers/oci/hooks.d/redoma-upstream-create-runtime.json
+-rw-r--r-- root/root usr/share/containers/oci/hooks.d/redoma-upstream-poststart.json
+-rw-r--r-- root/root usr/share/containers/oci/hooks.d/redoma-upstream-poststop.json
 drwxr-xr-x root/root usr/share/doc/
 drwxr-xr-x root/root usr/share/doc/redoma/
 -rw-r--r-- root/root usr/share/doc/redoma/NOTICE
