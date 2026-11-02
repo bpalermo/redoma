@@ -46,6 +46,16 @@ func upstreamHook(t *testing.T, cp *fakeCP, m *fakeMounter) *Hook {
 	if err := os.WriteFile(filepath.Join(h.TokenRoot, "grafana", "token"), []byte("t\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Symlinks across the credential directory's edge, both ways.
+	for link, target := range map[string]string{
+		filepath.Join(h.TokenRoot, "grafana", "out"): T("/srv/redoma/work/a"),
+		T("/srv/redoma/work/in"):                     filepath.Join(h.TokenRoot, "grafana"),
+	} {
+		os.Remove(link)
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, d := range []string{"grafana", "other"} {
 		if err := os.MkdirAll(filepath.Join(h.TokenRoot, d), 0o700); err != nil {
 			t.Fatal(err)
@@ -151,6 +161,14 @@ func TestCreateRuntimeUpstreamRefusals(t *testing.T) {
 		{"its own directory idmapped, writable", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","idmap"]`, ""), upstreamAnnotation, "writable"},
 		{"its own directory, writable", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","rw"]`, ""), upstreamAnnotation, "writable"},
 		{"a file in it, writable", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana/token"), `["rbind"]`, ""), upstreamAnnotation, "writable"},
+		// Options apply in order, so rw after ro wins: any rw is refused.
+		{"its own directory, ro then rw", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","rw"]`, ""), upstreamAnnotation, "writable"},
+		{"its own directory idmapped, ro then rw", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","idmap","rw"]`, ""), upstreamAnnotation, "writable"},
+		{"its own directory, rw then ro", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","rw","ro"]`, ""), upstreamAnnotation, "writable"},
+		// A symlink that starts on one side of the credential directory and
+		// resolves to the other is judged on both: idmapped, it is refused.
+		{"an idmapped symlink in it to outside", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana/out"), `["rbind","ro","idmap"]`, ""), upstreamAnnotation, "idmapped"},
+		{"an idmapped symlink outside to it", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/in"), `["rbind","ro","idmap"]`, ""), upstreamAnnotation, "idmapped"},
 		// The name is a name, never a path: x/../other would exempt another
 		// upstream's credential directory.
 		{"a traversal name", upstreamNamespaces, upstreamProcess, upstreamMappings, bindOf(T("/run/redoma-mcp/other")), map[string]string{"redoma/upstream": "x/../other"}, "not an MCP upstream name"},

@@ -158,7 +158,8 @@ func (pl policy) checkMount(m map[string]json.RawMessage, what string) error {
 // own) lets the upstream's root, an unprivileged host id, own what host
 // root owns under it: only its credential directory may be one, and that
 // directory, or anything in it, only read-only, so the container cannot
-// leave entries where the root copier writes.
+// leave entries where the root copier writes: ro, and no rw anywhere in
+// the options (runc and crun apply them in order, so a later rw wins).
 func (pl policy) checkUpstreamBind(m map[string]json.RawMessage, what, source, real string, options []string) error {
 	var uidMappings, gidMappings []json.RawMessage
 	if err := field(m, "uidMappings", what, &uidMappings); err != nil {
@@ -172,8 +173,10 @@ func (pl policy) checkUpstreamBind(m map[string]json.RawMessage, what, source, r
 	switch {
 	case mapped && !inOwn:
 		return fmt.Errorf("the container binds %s idmapped: only an MCP upstream's own credential directory may be", source)
-	case inOwn && !slices.Contains(options, "ro"):
-		return fmt.Errorf("the container binds its credential directory %s writable: it is read-only (ro)", source)
+	case inOwn && (!slices.Contains(options, "ro") || slices.Contains(options, "rw")):
+		// The runtime applies options in order, a later rw clearing ro:
+		// any rw is refused, wherever it stands.
+		return fmt.Errorf("the container binds its credential directory %s writable: it is read-only (ro, and no rw)", source)
 	}
 	return nil
 }
