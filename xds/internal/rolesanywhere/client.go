@@ -125,6 +125,9 @@ const maxAnswer = 1 << 20
 // CreateSession asks for a session of p's role with cert. p must be valid
 // (Profile.Validate).
 func (c *Client) CreateSession(ctx context.Context, p Profile, cert Certificate) (Credentials, error) {
+	if c.HTTP == nil {
+		return Credentials{}, ErrNoHTTPClient
+	}
 	if err := p.Validate(); err != nil {
 		return Credentials{}, err
 	}
@@ -148,9 +151,6 @@ func (c *Client) CreateSession(ctx context.Context, p Profile, cert Certificate)
 	}
 	if err := sign(req, body, p.Region(), cert, now()); err != nil {
 		return Credentials{}, err
-	}
-	if c.HTTP == nil {
-		return Credentials{}, ErrNoHTTPClient
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {

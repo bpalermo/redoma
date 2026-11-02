@@ -29,9 +29,10 @@ To use it:
    `AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1:9911/v1/credentials`.
 
 `redoma xds` makes two directories under its own: `/run/redoma/xds/aws`
-(0750) and `/run/redoma/xds/tunnel` (0770). Its unit is unchanged: it still
-has no network, and reaches Roles Anywhere through a tunnel the host Envoy
-serves, with TLS of its own.
+(0750) and `/run/redoma/xds/tunnel` (0770). Its unit's sandbox settings
+are unchanged (only the unit's comments are): it still has no network, and
+reaches Roles Anywhere through a tunnel the host Envoy serves, with TLS of
+its own.
 
 ## 0.1.0
 

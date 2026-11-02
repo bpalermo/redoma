@@ -304,4 +304,8 @@ func TestCreateSessionNeedsAClient(t *testing.T) {
 	if _, err := (&Client{}).CreateSession(context.Background(), validProfile(), cert); !errors.Is(err, ErrNoHTTPClient) {
 		t.Fatalf("no client: %v, want ErrNoHTTPClient", err)
 	}
+	// Checked first, before anything is validated or signed.
+	if _, err := (&Client{}).CreateSession(context.Background(), Profile{}, Certificate{}); !errors.Is(err, ErrNoHTTPClient) {
+		t.Fatalf("no client, nothing else either: %v, want ErrNoHTTPClient", err)
+	}
 }

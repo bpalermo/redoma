@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -625,5 +626,112 @@ func TestSocketRetried(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("the socket was not opened again")
 		}
+	}
+}
+
+// levels counts the records logged at each level, and the messages.
+type levels struct {
+	mu   sync.Mutex
+	n    map[slog.Level]int
+	msgs []string
+}
+
+func (l *levels) Enabled(context.Context, slog.Level) bool { return true }
+func (l *levels) WithAttrs([]slog.Attr) slog.Handler       { return l }
+func (l *levels) WithGroup(string) slog.Handler            { return l }
+func (l *levels) Handle(_ context.Context, r slog.Record) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.n == nil {
+		l.n = map[slog.Level]int{}
+	}
+	l.n[r.Level]++
+	l.msgs = append(l.msgs, r.Message)
+	return nil
+}
+
+func (l *levels) count(level slog.Level) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.n[level]
+}
+
+// TestSocketRetryBackoff: a socket that keeps failing to open is tried
+// again after ListenRetry, doubling up to ListenRetryMax; the first failure
+// is an error, a new error a warning, the same one again only debug; and a
+// socket that opens at last says so.
+func TestSocketRetryBackoff(t *testing.T) {
+	log := &levels{}
+	s := &Service{Dir: sockettest.Dir(t), Sessions: newSessions(time.Hour), Log: slog.New(log)}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	s.ListenRetry, s.ListenRetryMax = 10*time.Millisecond, 40*time.Millisecond
+	var mu sync.Mutex
+	var at []time.Time
+	failWith := errors.New("address in use")
+	open := false
+	s.listen = func(string) (net.Listener, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		at = append(at, time.Now())
+		if open {
+			return net.Listen("tcp", "127.0.0.1:0")
+		}
+		return nil, failWith
+	}
+	chain, key := svid(t)
+	s.Set("a", testProfile(role), nil, chain, key)
+	time.Sleep(600 * time.Millisecond)
+
+	mu.Lock()
+	n := len(at)
+	var gaps []time.Duration
+	for i := 1; i < len(at); i++ {
+		gaps = append(gaps, at[i].Sub(at[i-1]))
+	}
+	failWith = errors.New("permission denied")
+	mu.Unlock()
+	// 0, 10, 30, 70, then every 40ms: about 15 in 600ms. A fixed 10ms is
+	// about 60; doubling with no cap, 6.
+	if n < 10 || n > 22 {
+		t.Errorf("%d attempts in 600ms, want about 15 (gaps %v)", n, gaps)
+	}
+	for i, g := range gaps {
+		if g < 8*time.Millisecond<<min(i, 2) {
+			t.Errorf("attempt %d came %s after the last: no backoff", i+2, g)
+		}
+	}
+	if e, w := log.count(slog.LevelError), log.count(slog.LevelWarn); e != 1 || w != 0 {
+		t.Errorf("%d errors and %d warnings for one failure repeated, want 1 and 0", e, w)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	if w := log.count(slog.LevelWarn); w != 1 {
+		t.Errorf("%d warnings after the error changed, want 1", w)
+	}
+	mu.Lock()
+	open = true
+	mu.Unlock()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		log.mu.Lock()
+		opened := slices.Contains(log.msgs, "the agent's AWS credentials socket opened after failing")
+		log.mu.Unlock()
+		if opened {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the socket did not open, or did not say so")
+		}
+	}
+	mu.Lock()
+	before := len(at)
+	mu.Unlock()
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(at) != before {
+		t.Errorf("%d more attempts after the socket opened", len(at)-before)
 	}
 }
