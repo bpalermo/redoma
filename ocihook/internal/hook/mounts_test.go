@@ -170,6 +170,16 @@ func TestCreateRuntimeChecksTheMounts(t *testing.T) {
 		"bind by options only":            {`[{"destination":"/x","source":"` + T("/run/redoma/xds") + `","options":["bind"]}]`, "reaches " + T("/run/redoma")},
 		"another file system":             {`[{"destination":"/x","type":"ext4","source":"/dev/sda1"}]`, `type "ext4"`},
 		"an overlay":                      {`[{"destination":"/x","type":"overlay","source":"overlay","options":["lowerdir=/run/redoma/xds"]}]`, `type "overlay"`},
+		// An idmapped mount lets the agent's ids own what root owns: never.
+		"an idmapped bind":         {`[{"destination":"/x","type":"bind","source":"` + T("/srv/redoma/work/a") + `","options":["rbind","ro","idmap"]}]`, "idmapped"},
+		"a ridmapped bind":         {`[{"destination":"/x","type":"bind","source":"` + T("/srv/redoma/work/a") + `","options":["rbind","ridmap"]}]`, "idmapped"},
+		"an idmap with mappings":   {`[{"destination":"/x","type":"bind","source":"` + T("/srv/redoma/work/a") + `","options":["rbind","idmap=uids=0-1000-1;gids=0-1000-1"]}]`, "idmapped"},
+		"a bind with uid mappings": {`[{"destination":"/x","type":"bind","source":"` + T("/srv/redoma/work/a") + `","options":["rbind"],"uidMappings":[{"containerID":0,"hostID":0,"size":1}]}]`, "idmapped"},
+		"a bind with gid mappings": {`[{"destination":"/x","type":"bind","source":"` + T("/srv/redoma/work/a") + `","options":["rbind"],"gidMappings":[{"containerID":0,"hostID":0,"size":1}]}]`, "idmapped"},
+		"an idmapped tmpfs":        {`[{"destination":"/x","type":"tmpfs","source":"tmpfs","options":["idmap"]}]`, "idmapped"},
+		// An empty mapping maps nothing: not an idmap.
+		"empty mappings":            {`[{"destination":"/x","type":"bind","source":"` + T("/srv/redoma/work/a") + `","options":["rbind"],"uidMappings":[],"gidMappings":null}]`, ""},
+		"an idmapped bind of /root": {`[{"destination":"/x","type":"bind","source":"/root","options":["rbind","idmap"]}]`, "idmapped"},
 	} {
 		expect(t, name, create(t, agentProcess, tc.mounts), tc.want)
 	}

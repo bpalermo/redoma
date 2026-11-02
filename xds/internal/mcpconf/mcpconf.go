@@ -90,14 +90,15 @@ type line struct {
 	key, value string
 }
 
-// trailingComment is a value with what reads like a trailing comment: a #
-// after a space or tab.
+// trailingComment is a value with what reads like a comment: one that
+// starts with #, or has a # after a space or tab.
 var trailingComment = regexp.MustCompile(`(^|[ \t])#`)
 
 // readLines reads a trusted file into its lines: blank lines and lines
 // starting with # skipped, `[section]` lines kept with an empty value. A
 // # is a comment only at the start of a line: a value that starts with #,
-// or has ` #` in it, is refused, not passed on with the comment. A missing file is nil lines and
+// or has ` #` in it, is refused, not passed on with the comment. A missing
+// file is nil lines and
 // fs.ErrNotExist.
 func (d Dir) readLines(path string) ([]line, error) {
 	f, err := d.open(path)
@@ -131,7 +132,7 @@ func (d Dir) readLines(path string) ([]line, error) {
 			return nil, fmt.Errorf("%s:%d: not `key = value`", path, i+1)
 		}
 		if trailingComment.MatchString(value) {
-			return nil, fmt.Errorf("%s:%d: a # after a space in the value; # starts a comment only at the start of a line", path, i+1)
+			return nil, fmt.Errorf("%s:%d: a value that starts with #, or has a # after a space; # starts a comment only at the start of a line", path, i+1)
 		}
 		lines = append(lines, line{n: i + 1, key: key, value: value})
 	}

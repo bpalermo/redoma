@@ -227,8 +227,9 @@ func (s *Source) Run(ctx context.Context, emit func(agent.Event)) error {
 	}
 }
 
-// load reads StateFile, keeping the registrations whose namespace is still
-// the recorded one.
+// load reads the agents' registrations from StateFile and the upstreams'
+// from upstreamStateFile, keeping those whose namespace is still the
+// recorded one; a record in the wrong file is ignored.
 func (s *Source) load() map[string]registration {
 	regs := map[string]registration{}
 	for _, file := range []string{s.StateFile, s.upstreamStateFile()} {
