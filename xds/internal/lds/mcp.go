@@ -61,9 +61,10 @@ type MCPRoute struct {
 //   - the MCP filter parses the JSON-RPC body (REJECT_NO_MCP, BODY,
 //     duplicate keys refused) and extracts method, params.name and the
 //     arguments the allowlists constrain;
-//   - RBAC allows, per upstream path, the lifecycle methods, GET and
-//     DELETE of the session, and tools/call of the agent's tools under their
-//     constraints; nothing else;
+//   - RBAC allows, per upstream path (the whole :path, so no query
+//     string), the lifecycle methods, GET and DELETE of the session without
+//     a body, and tools/call of the agent's tools under their constraints;
+//     nothing else;
 //   - the router sends each path to its upstream's cluster, a route_for
 //     tool to its own upstream's (targets, the upstreams that are up; a
 //     target that is not gets a 503).
@@ -179,13 +180,18 @@ func mcpRBAC(routes []MCPRoute) *rbacv3.RBAC {
 			continue
 		}
 		allowed := []*rbacconfigv3.Permission{
-			orPerm(methodPerm("GET"), methodPerm("DELETE")),
+			andPerm(orPerm(methodPerm("GET"), methodPerm("DELETE")), noBodyPerm()),
 		}
 		for _, m := range lifecycle {
 			allowed = append(allowed, metadataPerm(m, "method"))
 		}
 		for _, set := range r.Allowlist.Sets {
 			for _, t := range set.Tools {
+				if len(t.Constraints) == 0 && !t.Unconstrained {
+					// Empty constraints never mean any arguments: only
+					// tool_unconstrained says that.
+					continue
+				}
 				allowed = append(allowed, toolPerm(t))
 			}
 		}
@@ -250,16 +256,40 @@ func metadataMatch(m *matcherv3.StringMatcher, path ...string) *rbacconfigv3.Per
 }
 
 func methodPerm(method string) *rbacconfigv3.Permission {
-	return &rbacconfigv3.Permission{Rule: &rbacconfigv3.Permission_Header{Header: &routev3.HeaderMatcher{
+	return headerPerm(&routev3.HeaderMatcher{
 		Name:                 ":method",
 		HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{StringMatch: exact(method)},
-	}}}
+	})
 }
 
+// pathPerm matches the request's :path exactly. Unlike url_path, :path
+// holds the query string, so a request with any query matches no
+// permission: MCP needs none, and the route would pass one on to the
+// server.
 func pathPerm(path string) *rbacconfigv3.Permission {
-	return &rbacconfigv3.Permission{Rule: &rbacconfigv3.Permission_UrlPath{UrlPath: &matcherv3.PathMatcher{
-		Rule: &matcherv3.PathMatcher_Path{Path: exact(path)},
-	}}}
+	return headerPerm(&routev3.HeaderMatcher{
+		Name:                 ":path",
+		HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{StringMatch: exact(path)},
+	})
+}
+
+// noBodyPerm matches a request that announces no body: content-length
+// absent or 0, and no transfer-encoding. The MCP filter passes GET and
+// DELETE before reading a body, so a body on them would reach the server
+// unparsed. (HTTP/2 can send DATA with neither header; that a server
+// ignores such a body is the upgrade checklist's.)
+func noBodyPerm() *rbacconfigv3.Permission {
+	return andPerm(
+		orPerm(
+			headerPerm(&routev3.HeaderMatcher{Name: "content-length", HeaderMatchSpecifier: &routev3.HeaderMatcher_PresentMatch{PresentMatch: false}}),
+			headerPerm(&routev3.HeaderMatcher{Name: "content-length", HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{StringMatch: exact("0")}}),
+		),
+		headerPerm(&routev3.HeaderMatcher{Name: "transfer-encoding", HeaderMatchSpecifier: &routev3.HeaderMatcher_PresentMatch{PresentMatch: false}}),
+	)
+}
+
+func headerPerm(h *routev3.HeaderMatcher) *rbacconfigv3.Permission {
+	return &rbacconfigv3.Permission{Rule: &rbacconfigv3.Permission_Header{Header: h}}
 }
 
 // mcpRoutes routes each upstream's path to its cluster, a route_for tool to
@@ -329,11 +359,21 @@ func metadataMatcher(value string, path ...string) *matcherv3.MetadataMatcher {
 	return metadataPerm(value, path...).GetSourcedMetadata().GetMetadataMatcher()
 }
 
+// mcpAccessLog is the audit record (docs/mcp-upstreams.md, "Audit"): on
+// top of the common fields, the request id, the cluster the request
+// reached (which instance, under route_for), the MCP method and tool, the
+// MCP filter's whole metadata (every extracted argument), and the response
+// code's details, which tell RBAC's 403 (rbac_access_denied_...) from the
+// server's.
 func mcpAccessLog(repo string) []*accesslogv3.AccessLog {
 	return accessLogFields(map[string]string{
 		"agent": repo, "listener": "mcp",
-		"mcp_method": "%DYNAMIC_METADATA(" + mcpFilter + ":method)%",
-		"mcp_tool":   "%DYNAMIC_METADATA(" + mcpFilter + ":params:name)%",
+		"request_id":   "%REQ(X-REQUEST-ID)%",
+		"cluster":      "%UPSTREAM_CLUSTER%",
+		"code_details": "%RESPONSE_CODE_DETAILS%",
+		"mcp_method":   "%DYNAMIC_METADATA(" + mcpFilter + ":method)%",
+		"mcp_tool":     "%DYNAMIC_METADATA(" + mcpFilter + ":params:name)%",
+		"mcp":          "%DYNAMIC_METADATA(" + mcpFilter + ")%",
 	})
 }
 

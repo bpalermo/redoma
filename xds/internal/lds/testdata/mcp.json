@@ -227,8 +227,9 @@
               "and_rules": {
                "rules": [
                 {
-                 "url_path": {
-                  "path": {
+                 "header": {
+                  "name": ":path",
+                  "string_match": {
                    "exact": "/mcp/docs"
                   }
                  }
@@ -237,22 +238,60 @@
                  "or_rules": {
                   "rules": [
                    {
-                    "or_rules": {
+                    "and_rules": {
                      "rules": [
                       {
-                       "header": {
-                        "name": ":method",
-                        "string_match": {
-                         "exact": "GET"
-                        }
+                       "or_rules": {
+                        "rules": [
+                         {
+                          "header": {
+                           "name": ":method",
+                           "string_match": {
+                            "exact": "GET"
+                           }
+                          }
+                         },
+                         {
+                          "header": {
+                           "name": ":method",
+                           "string_match": {
+                            "exact": "DELETE"
+                           }
+                          }
+                         }
+                        ]
                        }
                       },
                       {
-                       "header": {
-                        "name": ":method",
-                        "string_match": {
-                         "exact": "DELETE"
-                        }
+                       "and_rules": {
+                        "rules": [
+                         {
+                          "or_rules": {
+                           "rules": [
+                            {
+                             "header": {
+                              "name": "content-length",
+                              "present_match": false
+                             }
+                            },
+                            {
+                             "header": {
+                              "name": "content-length",
+                              "string_match": {
+                               "exact": "0"
+                              }
+                             }
+                            }
+                           ]
+                          }
+                         },
+                         {
+                          "header": {
+                           "name": "transfer-encoding",
+                           "present_match": false
+                          }
+                         }
+                        ]
                        }
                       }
                      ]
@@ -462,8 +501,9 @@
               "and_rules": {
                "rules": [
                 {
-                 "url_path": {
-                  "path": {
+                 "header": {
+                  "name": ":path",
+                  "string_match": {
                    "exact": "/mcp/grafana"
                   }
                  }
@@ -472,22 +512,60 @@
                  "or_rules": {
                   "rules": [
                    {
-                    "or_rules": {
+                    "and_rules": {
                      "rules": [
                       {
-                       "header": {
-                        "name": ":method",
-                        "string_match": {
-                         "exact": "GET"
-                        }
+                       "or_rules": {
+                        "rules": [
+                         {
+                          "header": {
+                           "name": ":method",
+                           "string_match": {
+                            "exact": "GET"
+                           }
+                          }
+                         },
+                         {
+                          "header": {
+                           "name": ":method",
+                           "string_match": {
+                            "exact": "DELETE"
+                           }
+                          }
+                         }
+                        ]
                        }
                       },
                       {
-                       "header": {
-                        "name": ":method",
-                        "string_match": {
-                         "exact": "DELETE"
-                        }
+                       "and_rules": {
+                        "rules": [
+                         {
+                          "or_rules": {
+                           "rules": [
+                            {
+                             "header": {
+                              "name": "content-length",
+                              "present_match": false
+                             }
+                            },
+                            {
+                             "header": {
+                              "name": "content-length",
+                              "string_match": {
+                               "exact": "0"
+                              }
+                             }
+                            }
+                           ]
+                          }
+                         },
+                         {
+                          "header": {
+                           "name": "transfer-encoding",
+                           "present_match": false
+                          }
+                         }
+                        ]
                        }
                       }
                      ]
@@ -812,14 +890,18 @@
            "authority": "%REQ(:AUTHORITY)%",
            "bytes_in": "%BYTES_RECEIVED%",
            "bytes_out": "%BYTES_SENT%",
+           "cluster": "%UPSTREAM_CLUSTER%",
            "code": "%RESPONSE_CODE%",
+           "code_details": "%RESPONSE_CODE_DETAILS%",
            "duration_ms": "%DURATION%",
            "flags": "%RESPONSE_FLAGS%",
            "listener": "mcp",
+           "mcp": "%DYNAMIC_METADATA(envoy.filters.http.mcp)%",
            "mcp_method": "%DYNAMIC_METADATA(envoy.filters.http.mcp:method)%",
            "mcp_tool": "%DYNAMIC_METADATA(envoy.filters.http.mcp:params:name)%",
            "method": "%REQ(:METHOD)%",
            "path": "%REQ(:PATH)%",
+           "request_id": "%REQ(X-REQUEST-ID)%",
            "start": "%START_TIME%"
           }
          }

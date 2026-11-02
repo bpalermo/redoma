@@ -8,6 +8,7 @@ import (
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	rbacconfigv3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	streamv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/stream/v3"
 	headermutationv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	mcpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/mcp/v3"
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
@@ -50,11 +51,11 @@ func testRoutes() []MCPRoute {
 					constraint("arguments.datasourceUid", "loki-main", false),
 					constraint("arguments.logql", "{app=", true),
 				}},
-				{Name: "search_dashboards"},
+				{Name: "search_dashboards", Unconstrained: true},
 			}},
 		}}},
 		{Upstream: docsUp, Allowlist: &mcpconf.Allowlist{Sets: []mcpconf.Set{{Tools: []mcpconf.Tool{
-			{Name: "read_page"}, {Name: "publish", Constraints: []mcpconf.Constraint{constraint("arguments.space", "agents/", true)}},
+			{Name: "read_page", Unconstrained: true}, {Name: "publish", Constraints: []mcpconf.Constraint{constraint("arguments.space", "agents/", true)}},
 		}}}}},
 	}
 }
@@ -169,11 +170,25 @@ func TestMCPListenerStripsHeaders(t *testing.T) {
 	}
 }
 
-// request is what Envoy's RBAC sees of an MCP request: the path, the
-// method and the MCP filter's metadata (nested, as the filter writes it).
+// request is what Envoy's RBAC sees of an MCP request: the :path (the
+// query string included), the method, other headers, and the MCP filter's
+// metadata (nested, as the filter writes it).
 type request struct {
 	path, httpMethod string
+	headers          map[string]string
 	meta             map[string]any
+}
+
+// header is req's header name as RBAC reads it, and whether it is present.
+func (req request) header(name string) (string, bool) {
+	switch name {
+	case ":path":
+		return req.path, true
+	case ":method":
+		return req.httpMethod, true
+	}
+	v, ok := req.headers[name]
+	return v, ok
 }
 
 func call(path, tool string, args map[string]any) request {
@@ -223,13 +238,16 @@ func permMatches(t *testing.T, p *rbacconfigv3.Permission, req request) bool {
 			}
 		}
 		return false
-	case p.GetUrlPath() != nil:
-		return stringMatches(t, p.GetUrlPath().GetPath(), req.path)
 	case p.GetHeader() != nil:
-		if p.GetHeader().GetName() != ":method" {
-			t.Fatalf("header %q", p.GetHeader().GetName())
+		h := p.GetHeader()
+		if h.GetInvertMatch() || h.GetTreatMissingHeaderAsEmpty() {
+			t.Fatalf("header matcher %v not modelled", h)
 		}
-		return stringMatches(t, p.GetHeader().GetStringMatch(), req.httpMethod)
+		v, present := req.header(h.GetName())
+		if _, ok := h.GetHeaderMatchSpecifier().(*routev3.HeaderMatcher_PresentMatch); ok {
+			return present == h.GetPresentMatch()
+		}
+		return present && stringMatches(t, h.GetStringMatch(), v)
 	case p.GetSourcedMetadata() != nil:
 		m := p.GetSourcedMetadata().GetMetadataMatcher()
 		if m.GetFilter() != mcpFilter || p.GetSourcedMetadata().GetMetadataSource() != rbacconfigv3.MetadataSource_DYNAMIC {
@@ -307,6 +325,15 @@ func TestMCPListenerRBAC(t *testing.T) {
 		{"no method (a response)", request{path: g, httpMethod: "POST", meta: map[string]any{}}, false},
 		{"GET of the session", request{path: g, httpMethod: "GET"}, true},
 		{"DELETE of the session", request{path: d, httpMethod: "DELETE"}, true},
+		{"DELETE with an empty body", request{path: d, httpMethod: "DELETE", headers: map[string]string{"content-length": "0"}}, true},
+		{"GET with a body", request{path: g, httpMethod: "GET", headers: map[string]string{"content-length": "64"}}, false},
+		{"GET with a chunked body", request{path: g, httpMethod: "GET", headers: map[string]string{"transfer-encoding": "chunked"}}, false},
+		{"DELETE with a body", request{path: d, httpMethod: "DELETE", headers: map[string]string{"content-length": "64"}}, false},
+		{"DELETE chunked, length 0", request{path: d, httpMethod: "DELETE", headers: map[string]string{"content-length": "0", "transfer-encoding": "chunked"}}, false},
+		{"GET with a query", request{path: g + "?x=y", httpMethod: "GET"}, false},
+		{"a query string", call(g+"?x=y", "search_dashboards", nil), false},
+		{"an empty query", call(g+"?", "search_dashboards", nil), false},
+		{"a fragment", call(g+"#x", "search_dashboards", nil), false},
 		{"PUT", request{path: g, httpMethod: "PUT"}, false},
 		{"another path", lifecycleCall("/mcp/nobody", "initialize"), false},
 		{"a sub-path", call(g+"/x", "search_dashboards", nil), false},
@@ -314,6 +341,63 @@ func TestMCPListenerRBAC(t *testing.T) {
 	} {
 		if got := allows(t, r, tc.req); got != tc.want {
 			t.Errorf("%s: allowed = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Empty constraints never mean any arguments: a tool with none that is
+// not Unconstrained (no tool_unconstrained line) gets no permission at
+// all, while an Unconstrained one is allowed with any.
+func TestMCPListenerEmptyConstraintsAllowNothing(t *testing.T) {
+	g := MCPPath("grafana")
+	routes := []MCPRoute{{Upstream: grafanaUp, Allowlist: &mcpconf.Allowlist{Sets: []mcpconf.Set{{Tools: []mcpconf.Tool{
+		{Name: "bare"},
+		{Name: "bare_empty", Constraints: []mcpconf.Constraint{}},
+		{Name: "open", Unconstrained: true},
+	}}}}}}
+	_, _, _, _, r := mcpParts(t, MCPListener("/n", "a", routes, nil, Strip{}))
+	for _, args := range []map[string]any{nil, {}, {"repo": "any"}} {
+		for _, tool := range []string{"bare", "bare_empty"} {
+			if allows(t, r, call(g, tool, args)) {
+				t.Errorf("%s with %v allowed", tool, args)
+			}
+		}
+		if !allows(t, r, call(g, "open", args)) {
+			t.Errorf("open with %v refused", args)
+		}
+	}
+}
+
+// redoma's listener ports are among those an upstream's port may not be.
+func TestReservedPortsHoldTheListeners(t *testing.T) {
+	for _, p := range []uint32{EgressPort, ModelPort, RelayPort, MCPPort, DefaultAWSPort} {
+		if !slices.Contains(mcpconf.ReservedPorts, p) {
+			t.Errorf("port %d is not in mcpconf.ReservedPorts %v", p, mcpconf.ReservedPorts)
+		}
+	}
+}
+
+// The access log is the audit record: it has every field the doc's
+// "Audit" names.
+func TestMCPListenerAccessLog(t *testing.T) {
+	h, _, _, _, _ := mcpParts(t, testMCPListener())
+	s := &streamv3.StdoutAccessLog{}
+	if err := h.GetAccessLog()[0].GetTypedConfig().UnmarshalTo(s); err != nil {
+		t.Fatal(err)
+	}
+	fields := s.GetLogFormat().GetJsonFormat().GetFields()
+	for k, want := range map[string]string{
+		"agent": "a", "listener": "mcp", "method": "%REQ(:METHOD)%", "path": "%REQ(:PATH)%",
+		"request_id": "%REQ(X-REQUEST-ID)%", "cluster": "%UPSTREAM_CLUSTER%",
+		"code": "%RESPONSE_CODE%", "code_details": "%RESPONSE_CODE_DETAILS%",
+		"mcp_method": "%DYNAMIC_METADATA(envoy.filters.http.mcp:method)%",
+		"mcp_tool":   "%DYNAMIC_METADATA(envoy.filters.http.mcp:params:name)%",
+		"mcp":        "%DYNAMIC_METADATA(envoy.filters.http.mcp)%",
+		"flags":      "%RESPONSE_FLAGS%", "duration_ms": "%DURATION%",
+		"bytes_in": "%BYTES_RECEIVED%", "bytes_out": "%BYTES_SENT%",
+	} {
+		if got := fields[k].GetStringValue(); got != want {
+			t.Errorf("access log %s = %q, want %q", k, got, want)
 		}
 	}
 }
