@@ -1,6 +1,7 @@
 package xds
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/bpalermo/redoma/common/config"
 	"github.com/bpalermo/redoma/xds/internal/hostcheck"
+	"github.com/bpalermo/redoma/xds/internal/lds"
 )
 
 // TestCheckRelayID: only spiffe://<td>/host/relay, exactly as go-spiffe
@@ -190,5 +192,34 @@ func TestBrokerChecks(t *testing.T) {
 	}
 	if err := brokerChecks(f, acc); err == nil || !strings.Contains(err.Error(), "grants others") {
 		t.Errorf("a Workload API directory open to others: %v", err)
+	}
+}
+
+// TestAWSCredentials: the service starts with its sockets' directory 0750
+// and the tunnels' 0770, the group Envoy creates the tunnels' sockets
+// through; a port that is not one is refused.
+func TestAWSCredentials(t *testing.T) {
+	dir := t.TempDir()
+	f := flags{awsSocketDir: filepath.Join(dir, "aws"), awsPort: 9911}
+	f.cfg.AWSTunnelDir = filepath.Join(dir, "tunnel")
+	s, err := awsCredentials(f, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for path, want := range map[string]os.FileMode{f.awsSocketDir: 0o750, f.cfg.AWSTunnelDir: 0o770} {
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !fi.IsDir() || fi.Mode().Perm() != want {
+			t.Errorf("%s: %v, want a directory %v", path, fi.Mode(), want)
+		}
+	}
+	for _, port := range []uint32{0, 65536, lds.ModelPort, lds.EgressPort, lds.RelayPort} {
+		f.awsPort = port
+		if _, err := awsCredentials(f, slog.New(slog.DiscardHandler)); err == nil {
+			t.Errorf("port %d accepted", port)
+		}
 	}
 }

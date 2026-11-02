@@ -1,0 +1,30 @@
+{
+ "resources": [
+  {
+   "@type": "type.googleapis.com/envoy.config.cluster.v3.Cluster",
+   "name": "tunnel_rolesanywhere_us-east-1_amazonaws_com",
+   "type": "LOGICAL_DNS",
+   "dns_lookup_family": "V4_PREFERRED",
+   "connect_timeout": "5s",
+   "load_assignment": {
+    "cluster_name": "tunnel_rolesanywhere_us-east-1_amazonaws_com",
+    "endpoints": [
+     {
+      "lb_endpoints": [
+       {
+        "endpoint": {
+         "address": {
+          "socket_address": {
+           "address": "rolesanywhere.us-east-1.amazonaws.com",
+           "port_value": 443
+          }
+         }
+        }
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

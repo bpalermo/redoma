@@ -4,6 +4,35 @@ Changes that a host running redoma must act on, newest first. Until 1.0, a
 release may break what an earlier one set up; each such change is listed
 here with what to do about it.
 
+## Unreleased
+
+### New: AWS credentials for the agents that opt in
+
+`redoma xds` serves an agent with `/etc/redoma/aws/<name>.conf` AWS session
+credentials from IAM Roles Anywhere, for its SVID, on
+`http://127.0.0.1:9911/v1/credentials` in its namespace (README.md, "AWS
+credentials"). Nothing changes for an agent without the file, nor for a
+host where no agent has one.
+
+To use it:
+
+1. Create the trust anchor (SPIRE's CA), the profile and the role in AWS,
+   and write the agent's file: `trust_anchor_arn =
+   arn:<partition>:rolesanywhere:<region>:<account>:trust-anchor/<id>`,
+   `profile_arn = arn:<partition>:rolesanywhere:<region>:<account>:profile/<id>`
+   and `role_arn = arn:<partition>:iam::<account>:role/<name>`.
+2. Let the host's Envoy reach `rolesanywhere.<region>.amazonaws.com:443`
+   (`.amazonaws.com.cn` in the aws-cn partition) and create sockets in
+   `/run/redoma/xds/tunnel`: an Envoy in a container mounts
+   `/run/redoma/xds` writable, not read-only.
+3. Run the agent's container with
+   `AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1:9911/v1/credentials`.
+
+`redoma xds` makes two directories under its own: `/run/redoma/xds/aws`
+(0750) and `/run/redoma/xds/tunnel` (0770). Its unit is unchanged: it still
+has no network, and reaches Roles Anywhere through a tunnel the host Envoy
+serves, with TLS of its own.
+
 ## 0.1.0
 
 The first release. What a host acts on depends on the release candidate it

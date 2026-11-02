@@ -123,8 +123,18 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
     every agent's egress listener. `_default` can never be an agent's name
     (`allowlist.ValidName` refuses the underscore; a test holds that);
   - `modelauth`: how the model listeners inject the credential;
-  - `lds`: an agent's listeners, model and egress, and its relay listener;
-  - `cds`: an agent's relay cluster;
+  - `rolesanywhere`: IAM Roles Anywhere's CreateSession signed with an
+    SVID held in memory, the ARNs' validation, and `Tunnels`, the HTTP
+    client that reaches the endpoints through the host Envoy's tunnels;
+    `rolesanywheretest` is a fake endpoint that verifies the signature.
+    Test ARNs are composed from parts by `rolesanywheretest.ARN`, with AWS's
+    documentation account and made-up ids: no ARN literal anywhere;
+  - `awscreds`: an agent's AWS settings (`<etc>/aws/<name>.conf`) and the
+    service that serves the opted-in agents' session credentials, one unix
+    socket per agent;
+  - `lds`: an agent's listeners, model and egress, its relay listener and
+    its AWS credentials listener, and the tunnels to Roles Anywhere;
+  - `cds`: an agent's relay and AWS credentials clusters, and the tunnels';
   - `identity`: the Delegated Identity API client and the Broker API's
     (X.509 SVIDs, the bundle, JWT SVIDs), `Workload`, redoma xds's own SVID
     in Broker mode, and `identitytest`, the Delegated API's fake;
@@ -294,6 +304,8 @@ refused), on `/run/redoma/xds/xds.sock`, to any node (there is one client):
 | Listener | `agent_<name>_model`, `agent_<name>_egress` | per running agent, 127.0.0.1:8080 and 127.0.0.1:3128 in its Source's namespace |
 | Listener | `agent_<name>_relay` | per running agent, 127.0.0.1:7070 in the same namespace, unless `--relay-socket` is empty |
 | Cluster | `agent_<name>_relay` | per running agent whose SVID and the bundle are in the snapshot, with a relay |
+| Listener, cluster | `agent_<name>_aws` | per running agent with `<etc>/aws/<name>.conf`: 127.0.0.1:`--aws-credentials-port` in its namespace, to its socket in `--aws-socket-dir` |
+| Listener, cluster | `tunnel_<host>` | per Roles Anywhere endpoint a running agent's valid settings name: a unix socket in `--aws-tunnel-dir`, TCP to `<host>:443` |
 | Secret | `agent/<name>` | the agent's X.509 SVID, `tls_certificate` (chain and PKCS#8 key, PEM inline) |
 | Secret | `spiffe://<td>` | the trust domain's bundle, `validation_context.trusted_ca` |
 

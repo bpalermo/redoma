@@ -1,10 +1,10 @@
 // Package controlplane keeps the host Envoy's xDS snapshot in step with the
-// running agents: their listeners (LDS), their relay clusters (CDS) and
-// their identities (SDS).
+// running agents: their listeners (LDS), their relay and AWS credentials
+// clusters (CDS) and their identities (SDS).
 //
 // One goroutine (Run) owns all state. The agent.Source and the identity
 // subscriptions send it their changes on a channel, and it re-reads the
-// egress allowlists and the model auth mode on a timer, so nothing is shared
+// egress allowlists, the AWS settings and the model auth mode on a timer, so nothing is shared
 // and nothing is locked. Each change that alters what Envoy would see is
 // published as a new snapshot.
 package controlplane
@@ -25,11 +25,13 @@ import (
 	"github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 
 	"github.com/bpalermo/redoma/xds/internal/agent"
+	"github.com/bpalermo/redoma/xds/internal/awscreds"
 	"github.com/bpalermo/redoma/xds/internal/cds"
 	"github.com/bpalermo/redoma/xds/internal/egress"
 	"github.com/bpalermo/redoma/xds/internal/identity"
 	"github.com/bpalermo/redoma/xds/internal/lds"
 	"github.com/bpalermo/redoma/xds/internal/modelauth"
+	"github.com/bpalermo/redoma/xds/internal/rolesanywhere"
 )
 
 // NodeKey is the snapshot cache's one key: every node that connects is the
@@ -55,9 +57,21 @@ type Identity interface {
 	WatchX509Bundle(ctx context.Context, update func([]byte))
 }
 
+// AWS serves the agents' AWS credentials (awscreds.Service).
+type AWS interface {
+	// Set records an opted-in agent's profile, or its file's error, and its
+	// SVID (nil until there is one); a nil profile and error removes it.
+	Set(id string, p *rolesanywhere.Profile, err error, chainPEM, keyPEM []byte)
+	// Remove forgets a stopped agent.
+	Remove(id string)
+	// Socket is the agent's socket, its AWS cluster's endpoint.
+	Socket(id string) string
+}
+
 // Config is what the control plane reads besides its Source.
 type Config struct {
-	// EtcDir has egress/<id>.txt and model-auth (/etc/redoma).
+	// EtcDir has egress/<id>.txt, aws/<id>.conf and model-auth
+	// (/etc/redoma).
 	EtcDir string
 	// TrustDomain is the agents' SPIFFE trust domain.
 	TrustDomain string
@@ -88,6 +102,14 @@ type Config struct {
 	// agent's process through the Podman API, which waits for the
 	// container's start, held by the hook until then.
 	SVIDAfterBound bool
+	// AWS, if set, gives every agent with an aws/<id>.conf a fourth
+	// listener, 127.0.0.1:AWSPort, and a cluster to its socket of AWS, which
+	// is told the agent's profile and SVID. Each Roles Anywhere endpoint the
+	// valid settings name gets a tunnel (lds.TunnelListener), its socket in
+	// AWSTunnelDir: no setting, no tunnel.
+	AWS          AWS
+	AWSPort      uint32
+	AWSTunnelDir string
 }
 
 type running struct {
@@ -95,8 +117,12 @@ type running struct {
 	hosts     []string
 	egressErr string
 	svid      *identity.X509SVID
-	gen       uint64
-	cancel    context.CancelFunc
+	// aws is the agent's AWS profile, awsErr its file's error: neither set,
+	// the agent has not opted in.
+	aws    *rolesanywhere.Profile
+	awsErr string
+	gen    uint64
+	cancel context.CancelFunc
 	// sub is the context of its identity subscription, and watching
 	// whether that has started (see Config.SVIDAfterBound).
 	sub      context.Context
@@ -260,6 +286,7 @@ func (c *Controller) rescan(ctx context.Context) {
 	c.readModelAuth()
 	for _, a := range c.agents {
 		c.readEgress(a)
+		c.readAWS(a)
 	}
 	c.rebindWaiting(ctx)
 }
@@ -275,6 +302,9 @@ func (c *Controller) send(ctx context.Context, ev event) {
 func (c *Controller) stop(a *running) {
 	a.cancel()
 	delete(c.agents, a.agent.ID)
+	if c.cfg.AWS != nil {
+		c.cfg.AWS.Remove(a.agent.ID)
+	}
 	// The next snapshot, which publish sets before Run takes anything else,
 	// is the one without this agent's listeners.
 	c.removedIn[a.agent.Netns] = &removal{version: c.version + 1, since: time.Now(), held: a.agent.NetnsID}
@@ -297,6 +327,7 @@ func (c *Controller) start(ctx context.Context, a agent.Agent) {
 	c.dirty = true
 	c.log.Info("agent running", "agent", a.ID, "netns", a.Netns)
 	c.readEgress(r)
+	c.readAWS(r)
 	if !waited || !c.cfg.SVIDAfterBound {
 		c.watch(r)
 	}
@@ -336,6 +367,68 @@ func (c *Controller) readEgress(a *running) {
 	}
 }
 
+// readAWS re-reads the agent's AWS settings and tells AWS when they
+// changed. A file that cannot be read or does not validate keeps the agent's
+// listener, whose requests get a 503 saying so, and never asks for a session
+// of a role the file does not name.
+func (c *Controller) readAWS(a *running) {
+	if c.cfg.AWS == nil {
+		return
+	}
+	p, err := awscreds.Read(c.cfg.EtcDir, a.agent.ID)
+	errText := ""
+	if err != nil {
+		p, errText = nil, err.Error()
+	}
+	if sameProfile(p, a.aws) && errText == a.awsErr {
+		return
+	}
+	// The listeners change with the opt-in, the tunnels with the endpoint.
+	if optedIn(p, errText) != optedIn(a.aws, a.awsErr) || host(p) != host(a.aws) {
+		c.dirty = true
+	}
+	a.aws, a.awsErr = p, errText
+	if err != nil {
+		c.log.Error("AWS settings unusable; the agent's credential requests get a 503", "agent", a.agent.ID, "err", err)
+	}
+	c.pushAWS(a)
+}
+
+// pushAWS tells AWS the agent's profile and SVID.
+func (c *Controller) pushAWS(a *running) {
+	if c.cfg.AWS == nil {
+		return
+	}
+	var err error
+	if a.awsErr != "" {
+		err = errors.New(a.awsErr)
+	}
+	var chain, key []byte
+	if a.svid != nil {
+		chain, key = a.svid.CertChainPEM, a.svid.KeyPEM
+	}
+	c.cfg.AWS.Set(a.agent.ID, a.aws, err, chain, key)
+}
+
+// host is the endpoint p's sessions are asked of; empty without p.
+func host(p *rolesanywhere.Profile) string {
+	if p == nil {
+		return ""
+	}
+	return p.Host()
+}
+
+func optedIn(p *rolesanywhere.Profile, errText string) bool {
+	return p != nil || errText != ""
+}
+
+func sameProfile(a, b *rolesanywhere.Profile) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
 // readModelAuth re-reads the mode. One that cannot be read or is not known
 // leaves every model listener with no credential (the API answers 401) until
 // it is fixed: an error never sends the credential in a header it was not
@@ -368,6 +461,9 @@ func (c *Controller) setSVID(id string, gen uint64, s *identity.X509SVID) {
 	}
 	a.svid = s
 	c.dirty = true
+	if optedIn(a.aws, a.awsErr) {
+		c.pushAWS(a)
+	}
 	if s == nil {
 		c.log.Warn("SPIRE has no SVID for the agent", "agent", id)
 		return
@@ -414,23 +510,49 @@ func (c *Controller) listeners() []types.Resource {
 		if c.cfg.Relay != nil {
 			out = append(out, lds.RelayListener(a.agent.Netns, id))
 		}
+		if c.cfg.AWS != nil && optedIn(a.aws, a.awsErr) {
+			out = append(out, lds.AWSListener(a.agent.Netns, id, c.cfg.AWSPort))
+		}
+	}
+	for _, host := range c.tunnels() {
+		out = append(out, lds.TunnelListener(host, rolesanywhere.TunnelSocket(c.cfg.AWSTunnelDir, host)))
 	}
 	return out
 }
 
-// clusters are the agents' relay clusters: an agent's once its SVID and the
-// bundle are in the snapshot, so that Envoy never warms a cluster waiting
-// for a secret that is not there.
-func (c *Controller) clusters() []types.Resource {
-	if c.cfg.Relay == nil || c.bundle == nil {
+// tunnels are the Roles Anywhere endpoints the running agents' valid AWS
+// settings name, sorted, each once.
+func (c *Controller) tunnels() []string {
+	if c.cfg.AWS == nil {
 		return nil
 	}
+	var hosts []string
+	for _, a := range c.agents {
+		if a.aws != nil && !slices.Contains(hosts, a.aws.Host()) {
+			hosts = append(hosts, a.aws.Host())
+		}
+	}
+	slices.Sort(hosts)
+	return hosts
+}
+
+// clusters are the agents' relay clusters, an agent's once its SVID and the
+// bundle are in the snapshot, so that Envoy never warms a cluster waiting
+// for a secret that is not there; the AWS clusters of the agents that
+// opted in, which need no secret; and the tunnels' (tunnels).
+func (c *Controller) clusters() []types.Resource {
 	var out []types.Resource
 	for _, id := range slices.Sorted(maps.Keys(c.agents)) {
-		if c.agents[id].svid == nil {
-			continue
+		a := c.agents[id]
+		if c.cfg.Relay != nil && c.bundle != nil && a.svid != nil {
+			out = append(out, cds.RelayCluster(id, *c.cfg.Relay, SecretName(id), BundleSecretName(c.cfg.TrustDomain)))
 		}
-		out = append(out, cds.RelayCluster(id, *c.cfg.Relay, SecretName(id), BundleSecretName(c.cfg.TrustDomain)))
+		if c.cfg.AWS != nil && optedIn(a.aws, a.awsErr) {
+			out = append(out, cds.AWSCluster(id, c.cfg.AWS.Socket(id)))
+		}
+	}
+	for _, host := range c.tunnels() {
+		out = append(out, cds.TunnelCluster(host))
 	}
 	return out
 }

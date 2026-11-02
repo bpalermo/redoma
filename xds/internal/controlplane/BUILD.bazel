@@ -12,11 +12,13 @@ go_library(
     deps = [
         "//common/atomicfile",
         "//xds/internal/agent",
+        "//xds/internal/awscreds",
         "//xds/internal/cds",
         "//xds/internal/egress",
         "//xds/internal/identity",
         "//xds/internal/lds",
         "//xds/internal/modelauth",
+        "//xds/internal/rolesanywhere",
         "@com_github_envoyproxy_go_control_plane//pkg/cache/types",
         "@com_github_envoyproxy_go_control_plane//pkg/cache/v3:cache",
         "@com_github_envoyproxy_go_control_plane//pkg/resource/v3:resource",
@@ -28,6 +30,7 @@ go_library(
 go_test(
     name = "controlplane_test",
     srcs = [
+        "aws_test.go",
         "bound_test.go",
         "controlplane_test.go",
         "rebind_test.go",
@@ -43,6 +46,8 @@ go_test(
         "//xds/internal/identity/identitytest",
         "//xds/internal/lds",
         "//xds/internal/modelauth",
+        "//xds/internal/rolesanywhere",
+        "//xds/internal/rolesanywhere/rolesanywheretest",
         "@com_github_envoyproxy_go_control_plane//pkg/cache/v3:cache",
         "@com_github_envoyproxy_go_control_plane//pkg/resource/v3:resource",
         "@com_github_envoyproxy_go_control_plane_envoy//config/cluster/v3:cluster",

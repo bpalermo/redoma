@@ -28,12 +28,15 @@ import (
 	"github.com/bpalermo/redoma/common/version"
 	"github.com/bpalermo/redoma/xds/internal/activedir"
 	"github.com/bpalermo/redoma/xds/internal/agent"
+	"github.com/bpalermo/redoma/xds/internal/awscreds"
 	"github.com/bpalermo/redoma/xds/internal/cds"
 	"github.com/bpalermo/redoma/xds/internal/controlplane"
 	"github.com/bpalermo/redoma/xds/internal/fdstore"
 	"github.com/bpalermo/redoma/xds/internal/hooksource"
 	"github.com/bpalermo/redoma/xds/internal/hostcheck"
 	"github.com/bpalermo/redoma/xds/internal/identity"
+	"github.com/bpalermo/redoma/xds/internal/lds"
+	"github.com/bpalermo/redoma/xds/internal/rolesanywhere"
 	"github.com/bpalermo/redoma/xds/internal/server"
 )
 
@@ -50,6 +53,8 @@ type flags struct {
 	brokerSocket   string
 	workloadAPI    string
 	relay          cds.Relay
+	awsSocketDir   string
+	awsPort        uint32
 	// file is the settings file as read, before the flags: what the OCI
 	// hook reads too.
 	file config.Config
@@ -77,7 +82,7 @@ func command(f *flags) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&f.active.ActiveDir, "active-dir", "/run/redoma/active", "one empty file per agent a launcher runs, named after the agent")
 	fl.StringVar(&f.active.NetnsDir, "netns-dir", "/run/netns", "where the agents' network namespaces are: redoma-<name> for a launcher's agent, redoma-oci-<container> for the hook's")
-	fl.StringVar(&f.cfg.EtcDir, "etc-dir", "/etc/redoma", "holds egress/_default.txt and egress/<name>.txt, the agents' CONNECT allowlists, and model-auth")
+	fl.StringVar(&f.cfg.EtcDir, "etc-dir", "/etc/redoma", "holds egress/_default.txt and egress/<name>.txt, the agents' CONNECT allowlists, aws/<name>.conf, their AWS settings, and model-auth")
 	fl.StringVar(&f.cfg.TrustDomain, "trust-domain", "", "the agents' SPIFFE trust domain (default: the settings file's trust_domain)")
 	fl.DurationVar(&f.cfg.ScanInterval, "scan-interval", time.Second, "how often the running agents and their allowlists are read")
 	fl.DurationVar(&f.cfg.RebindTimeout, "rebind-timeout", 5*time.Second, "how long the removal of the listeners at a replaced namespace path waits for Envoy to report it applied before it is published again")
@@ -94,6 +99,9 @@ func command(f *flags) *cobra.Command {
 	fl.StringVar(&f.brokerSocket, "spire-broker-socket", "", "the SPIRE agent's Broker API socket, in Broker mode (default: the settings file's spire_broker_socket)")
 	fl.StringVar(&f.workloadAPI, "spire-workload-api", "", "the SPIRE agent's Workload API, where redoma xds gets its own SVID in Broker mode (default: the settings file's spire_workload_api)")
 	fl.StringVar(&f.relay.Socket, "relay-socket", "/run/redoma/relay/relay.sock", "the relay's agent socket, as the host Envoy sees it; every agent gets a relay listener (127.0.0.1:7070) and a cluster to it. Empty: no relay")
+	fl.StringVar(&f.awsSocketDir, "aws-socket-dir", "/run/redoma/xds/aws", "where each agent with AWS settings (<etc-dir>/aws/<name>.conf) gets its credentials socket. Empty: no AWS credentials for any agent")
+	fl.Uint32Var(&f.awsPort, "aws-credentials-port", lds.DefaultAWSPort, "the port of the AWS credentials listener, 127.0.0.1 in the namespace of each agent with AWS settings: AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1:<port>/v1/credentials")
+	fl.StringVar(&f.cfg.AWSTunnelDir, "aws-tunnel-dir", "/run/redoma/xds/tunnel", "where the host Envoy serves the tunnels to the Roles Anywhere endpoints the AWS settings name; made 0770 for redoma-sds")
 	fl.StringVar(&f.relay.ID, "relay-id", "", "the relay's SPIFFE ID, which Envoy requires of its certificate (default: spiffe://<trust domain>/host/relay)")
 	return cmd
 }
@@ -151,7 +159,16 @@ func run(ctx context.Context, f flags, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	ctl := controlplane.New(f.cfg, source, id, snapshots, log)
+	cfg := f.cfg
+	if f.awsSocketDir != "" {
+		aws, err := awsCredentials(f, log)
+		if err != nil {
+			return err
+		}
+		defer aws.Close()
+		cfg.AWS, cfg.AWSPort = aws, f.awsPort
+	}
+	ctl := controlplane.New(cfg, source, id, snapshots, log)
 
 	errc := make(chan error, 2)
 	go func() { errc <- ctl.Run(ctx) }()
@@ -165,6 +182,39 @@ func run(ctx context.Context, f flags, log *slog.Logger) error {
 		err = err2
 	}
 	return err
+}
+
+// awsCredentials starts the AWS credentials service: its sockets' directory
+// and the tunnels' (0770: the host Envoy, through its group, creates the
+// tunnels' sockets there), and a Roles Anywhere client that goes through
+// the tunnels, its TLS verified against the system roots.
+func awsCredentials(f flags, log *slog.Logger) (*awscreds.Service, error) {
+	if f.awsPort == 0 || f.awsPort > 65535 {
+		return nil, fmt.Errorf("--aws-credentials-port %d is not a port", f.awsPort)
+	}
+	// The agents' other listeners are bound on 127.0.0.1 of the same
+	// namespace: one port twice would fail every bind of the agent's.
+	for _, taken := range []uint32{lds.ModelPort, lds.EgressPort, lds.RelayPort} {
+		if f.awsPort == taken {
+			return nil, fmt.Errorf("--aws-credentials-port %d is another listener's (model %d, egress %d, relay %d)", f.awsPort, lds.ModelPort, lds.EgressPort, lds.RelayPort)
+		}
+	}
+	if err := os.MkdirAll(f.cfg.AWSTunnelDir, 0o770); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(f.cfg.AWSTunnelDir, 0o770); err != nil {
+		return nil, err
+	}
+	s := &awscreds.Service{
+		Dir:      f.awsSocketDir,
+		Sessions: &rolesanywhere.Client{HTTP: rolesanywhere.Tunnels{Dir: f.cfg.AWSTunnelDir}.Client()},
+		Log:      log,
+	}
+	if err := s.Start(); err != nil {
+		return nil, err
+	}
+	log.Info("AWS credentials for the agents with settings", "socket_dir", f.awsSocketDir, "tunnel_dir", f.cfg.AWSTunnelDir, "port", f.awsPort)
+	return s, nil
 }
 
 // checkRelayID refuses a --relay-id that is not exactly the relay's:
