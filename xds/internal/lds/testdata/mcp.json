@@ -27,6 +27,56 @@
           {
            "match": {
             "path": "/mcp/docs",
+            "headers": [
+             {
+              "name": ":method",
+              "string_match": {
+               "exact": "GET"
+              }
+             }
+            ]
+           },
+           "direct_response": {
+            "status": 405
+           },
+           "response_headers_to_add": [
+            {
+             "header": {
+              "key": "allow",
+              "value": "POST"
+             },
+             "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
+            }
+           ]
+          },
+          {
+           "match": {
+            "path": "/mcp/docs",
+            "headers": [
+             {
+              "name": ":method",
+              "string_match": {
+               "exact": "DELETE"
+              }
+             }
+            ]
+           },
+           "direct_response": {
+            "status": 405
+           },
+           "response_headers_to_add": [
+            {
+             "header": {
+              "key": "allow",
+              "value": "POST"
+             },
+             "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
+            }
+           ]
+          },
+          {
+           "match": {
+            "path": "/mcp/docs",
             "dynamic_metadata": [
              {
               "filter": "envoy.filters.http.mcp",
@@ -123,6 +173,56 @@
              "header": {
               "key": "x-mcp-tools",
               "value": "publish,read_page"
+             },
+             "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
+            }
+           ]
+          },
+          {
+           "match": {
+            "path": "/mcp/grafana",
+            "headers": [
+             {
+              "name": ":method",
+              "string_match": {
+               "exact": "GET"
+              }
+             }
+            ]
+           },
+           "direct_response": {
+            "status": 405
+           },
+           "response_headers_to_add": [
+            {
+             "header": {
+              "key": "allow",
+              "value": "POST"
+             },
+             "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
+            }
+           ]
+          },
+          {
+           "match": {
+            "path": "/mcp/grafana",
+            "headers": [
+             {
+              "name": ":method",
+              "string_match": {
+               "exact": "DELETE"
+              }
+             }
+            ]
+           },
+           "direct_response": {
+            "status": 405
+           },
+           "response_headers_to_add": [
+            {
+             "header": {
+              "key": "allow",
+              "value": "POST"
              },
              "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
             }
@@ -227,8 +327,9 @@
               "and_rules": {
                "rules": [
                 {
-                 "url_path": {
-                  "path": {
+                 "header": {
+                  "name": ":path",
+                  "string_match": {
                    "exact": "/mcp/docs"
                   }
                  }
@@ -462,8 +563,9 @@
               "and_rules": {
                "rules": [
                 {
-                 "url_path": {
-                  "path": {
+                 "header": {
+                  "name": ":path",
+                  "string_match": {
                    "exact": "/mcp/grafana"
                   }
                  }
@@ -812,14 +914,18 @@
            "authority": "%REQ(:AUTHORITY)%",
            "bytes_in": "%BYTES_RECEIVED%",
            "bytes_out": "%BYTES_SENT%",
+           "cluster": "%UPSTREAM_CLUSTER%",
            "code": "%RESPONSE_CODE%",
+           "code_details": "%RESPONSE_CODE_DETAILS%",
            "duration_ms": "%DURATION%",
            "flags": "%RESPONSE_FLAGS%",
            "listener": "mcp",
+           "mcp": "%DYNAMIC_METADATA(envoy.filters.http.mcp)%",
            "mcp_method": "%DYNAMIC_METADATA(envoy.filters.http.mcp:method)%",
            "mcp_tool": "%DYNAMIC_METADATA(envoy.filters.http.mcp:params:name)%",
            "method": "%REQ(:METHOD)%",
            "path": "%REQ(:PATH)%",
+           "request_id": "%REQ(X-REQUEST-ID)%",
            "start": "%START_TIME%"
           }
          }
