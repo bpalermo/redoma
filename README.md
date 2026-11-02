@@ -186,9 +186,10 @@ codeload.github.com
 *.githubusercontent.com
 ```
 
-Lines are lower case, fully qualified names (see below), with no port,
-scheme or trailing dot. Only a leading `*.` is a wildcard, and the domain
-after it needs two labels or more:
+Lines are lower case, with no port, scheme or trailing dot, and must be
+fully qualified names, which is the administrator's to ensure: redoma
+cannot check it (see below). A one-label name is refused. Only a leading
+`*.` is a wildcard, and the domain after it needs two labels or more:
 `*`, `*.com`, `*example.com` and `a.*.example.com` are refused. A line
 that is not valid, in either file, fails the agent's whole list: it may
 tunnel nowhere until the file is fixed, and `redoma xds` logs why. A
@@ -209,10 +210,10 @@ hosting provider's shared domain): that judgment is the administrator's.
 The egress DNS cache resolves every egress name as written, never with the
 host's DNS search domains appended: an exact host as much as a name below a
 wildcard's domain. So every entry must be a fully qualified name. A short
-name the host would complete through a search domain (`build`, meaning
-`build.corp.example.org`) resolves to nothing, and its tunnels fail; a name
-that does not resolve gets no tunnel rather than one to a name under a
-search domain.
+name the host would complete through a search domain (`build.corp`,
+meaning `build.corp.example.org`) passes the line check like any other, but
+resolves to nothing, and its tunnels fail; a name that does not resolve
+gets no tunnel rather than one to a name under a search domain.
 
 ### SPIRE
 
