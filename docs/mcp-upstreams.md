@@ -1051,12 +1051,24 @@ Under `bazel test //...`, with no network:
   and the cluster's source namespace;
 - the hook's registration of upstreams and its refusals;
 - the tool check against a fake upstream, under each `tool_check` value;
-- an integration test that runs Envoy and Grafana's MCP server, both
-  pinned by digest, with a fake Grafana behind it. It checks that the
-  configured token is the one Grafana sees, that `x-grafana-*` and
-  `authorization` from the agent never reach the server, that a tool
-  outside the agent's allowlist is refused, and that write tools are absent
-  under `--disable-write`.
+- an integration test (`xds/internal/mcpe2e`) that runs an agent's MCP
+  listener in Envoy v1.40.2 in front of Grafana's MCP server v2.2.0, both
+  the release binaries pinned by sha256 in `MODULE.bazel`, with a fake
+  Grafana behind it. It checks that the configured token is the one Grafana
+  sees whatever the agent sends, and a rotated token without a restart;
+  that `x-grafana-*` and `authorization` from the agent never reach the
+  server; that a tool outside the agent's allowlist, or outside a
+  constraint, or a method outside the lifecycle, is refused before the
+  server; that a body that is not MCP, or has a duplicate key, is refused;
+  that no write tool is registered under `--disable-write`; that only
+  `/mcp/grafana`, without a query, reaches the server, as its `/mcp`
+  (another path, an escaped slash, a query string are refused before it);
+  that GET and DELETE never reach it, a chunked body included; that a
+  case-variant `Name` next to `name` never runs the tool it names; and
+  that a case-variant argument key still reaches past a constraint (the
+  known limit above). The server runs with `--usage-stats=disabled`, so
+  nothing leaves loopback. It runs on the host's loopback, without
+  namespaces.
 
 ## Open questions
 

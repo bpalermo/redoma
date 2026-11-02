@@ -132,6 +132,11 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
     `_default.conf`), in `[set]`s that a call needs any one of. Root's
     files, strict: a bad line refuses the whole file. It names no upstream
     and no tool;
+  - `mcpe2e`: the MCP upstreams' integration test, an agent's MCP
+    listener in Envoy in front of Grafana's MCP server and a fake Grafana,
+    on the host's loopback. The two are release binaries `MODULE.bazel`
+    pins by sha256 (about 110 MB, fetched for the test alone); bump both
+    with the Envoy or server version the docs name;
   - `modelauth`: how the model listeners inject the credential;
   - `rolesanywhere`: IAM Roles Anywhere's CreateSession signed with an
     SVID held in memory, the ARNs' validation, and `Tunnels`, the HTTP
