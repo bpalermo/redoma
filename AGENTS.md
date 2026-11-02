@@ -119,8 +119,9 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
     `<etc>/egress/<name>.txt`, each host once. Both files take one host name
     or suffix wildcard (`*.example.com`, which lds passes to Envoy as its
     domain wildcard) per line and `#` comments; `lds/egress_test.go` holds
-    the CONNECT authorities the listener tunnels to Envoy's own virtual host
-    selection. A missing file adds nothing, and a bad line in
+    the CONNECT authorities the listener tunnels to a Go model of Envoy's
+    virtual host selection and authority parsing (not Envoy itself, which
+    no test runs). A missing file adds nothing, and a bad line in
     either fails the agent's whole list (see "An error never widens access").
     Both are re-read at every scan, so an edit to `_default.txt` republishes
     every agent's egress listener. `_default` can never be an agent's name

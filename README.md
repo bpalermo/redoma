@@ -198,7 +198,11 @@ Prefer exact hosts. A wildcard lets the agent pick any name below the
 domain, so it reaches everything anyone serves there: a wildcard over a
 shared service domain, such as a cloud provider's storage endpoints for a
 whole region, lets the agent reach other people's buckets too, including
-one it can write to and exfiltrate through. redoma refuses one-label
+one it can write to and exfiltrate through. It also reaches whatever
+address the zone's DNS returns for a name: Envoy runs on the host's
+network and nothing filters a tunnel by address after resolution, so a
+name that resolves to a loopback or private address reaches that address
+on the Envoy host's side, port 443. redoma refuses one-label
 domains but does not know which domains are public suffixes (`co.uk`, a
 hosting provider's shared domain): that judgment is the administrator's.
 The egress DNS cache resolves a name as written, never with the host's DNS
