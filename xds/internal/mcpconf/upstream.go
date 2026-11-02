@@ -92,8 +92,9 @@ const (
 
 var (
 	// image is a reference by digest, sha256, and no tag: a ':' only for
-	// the registry's port, in the first component.
-	image = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]+)?(/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)*@sha256:[0-9a-f]{64}$`)
+	// the registry's port, in a first component that a repository path
+	// follows (name:3@sha256:... is a tag, not a port).
+	image = regexp.MustCompile(`^([a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]+)?/)?[a-z0-9]([a-z0-9._-]*[a-z0-9])?(/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)*@sha256:[0-9a-f]{64}$`)
 	// envName is a variable's name.
 	envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	// secretName is a variable whose name says it holds a secret.
@@ -281,9 +282,10 @@ func (u *Upstream) add(key, value string, seen map[string]bool) error {
 func (u *Upstream) setEnv(value string, seen map[string]bool) error {
 	name, _, ok := strings.Cut(value, "=")
 	if !ok || !envName.MatchString(name) {
-		// The name alone: a credential written with a typo in its name
-		// must not reach the log.
-		return fmt.Errorf("env %q is not NAME=value", name)
+		// Nothing of the line: without its =, or with a typo in its name,
+		// a credential's value would be in what is quoted, and the error
+		// is logged at every scan. The line's number says which.
+		return errors.New("env is not NAME=value with NAME a variable's name")
 	}
 	if noVerify.MatchString(name) {
 		return fmt.Errorf("env %s turns the backend's TLS verification off", name)

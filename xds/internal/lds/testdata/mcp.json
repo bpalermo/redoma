@@ -932,6 +932,15 @@
         }
        }
       ],
+      "use_remote_address": true,
+      "internal_address_config": {
+       "cidr_ranges": [
+        {
+         "address_prefix": "0.0.0.0",
+         "prefix_len": 32
+        }
+       ]
+      },
       "normalize_path": true,
       "merge_slashes": true,
       "path_with_escaped_slashes_action": "REJECT_REQUEST"

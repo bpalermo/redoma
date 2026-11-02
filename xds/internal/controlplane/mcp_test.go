@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
@@ -185,6 +186,106 @@ func TestMCPWithoutTheDirectory(t *testing.T) {
 	for _, l := range v.listeners {
 		if strings.Contains(l, "mcp") || strings.HasPrefix(l, "upstream_") {
 			t.Errorf("listener %s without <etc>/mcp", l)
+		}
+	}
+	for _, c := range clusters(v) {
+		if strings.HasPrefix(c, "mcp_") {
+			t.Errorf("cluster %s without <etc>/mcp", c)
+		}
+	}
+}
+
+// upstreamEnv is a replaceEnv with grafana's file, whose upstream u the
+// test registers itself.
+func upstreamEnv(t *testing.T, cfg Config) (*replaceEnv, agent.Agent) {
+	t.Helper()
+	cfg.MCPOwner = uint32(os.Getuid())
+	r := newReplaceEnv(t, cfg)
+	p := filepath.Join(r.ctl.cfg.EtcDir, "mcp", "grafana.conf")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, p, grafanaConf)
+	u := agent.Agent{ID: "grafana", Netns: "/run/netns/redoma-mcp-u", NetnsID: agent.NetnsID{Dev: 5, Ino: 1}, Upstream: true}
+	return r, u
+}
+
+func egressOf(v view) bool { return has(v.listeners, "upstream_grafana_egress") }
+
+// TestReplacedUpstreamNamespaceIsBoundAgain: an upstream's namespace
+// replaced at the same path waits, as an agent's does, until Envoy has
+// reported dropping the old listener and RebindGrace has passed: its
+// egress listener is byte for byte the old one's, and would be served
+// from the old socket.
+func TestReplacedUpstreamNamespaceIsBoundAgain(t *testing.T) {
+	r, u := upstreamEnv(t, Config{RebindTimeout: time.Hour, RebindGrace: 150 * time.Millisecond})
+	r.src.events <- agent.Event{Agent: u}
+	v := r.eventually(t, "the upstream", egressOf)
+	r.ctl.ListenersApplied(v.snap.GetVersion(resource.ListenerType))
+
+	u.NetnsID.Ino++
+	r.src.events <- agent.Event{Agent: u}
+	removed := r.eventually(t, "the upstream removed", func(v view) bool { return !egressOf(v) })
+	for deadline := time.Now().Add(50 * time.Millisecond); time.Now().Before(deadline); time.Sleep(2 * time.Millisecond) {
+		if egressOf(r.view()) {
+			t.Fatal("bound again before Envoy reported the removal applied")
+		}
+	}
+	r.ctl.ListenersApplied(removed.snap.GetVersion(resource.ListenerType))
+	back := r.eventually(t, "the upstream again", egressOf)
+	if back.snap.GetVersion(resource.ListenerType) == removed.snap.GetVersion(resource.ListenerType) {
+		t.Error("bound again without a new version")
+	}
+}
+
+// TestUnreportedUpstreamRemovalIsPublishedAgain: a waiting upstream keeps
+// its path's removal alive, published again while Envoy does not report
+// it, as a waiting agent does.
+func TestUnreportedUpstreamRemovalIsPublishedAgain(t *testing.T) {
+	r, u := upstreamEnv(t, Config{RebindTimeout: 20 * time.Millisecond, RebindGrace: time.Millisecond})
+	r.src.events <- agent.Event{Agent: u}
+	v := r.eventually(t, "the upstream", egressOf)
+	r.ctl.ListenersApplied(v.snap.GetVersion(resource.ListenerType))
+
+	u.NetnsID.Ino++
+	r.src.events <- agent.Event{Agent: u}
+	removed := r.eventually(t, "the upstream removed", func(v view) bool { return !egressOf(v) })
+	first := removed.snap.GetVersion(resource.ListenerType)
+	again := r.eventually(t, "the removal published again", func(v view) bool {
+		return v.snap.GetVersion(resource.ListenerType) != first
+	})
+	if egressOf(again) {
+		t.Fatal("bound again without a report")
+	}
+	r.ctl.ListenersApplied(first)
+	r.eventually(t, "the upstream again", egressOf)
+}
+
+// An upstream in an agent's namespace, or an agent in an upstream's, is
+// refused: its listeners would serve the other's processes.
+func TestUpstreamAndAgentNeverShareANamespace(t *testing.T) {
+	r, u := upstreamEnv(t, Config{RebindTimeout: time.Hour, RebindGrace: time.Millisecond})
+	r.start(t)
+	u.NetnsID = r.x.NetnsID
+	r.src.events <- agent.Event{Agent: u}
+	for deadline := time.Now().Add(100 * time.Millisecond); time.Now().Before(deadline); time.Sleep(2 * time.Millisecond) {
+		if egressOf(r.view()) {
+			t.Fatal("an upstream in an agent's namespace was published")
+		}
+	}
+
+	r2, u2 := upstreamEnv(t, Config{RebindTimeout: time.Hour, RebindGrace: time.Millisecond})
+	r2.src.events <- agent.Event{Agent: u2}
+	r2.eventually(t, "the upstream", egressOf)
+	x := r2.x
+	x.NetnsID = u2.NetnsID
+	r2.src.events <- agent.Event{Agent: x}
+	for deadline := time.Now().Add(100 * time.Millisecond); time.Now().Before(deadline); time.Sleep(2 * time.Millisecond) {
+		if has(r2.view().listeners, "agent_x_model") {
+			t.Fatal("an agent in an upstream's namespace was published")
 		}
 	}
 }

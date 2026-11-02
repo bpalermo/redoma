@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -75,6 +76,52 @@ func bindWith(src, options, extra string) string {
 		m += `,` + extra
 	}
 	return `[` + m + `}]`
+}
+
+// TestCredentialBindAsPodmanMakesIt: the options upstreamrun gives the
+// credential's --volume, as Podman 4.9 turns them into the bind's (it adds
+// rbind and rprivate, testdata/podman-4.9.3), pass the hook's allowlist,
+// read-only. A change to either that would refuse every upstream's start
+// fails here.
+func TestCredentialBindAsPodmanMakesIt(t *testing.T) {
+	opts := append(strings.Split(register.UpstreamCredentialVolumeOptions, ","), "rprivate", "rbind")
+	raw, err := json.Marshal(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, string(raw), createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), string(raw), ""), upstreamAnnotation), "")
+	if !slices.Contains(opts, "ro") && !slices.Contains(opts, "rro") {
+		t.Errorf("%q is not read-only", register.UpstreamCredentialVolumeOptions)
+	}
+}
+
+// A file system mounted below the credential directory would stay
+// writable under a read-only rbind: refused.
+func TestCreateRuntimeUpstreamRefusesASubmount(t *testing.T) {
+	cp := &fakeCP{answer: func(register.Request) string { return "" }}
+	for _, tc := range []struct {
+		point, want string
+	}{
+		{T("/run/redoma-mcp/grafana/sub"), "mounted below it"},
+		{T("/run/redoma-mcp/grafana/a/b"), "mounted below it"},
+		{T("/run/redoma-mcp/grafana"), ""},
+		{T("/run/redoma-mcp/grafanax/sub"), ""},
+		{T("/run/redoma-mcp/other/sub"), ""},
+	} {
+		m := &fakeMounter{mounted: map[string]int{}}
+		h := upstreamHook(t, cp, m)
+		host := []mountEntry{{dev: "0:1", root: "/", point: "/"}, {dev: "0:99", root: "/", point: tc.point}}
+		h.Mountinfo = func(pid string) ([]mountEntry, error) {
+			if pid == "self" {
+				return host, nil
+			}
+			return nil, nil
+		}
+		cfg := `{"ociVersion":"1.2.0","root":{"path":"rootfs"},"process":` + upstreamProcess + `,"mounts":` + bindOf(T("/run/redoma-mcp/grafana")) +
+			`,"linux":{"namespaces":` + upstreamNamespaces + `,` + upstreamMappings + `}}`
+		st := State{ID: cid, Status: "creating", Pid: 4242, Bundle: writeBundle(t, cfg), Annotations: upstreamAnnotation}
+		expect(t, tc.point, h.CreateRuntime(t.Context(), st), tc.want)
+	}
 }
 
 // mountMappings are a mount's own uid and gid mappings.
@@ -173,6 +220,8 @@ func TestCreateRuntimeUpstreamRefusals(t *testing.T) {
 		{"its own directory, ro then rrw", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","rrw"]`, ""), upstreamAnnotation, `"rrw"`},
 		{"its own directory idmapped, ro then rrw", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","idmap","rrw"]`, ""), upstreamAnnotation, `"rrw"`},
 		{"its own directory, rrw then ro", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","rrw","ro"]`, ""), upstreamAnnotation, `"rrw"`},
+		{"its own directory, an option idmap prefixes", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","idmapx"]`, ""), upstreamAnnotation, `"idmapx"`},
+		{"its own directory, idmapx with a value", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","idmapx=1"]`, ""), upstreamAnnotation, `"idmapx=1"`},
 		{"its own directory, an unknown option", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","exec"]`, ""), upstreamAnnotation, `"exec"`},
 		{"its own directory, ridmap", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","ridmap"]`, ""), upstreamAnnotation, `"ridmap"`},
 		// The read-only rule holds when either the source or its resolved

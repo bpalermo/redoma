@@ -150,6 +150,9 @@ func (h *Hook) checkMountsOf(top map[string]json.RawMessage, st State, forbidden
 	if err != nil {
 		return fmt.Errorf("the host's mounts: %w", err)
 	}
+	if err := pl.checkNoSubmounts(host); err != nil {
+		return err
+	}
 	ctr, err := read(strconv.Itoa(st.Pid))
 	if err != nil {
 		return fmt.Errorf("the container's mounts: %w", err)

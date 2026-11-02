@@ -169,6 +169,9 @@ type Controller struct {
 	// there; waiting are the agents to bind at a path not yet clear.
 	removedIn map[string]*removal
 	waiting   map[string]agent.Agent
+	// upWaiting are the upstreams to bind at a path not yet clear, as
+	// waiting are the agents.
+	upWaiting map[string]agent.Agent
 	// bound are the starts whose Source wants to know when Envoy has bound
 	// them, by agent ID (see agent.Event.Bound).
 	bound  map[string]*boundWait
@@ -208,6 +211,7 @@ func New(cfg Config, source agent.Source, id Identity, c cache.SnapshotCache, lo
 		upstreams: map[string]agent.Agent{},
 		removedIn: map[string]*removal{},
 		waiting:   map[string]agent.Agent{},
+		upWaiting: map[string]agent.Agent{},
 		bound:     map[string]*boundWait{},
 		after:     time.After,
 	}

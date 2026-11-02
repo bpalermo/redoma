@@ -1,8 +1,8 @@
 package xds
 
 import (
-	"errors"
 	"fmt"
+	"io"
 	"os"
 	"syscall"
 
@@ -11,6 +11,17 @@ import (
 	"github.com/bpalermo/redoma/xds/internal/mcpconf"
 	"github.com/bpalermo/redoma/xds/internal/upstreamrun"
 )
+
+// copyToken copies u's credential from source. Every start of the upstream
+// runs it: one without a token_file has nothing to copy, and must not fail
+// that start.
+func copyToken(u *mcpconf.Upstream, source string, owner uint32, log io.Writer) error {
+	if u.TokenFile == "" {
+		fmt.Fprintf(log, "upstream %s has no token_file: nothing to copy\n", u.Name)
+		return nil
+	}
+	return upstreamrun.CopyToken(source, u.TokenFile, owner)
+}
 
 // UpstreamCommand is `redoma mcp-upstream`, what a host MCP upstream's units
 // run (docs/mcp-upstreams.md):
@@ -60,10 +71,7 @@ func UpstreamCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if u.TokenFile == "" {
-				return errors.New("upstream " + u.Name + " has no token_file")
-			}
-			return upstreamrun.CopyToken(args[1], u.TokenFile, owner)
+			return copyToken(u, args[1], owner, cmd.ErrOrStderr())
 		},
 	}
 	token.Flags().Uint32Var(&owner, "owner", 0, "the minter's uid: the source must be its file, on a path of directories only root and it can write")

@@ -31,6 +31,12 @@ func NetnsPath(netnsDir, container string) string {
 // never collides with a launcher's redoma-<name> (at most 41 characters).
 const UpstreamNetnsPrefix = "redoma-mcp-"
 
+// UpstreamCredentialVolumeOptions are the options of an MCP upstream's
+// credential bind (podman run --volume <dir>:<dest>:<options>): read-only,
+// idmapped into its user namespace. The OCI hook holds the bind Podman
+// makes of them to its allowlist of options; a test there ties the two.
+const UpstreamCredentialVolumeOptions = "ro,idmap"
+
 // UpstreamNetnsPath is where the hook bind-mounts an MCP upstream
 // container's network namespace.
 func UpstreamNetnsPath(netnsDir, container string) string {

@@ -89,6 +89,16 @@ func MCPListener(netns, repo string, routes []MCPRoute, targets map[string]*mcpc
 		MergeSlashes:                 true,
 		PathWithEscapedSlashesAction: hcmv3.HttpConnectionManager_REJECT_REQUEST,
 		StreamIdleTimeout:            durationpb.New(10 * time.Minute),
+		// The agent is an external client, never an internal one: Envoy
+		// then generates the request's x-request-id (the audit log's
+		// request_id) instead of keeping the agent's, and removes any
+		// x-envoy-* header the agent sent. An empty internal address
+		// config falls back to loopback and RFC 1918 being internal, so
+		// it names the one range no client comes from instead.
+		UseRemoteAddress: wrapperspb.Bool(true),
+		InternalAddressConfig: &hcmv3.HttpConnectionManager_InternalAddressConfig{
+			CidrRanges: []*corev3.CidrRange{{AddressPrefix: "0.0.0.0", PrefixLen: wrapperspb.UInt32(32)}},
+		},
 	}
 	return &listenerv3.Listener{
 		Name:         name,

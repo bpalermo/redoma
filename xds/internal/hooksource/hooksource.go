@@ -231,24 +231,45 @@ func (s *Source) Run(ctx context.Context, emit func(agent.Event)) error {
 // the recorded one.
 func (s *Source) load() map[string]registration {
 	regs := map[string]registration{}
-	raw, err := os.ReadFile(s.StateFile)
+	for _, file := range []string{s.StateFile, s.upstreamStateFile()} {
+		for container, r := range s.loadFile(file) {
+			if r.Upstream != (file != s.StateFile) {
+				// An agent in the upstreams' file, or an upstream in the
+				// agents': not this version's writing.
+				s.Log.Error("a hook registration in the wrong file; ignoring it", "file", file, "container", container, "name", r.Agent)
+				continue
+			}
+			if s.live(r) {
+				regs[container] = r
+			}
+		}
+	}
+	return regs
+}
+
+// upstreamStateFile records the MCP upstreams' registrations, apart from
+// the agents' in StateFile: a redoma xds from before MCP upstreams, after a
+// downgrade, reads StateFile alone, and must never take an upstream's
+// registration for an agent's.
+func (s *Source) upstreamStateFile() string {
+	return s.StateFile + ".upstreams"
+}
+
+// loadFile reads one record; a missing file is none.
+func (s *Source) loadFile(file string) map[string]registration {
+	raw, err := os.ReadFile(file)
 	if errors.Is(err, fs.ErrNotExist) {
-		return regs
+		return nil
 	}
 	var recorded map[string]registration
 	if err == nil {
 		err = json.Unmarshal(raw, &recorded)
 	}
 	if err != nil {
-		s.Log.Error("cannot read the hook registrations; their containers need a restart to be registered again", "file", s.StateFile, "err", err)
-		return regs
+		s.Log.Error("cannot read the hook registrations; their containers need a restart to be registered again", "file", file, "err", err)
+		return nil
 	}
-	for container, r := range recorded {
-		if s.live(r) {
-			regs[container] = r
-		}
-	}
-	return regs
+	return recorded
 }
 
 // restoreProcesses gives each registration the pidfd Stored holds under its
@@ -351,12 +372,22 @@ func (s *Source) put(container string, r registration) {
 
 // save records the registrations; called with mu held.
 func (s *Source) save() {
-	raw, err := json.Marshal(s.regs)
-	if err == nil {
-		err = atomicfile.Write(s.StateFile, raw, 0o600)
+	agents, upstreams := map[string]registration{}, map[string]registration{}
+	for container, r := range s.regs {
+		if r.Upstream {
+			upstreams[container] = r
+		} else {
+			agents[container] = r
+		}
 	}
-	if err != nil {
-		s.Log.Error("cannot record the hook registrations", "file", s.StateFile, "err", err)
+	for file, regs := range map[string]map[string]registration{s.StateFile: agents, s.upstreamStateFile(): upstreams} {
+		raw, err := json.Marshal(regs)
+		if err == nil {
+			err = atomicfile.Write(file, raw, 0o600)
+		}
+		if err != nil {
+			s.Log.Error("cannot record the hook registrations", "file", file, "err", err)
+		}
 	}
 }
 

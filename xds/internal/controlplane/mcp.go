@@ -26,7 +26,12 @@ func (c *Controller) mcpDir() mcpconf.Dir {
 	return mcpconf.Dir{Etc: c.cfg.EtcDir, Owner: c.cfg.MCPOwner}
 }
 
-// applyUpstream starts or stops an upstream's container.
+// applyUpstream starts or stops an upstream's container. A namespace
+// replaced at the same path waits, as an agent's does, until Envoy has
+// dropped the listeners there (pathClear): the egress listener of the new
+// one is byte for byte the old one's, and would be served from the old
+// socket. An upstream in a namespace an agent or another upstream already
+// has is refused (refuseShared).
 func (c *Controller) applyUpstream(e agent.Event) {
 	if old, ok := c.upstreams[e.Agent.ID]; ok {
 		delete(c.upstreams, e.Agent.ID)
@@ -34,17 +39,28 @@ func (c *Controller) applyUpstream(e agent.Event) {
 		c.dirty = true
 		c.log.Info("MCP upstream stopped", "upstream", old.ID, "netns", old.Netns)
 	}
+	delete(c.upWaiting, e.Agent.ID)
 	if e.Bound != nil {
 		// An upstream's registrar does not wait: never leave one hanging.
 		e.Bound <- nil
 	}
-	if !e.Removed {
-		c.upstreams[e.Agent.ID] = e.Agent
-		delete(c.removedIn, e.Agent.Netns)
-		c.dirty = true
-		c.log.Info("MCP upstream running", "upstream", e.Agent.ID, "netns", e.Agent.Netns)
+	switch {
+	case e.Removed || c.refuseShared(e.Agent):
+	case !c.pathClear(e.Agent, time.Now()):
+		c.upWaiting[e.Agent.ID] = e.Agent
+		c.log.Info("MCP upstream waits for Envoy to drop the listeners at its namespace path", "upstream", e.Agent.ID, "netns", e.Agent.Netns)
+	default:
+		c.startUpstream(e.Agent)
 	}
 	c.readMCP()
+}
+
+// startUpstream publishes a registered upstream's container.
+func (c *Controller) startUpstream(u agent.Agent) {
+	c.upstreams[u.ID] = u
+	delete(c.removedIn, u.Netns)
+	c.dirty = true
+	c.log.Info("MCP upstream running", "upstream", u.ID, "netns", u.Netns)
 }
 
 // readMCP re-reads every upstream's file, then each agent's allowlists. A
@@ -129,8 +145,7 @@ func (c *Controller) mcpStrip() lds.Strip {
 	return lds.StripOf(slices.Collect(maps.Values(c.mcpConfs)))
 }
 
-// mcpListeners are the agent's MCP listener, if it has an upstream, and
-// every upstream's egress listener.
+// mcpAgentListener is the agent's MCP listener, if it has an upstream.
 func (c *Controller) mcpAgentListener(id string, a *running) types.Resource {
 	if len(a.mcp) == 0 {
 		return nil
@@ -138,6 +153,7 @@ func (c *Controller) mcpAgentListener(id string, a *running) types.Resource {
 	return lds.MCPListener(a.agent.Netns, id, a.mcp, c.upTargets(), c.mcpStrip())
 }
 
+// mcpUpstreamListeners are every upstream's egress listener.
 func (c *Controller) mcpUpstreamListeners() []types.Resource {
 	var out []types.Resource
 	up := c.upTargets()

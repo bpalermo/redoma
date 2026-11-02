@@ -204,6 +204,23 @@ func credentialOption(o string) bool {
 	return slices.Contains(credentialOptions, o) || strings.HasPrefix(o, "idmap=")
 }
 
+// checkNoSubmounts refuses an upstream whose credential directory has a
+// file system mounted below it on the host. A read-only rbind makes only
+// its top mount read-only (ro is not rro, and Podman's :ro is ro), so a
+// submount would be writable in the container: the directory holds plain
+// files only. An agent has no such directory.
+func (pl policy) checkNoSubmounts(host []mountEntry) error {
+	if pl.allowed == "" {
+		return nil
+	}
+	for _, e := range host {
+		if strings.HasPrefix(e.point, pl.allowed+"/") {
+			return fmt.Errorf("%s has a file system mounted below it, at %s: an MCP upstream's credential directory holds plain files, since a read-only bind of it would leave a submount writable", pl.allowed, e.point)
+		}
+	}
+	return nil
+}
+
 // inAllowed says that p is the upstream's credential directory, or in it.
 func (pl policy) inAllowed(p string) bool {
 	return p == pl.allowed || strings.HasPrefix(p, pl.allowed+"/")

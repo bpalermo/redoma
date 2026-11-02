@@ -12,13 +12,19 @@
 # redoma-mcp-token@<name>.service, which copies the credential: /run is a
 # tmpfs, so after a boot the copy exists only once that has run, and its
 # path unit fires only on a change. While the minter has written nothing,
-# the start fails on the missing credential and is retried; the minter's
-# first write then makes the copy (redoma-mcp-token@<name>.path).
+# the start fails on the missing credential and is retried every 5 seconds,
+# with no start limit, so it never stays failed; the minter's first write
+# makes the copy (redoma-mcp-token@<name>.path) the next start finds.
+#
+# podman run stays in the foreground. If the podman client dies, the
+# container (under conmon) may outlive it: the restart's run --replace
+# removes that container before it starts the new one.
 [Unit]
 Description=redoma MCP upstream %i
 Documentation=https://github.com/bpalermo/redoma/blob/main/docs/mcp-upstreams.md
 Wants=redoma-xds.service redoma-mcp-token@%i.service
 After=redoma-xds.service redoma-mcp-token@%i.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

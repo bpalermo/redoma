@@ -7,6 +7,7 @@ go_library(
     visibility = ["//xds:__subpackages__"],
     deps = [
         "//common/atomicfile",
+        "//common/register",
         "//xds/internal/mcpconf",
     ],
 )

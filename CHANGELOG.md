@@ -25,6 +25,15 @@ host without `/etc/redoma/mcp`.
   `/run/redoma-mcp`, or whose uid or gids fall in the `containers`
   subordinate ranges of `/etc/subuid` and `/etc/subgid`. Check your agents'
   `--user` against those ranges before upgrading.
+- **Check before upgrading: the hook refuses EVERY agent** (and every
+  upstream) when `/etc/subuid` or `/etc/subgid` exists and either the
+  file or `/etc` is not root's, or is writable by its group or others, or
+  is a symlink, or its `containers` ranges (by name or by that user's uid)
+  hold 0 or one of 961, 963, 964. A host without the files is not
+  affected. `ls -l /etc/subuid /etc/subgid` and `grep containers
+  /etc/subuid /etc/subgid` show what to fix.
+- The `.deb`'s upgrade restarts running `redoma-mcp@*` units, and its
+  removal stops them and the credential's watchers.
 - An upstream's argument constraints hold only for a server that reads its
   arguments with exact case: Grafana's does not (docs/mcp-upstreams.md, "A
   parser differential").

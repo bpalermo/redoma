@@ -138,6 +138,11 @@ func TestMCPListenerFilterOrderAndModes(t *testing.T) {
 	if want := []string{"params.name", "params.arguments.datasourceUid", "params.arguments.logql", "params.arguments.space"}; !slices.Equal(paths, want) {
 		t.Errorf("extracted %q, want %q", paths, want)
 	}
+	cidrs := h.GetInternalAddressConfig().GetCidrRanges()
+	if !h.GetUseRemoteAddress().GetValue() || h.GetInternalAddressConfig().GetUnixSockets() || len(cidrs) != 1 ||
+		cidrs[0].GetAddressPrefix() != "0.0.0.0" || cidrs[0].GetPrefixLen().GetValue() != 32 || h.GetPreserveExternalRequestId() {
+		t.Errorf("the agent is not an external client: use_remote_address %v, internal %v, preserve %v", h.GetUseRemoteAddress(), h.GetInternalAddressConfig(), h.GetPreserveExternalRequestId())
+	}
 	if !h.GetNormalizePath().GetValue() || !h.GetMergeSlashes() || h.GetPathWithEscapedSlashesAction() != hcmv3.HttpConnectionManager_REJECT_REQUEST {
 		t.Errorf("path normalization: %v %v %v", h.GetNormalizePath(), h.GetMergeSlashes(), h.GetPathWithEscapedSlashesAction())
 	}

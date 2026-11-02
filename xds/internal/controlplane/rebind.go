@@ -120,35 +120,60 @@ func (c *Controller) apply(ctx context.Context, e agent.Event) {
 	c.start(ctx, e.Agent)
 }
 
-// refuseShared refuses an agent whose namespace another agent already has
-// (a container started with --network ns:<another agent's namespace>, or
-// --network container:, or a pod): its listeners would serve the other
-// agent's processes, and the duplicate addresses would make Envoy refuse the
-// whole listener update. A refused start fails its Bound.
+// refuseShared refuses an agent or an MCP upstream whose namespace another
+// agent or upstream already has (a container started with --network
+// ns:<another's namespace>, or --network container:, or a pod, or a
+// launcher's agent in an upstream's): its listeners would serve the
+// other's processes, and the duplicate addresses would make Envoy refuse
+// the whole listener update. An agent's and an upstream's of one name are
+// two holders. A refused start fails its Bound.
 func (c *Controller) refuseShared(a agent.Agent) bool {
 	if a.NetnsID == (agent.NetnsID{}) {
 		return false
 	}
-	holder := ""
-	for id, r := range c.agents {
-		if id != a.ID && r.agent.NetnsID == a.NetnsID {
-			holder = id
-		}
-	}
-	for id, w := range c.waiting {
-		if id != a.ID && w.NetnsID == a.NetnsID {
-			holder = id
-		}
-	}
+	holder := c.holderOf(a)
 	if holder == "" {
 		return false
 	}
-	err := fmt.Errorf("the network namespace at %s is agent %s's already", a.Netns, holder)
-	c.log.Error("refusing an agent in another agent's network namespace", "agent", a.ID, "netns", a.Netns, "holder", holder)
-	if _, ok := c.bound[a.ID]; ok {
+	kind := "agent"
+	if a.Upstream {
+		kind = "MCP upstream"
+	}
+	err := fmt.Errorf("the network namespace at %s is %s's already", a.Netns, holder)
+	c.log.Error("refusing a "+kind+" in another's network namespace", "name", a.ID, "netns", a.Netns, "holder", holder)
+	if _, ok := c.bound[a.ID]; ok && !a.Upstream {
 		c.failBound(a.ID, err)
 	}
 	return true
+}
+
+// holderOf names the agent or upstream, other than a itself, that has a's
+// namespace, or "".
+func (c *Controller) holderOf(a agent.Agent) string {
+	other := func(id string, upstream bool, n agent.NetnsID) bool {
+		return (id != a.ID || upstream != a.Upstream) && n == a.NetnsID
+	}
+	for id, r := range c.agents {
+		if other(id, false, r.agent.NetnsID) {
+			return "agent " + id
+		}
+	}
+	for id, w := range c.waiting {
+		if other(id, false, w.NetnsID) {
+			return "agent " + id
+		}
+	}
+	for id, u := range c.upstreams {
+		if other(id, true, u.NetnsID) {
+			return "MCP upstream " + id
+		}
+	}
+	for id, u := range c.upWaiting {
+		if other(id, true, u.NetnsID) {
+			return "MCP upstream " + id
+		}
+	}
+	return ""
 }
 
 // pathClear reports whether a's listeners can be bound at its path: no
@@ -174,6 +199,9 @@ func (c *Controller) rebindWaiting(ctx context.Context) {
 	for _, a := range c.waiting {
 		waitedOn[a.Netns] = true
 	}
+	for _, u := range c.upWaiting {
+		waitedOn[u.Netns] = true
+	}
 	for path, r := range c.removedIn {
 		c.advance(path, r, now, waitedOn[path])
 	}
@@ -183,6 +211,17 @@ func (c *Controller) rebindWaiting(ctx context.Context) {
 			delete(c.removedIn, a.Netns)
 			c.start(ctx, a)
 		}
+	}
+	started := false
+	for id, u := range c.upWaiting {
+		if c.pathClear(u, now) {
+			delete(c.upWaiting, id)
+			c.startUpstream(u)
+			started = true
+		}
+	}
+	if started {
+		c.readMCP()
 	}
 	// A removal cleared and forgotten above publishes nothing by itself.
 	c.save()

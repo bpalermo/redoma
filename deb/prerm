@@ -6,6 +6,8 @@ case "${1:-}" in
 remove)
 	if [ -d /run/systemd/system ]; then
 		systemctl stop redoma-xds.service redoma-relay.service || true
+		# The MCP upstreams' containers and their credential's watchers.
+		systemctl stop 'redoma-mcp-token@*.path' 'redoma-mcp@*.service' 'redoma-mcp-token@*.service' || true
 	fi
 	;;
 esac
