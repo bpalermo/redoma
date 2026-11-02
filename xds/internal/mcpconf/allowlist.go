@@ -21,9 +21,14 @@ type Constraint struct {
 }
 
 // Tool is a tool an allowlist's set allows, under all its constraints.
+// Unconstrained is a tool_unconstrained line, allowed with any arguments;
+// it is the only way to say so. A Tool with no constraints that is not
+// Unconstrained allows nothing: empty constraints never mean any
+// arguments.
 type Tool struct {
-	Name        string
-	Constraints []Constraint
+	Name          string
+	Constraints   []Constraint
+	Unconstrained bool
 }
 
 // Set is one set of an allowlist: its tools, each under its constraints.
@@ -186,7 +191,7 @@ func (b *setBuilder) addTool(name string, constrainable bool, n int) error {
 			return fmt.Errorf("%s is listed twice in its set", name)
 		}
 	}
-	b.set.Tools = append(b.set.Tools, Tool{Name: name})
+	b.set.Tools = append(b.set.Tools, Tool{Name: name, Unconstrained: !constrainable})
 	if constrainable {
 		b.constrained[name] = n
 	}

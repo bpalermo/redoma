@@ -41,7 +41,7 @@ tool_unconstrained = search_dashboards
 				{Path: []string{"arguments", "datasourceUid"}, Value: "loki-main"},
 			}},
 		}},
-		{Tools: []Tool{{Name: "search_dashboards"}}},
+		{Tools: []Tool{{Name: "search_dashboards", Unconstrained: true}}},
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ReadAllowlist =\n%+v\nwant\n%+v", got, want)
@@ -63,7 +63,7 @@ func TestReadAllowlistDefaultsFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &Allowlist{Sets: []Set{{Tools: []Tool{{Name: "ping_tool"}}}, {Tools: []Tool{{Name: "own_tool"}}}}}
+	want := &Allowlist{Sets: []Set{{Tools: []Tool{{Name: "ping_tool", Unconstrained: true}}}, {Tools: []Tool{{Name: "own_tool", Unconstrained: true}}}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ReadAllowlist = %+v, want %+v", got, want)
 	}
