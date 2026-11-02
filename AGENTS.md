@@ -166,9 +166,11 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
 - `CHANGELOG.md`: what a host must act on, per release; a change that
   breaks a host (a path, a flag's default, a unit) adds an entry under a
   "## Unreleased" section above the newest release's, made by the first
-  such change. Before its tag, a release renames that section to its
-  version, with no date (the tag has it), and says which release
-  candidates must act on each entry.
+  such change. Before its first candidate's tag (or its own, without a
+  candidate), a release renames that section to its version, with no date
+  (the tag has it), and says which earlier releases and candidates must act
+  on each entry. VERSION is that version, never a candidate's:
+  `v<VERSION>-rc.<n>` tags the candidates (see "The package").
 - `examples/`: an Envoy bootstrap and an SDS secret file, held to the code
   by `//xds/internal/lds:lds_test`.
 - `deb/`: the Debian package of the host side (see "The package").

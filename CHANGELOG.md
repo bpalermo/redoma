@@ -4,7 +4,11 @@ Changes that a host running redoma must act on, newest first. Until 1.0, a
 release may break what an earlier one set up; each such change is listed
 here with what to do about it.
 
-## Unreleased
+## 0.2.0
+
+Not released yet: its candidates are tagged v0.2.0-rc.<n>, from
+v0.2.0-rc.1, and their packages are versioned 0.2.0~rc.<n>. A host on
+0.1.0, or on any of its candidates, acts on every entry below.
 
 ### New: AWS credentials for the agents that opt in
 
