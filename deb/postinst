@@ -41,7 +41,7 @@ configure)
 		# An upgrade restarts what runs, the MCP upstreams included (their
 		# container's arguments are this version's); a first install
 		# starts nothing.
-		systemctl try-restart redoma-xds.service redoma-relay.service 'redoma-mcp@*.service' 
+		systemctl try-restart redoma-xds.service redoma-relay.service 'redoma-mcp@*.service'
 	fi
 	;;
 esac
