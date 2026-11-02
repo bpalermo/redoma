@@ -237,3 +237,47 @@ func TestMergeRefusesAWaitingRegistrar(t *testing.T) {
 	r.launcher <- stop()
 	r.expect(t, "")
 }
+
+// An upstream and an agent of one name are two things: neither refuses,
+// replaces or removes the other.
+func TestMergeKeepsUpstreamsApartFromAgents(t *testing.T) {
+	bound := make(chan error, 1)
+	aDone := make(chan struct{})
+	a := &scripted{events: []Event{{Agent: Agent{ID: "x", Netns: "/a"}}, {Synced: true}}, fail: make(chan error), emitted: aDone}
+	b := &scripted{events: []Event{
+		{Agent: Agent{ID: "x", Netns: "/u", Upstream: true}, Bound: bound},
+		{Agent: Agent{ID: "x", Upstream: true}, Removed: true},
+		{Synced: true},
+	}, fail: make(chan error), after: aDone}
+
+	got := make(chan Event, 16)
+	go func() {
+		_ = Merge(slog.New(slog.DiscardHandler), a, b).Run(t.Context(), func(e Event) { got <- e })
+	}()
+	var events []Event
+	for len(events) < 4 {
+		select {
+		case e := <-got:
+			events = append(events, e)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("got %d events: %+v", len(events), events)
+		}
+	}
+	want := []Key{{ID: "x"}, {ID: "x", Upstream: true}, {ID: "x", Upstream: true}}
+	for i, k := range want {
+		if events[i].Agent.Key() != k || events[i].Removed != (i == 2) {
+			t.Errorf("event %d: %+v, want %v removed %v", i, events[i], k, i == 2)
+		}
+	}
+	if !events[3].Synced {
+		t.Errorf("event 3: %+v, want Synced", events[3])
+	}
+	if events[1].Agent.Netns != "/u" || events[1].Bound == nil {
+		t.Errorf("the upstream's start was not passed on with its Bound: %+v", events[1])
+	}
+	select {
+	case err := <-bound:
+		t.Errorf("the upstream's Bound was answered by Merge: %v", err)
+	default:
+	}
+}

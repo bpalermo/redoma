@@ -13,6 +13,7 @@ go_library(
         "//xds/internal/activedir",
         "//xds/internal/agent",
         "//xds/internal/fdstore",
+        "//xds/internal/mcpconf",
     ],
 )
 

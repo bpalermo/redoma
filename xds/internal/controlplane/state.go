@@ -45,6 +45,9 @@ func (c *Controller) held() map[string]agent.NetnsID {
 	for _, a := range c.agents {
 		out[a.agent.Netns] = a.agent.NetnsID
 	}
+	for _, u := range c.upstreams {
+		out[u.Netns] = u.NetnsID
+	}
 	return out
 }
 

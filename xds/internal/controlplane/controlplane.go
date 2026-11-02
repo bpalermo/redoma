@@ -30,6 +30,7 @@ import (
 	"github.com/bpalermo/redoma/xds/internal/egress"
 	"github.com/bpalermo/redoma/xds/internal/identity"
 	"github.com/bpalermo/redoma/xds/internal/lds"
+	"github.com/bpalermo/redoma/xds/internal/mcpconf"
 	"github.com/bpalermo/redoma/xds/internal/modelauth"
 	"github.com/bpalermo/redoma/xds/internal/rolesanywhere"
 )
@@ -110,6 +111,9 @@ type Config struct {
 	AWS          AWS
 	AWSPort      uint32
 	AWSTunnelDir string
+	// MCPOwner is the uid that must own <EtcDir>/mcp and its files (the MCP
+	// upstreams' configuration): 0, root, unless a test sets its own.
+	MCPOwner uint32
 }
 
 type running struct {
@@ -121,8 +125,12 @@ type running struct {
 	// the agent has not opted in.
 	aws    *rolesanywhere.Profile
 	awsErr string
-	gen    uint64
-	cancel context.CancelFunc
+	// mcp are the agent's routes to the MCP upstreams that are up, and
+	// mcpErrs its allowlists' errors, by upstream.
+	mcp     []lds.MCPRoute
+	mcpErrs map[string]string
+	gen     uint64
+	cancel  context.CancelFunc
 	// sub is the context of its identity subscription, and watching
 	// whether that has started (see Config.SVIDAfterBound).
 	sub      context.Context
@@ -152,6 +160,11 @@ type Controller struct {
 
 	// Owned by Run.
 	agents map[string]*running
+	// upstreams are the MCP upstreams' registered containers, by name;
+	// mcpConfs their valid files, mcpErrs the invalid ones' errors.
+	upstreams map[string]agent.Agent
+	mcpConfs  map[string]*mcpconf.Upstream
+	mcpErrs   map[string]string
 	// removedIn is, per namespace path, the removal of the listeners bound
 	// there; waiting are the agents to bind at a path not yet clear.
 	removedIn map[string]*removal
@@ -192,6 +205,7 @@ func New(cfg Config, source agent.Source, id Identity, c cache.SnapshotCache, lo
 		nonce:     newNonce(),
 		wakeC:     make(chan struct{}, 1),
 		agents:    map[string]*running{},
+		upstreams: map[string]agent.Agent{},
 		removedIn: map[string]*removal{},
 		waiting:   map[string]agent.Agent{},
 		bound:     map[string]*boundWait{},
@@ -288,6 +302,7 @@ func (c *Controller) rescan(ctx context.Context) {
 		c.readEgress(a)
 		c.readAWS(a)
 	}
+	c.readMCP()
 	c.rebindWaiting(ctx)
 }
 
@@ -328,6 +343,7 @@ func (c *Controller) start(ctx context.Context, a agent.Agent) {
 	c.log.Info("agent running", "agent", a.ID, "netns", a.Netns)
 	c.readEgress(r)
 	c.readAWS(r)
+	c.readAgentMCP(r)
 	if !waited || !c.cfg.SVIDAfterBound {
 		c.watch(r)
 	}
@@ -513,11 +529,14 @@ func (c *Controller) listeners() []types.Resource {
 		if c.cfg.AWS != nil && optedIn(a.aws, a.awsErr) {
 			out = append(out, lds.AWSListener(a.agent.Netns, id, c.cfg.AWSPort))
 		}
+		if l := c.mcpAgentListener(id, a); l != nil {
+			out = append(out, l)
+		}
 	}
 	for _, host := range c.tunnels() {
 		out = append(out, lds.TunnelListener(host, rolesanywhere.TunnelSocket(c.cfg.AWSTunnelDir, host)))
 	}
-	return out
+	return append(out, c.mcpUpstreamListeners()...)
 }
 
 // tunnels are the Roles Anywhere endpoints the running agents' valid AWS
@@ -554,7 +573,7 @@ func (c *Controller) clusters() []types.Resource {
 	for _, host := range c.tunnels() {
 		out = append(out, cds.TunnelCluster(host))
 	}
-	return out
+	return append(out, c.mcpClusters()...)
 }
 
 func inline(b []byte) *corev3.DataSource {

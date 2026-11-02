@@ -33,6 +33,11 @@ type Request struct {
 	// Agent is the agent's name (register only): its listeners' names, its
 	// egress allowlist and its SPIFFE ID derive from it.
 	Agent string `json:"agent,omitempty"`
+	// Upstream, instead of Agent, is a host MCP upstream's name (register
+	// only): the container is that upstream's server, not an agent. It is
+	// registered from the hook's poststart stage, is answered without
+	// waiting for Envoy, and comes with no pidfd.
+	Upstream string `json:"upstream,omitempty"`
 	// Netns is the path of the bind mount of the container's network
 	// namespace (register only).
 	Netns string `json:"netns,omitempty"`
