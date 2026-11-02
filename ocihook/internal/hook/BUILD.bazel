@@ -14,6 +14,7 @@ go_library(
     importpath = "github.com/bpalermo/redoma/ocihook/internal/hook",
     visibility = ["//ocihook:__subpackages__"],
     deps = [
+        "//common/allowlist",
         "//common/forbidden",
         "//common/pidfd",
         "//common/register",

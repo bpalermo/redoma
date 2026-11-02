@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/bpalermo/redoma/common/register"
@@ -30,14 +31,21 @@ func upstreamHook(t *testing.T, cp *fakeCP, m *fakeMounter) *Hook {
 	h, _ := newHook(cp, m)
 	h.UpstreamAnnotation = "redoma/upstream"
 	dir := t.TempDir()
+	mustChmod(t, dir, 0o755) // the files' directory is trusted as theirs
 	h.SubUID, h.SubGID = filepath.Join(dir, "subuid"), filepath.Join(dir, "subgid")
-	if err := os.WriteFile(h.SubUID, []byte("palermo:300000:65536\ncontainers:100000:65536\ncontainers:200000:1000\n"), 0o644); err != nil {
+	if err := os.WriteFile(h.SubUID, []byte("someuser:300000:65536\ncontainers:100000:65536\ncontainers:200000:1000\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(h.SubGID, []byte("containers:100000:65536\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	h.TokenRoot = T("/run/redoma-mcp")
+	if err := os.MkdirAll(filepath.Join(h.TokenRoot, "grafana"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.TokenRoot, "grafana", "token"), []byte("t\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, d := range []string{"grafana", "other"} {
 		if err := os.MkdirAll(filepath.Join(h.TokenRoot, d), 0o700); err != nil {
 			t.Fatal(err)
@@ -47,8 +55,20 @@ func upstreamHook(t *testing.T, cp *fakeCP, m *fakeMounter) *Hook {
 }
 
 func bindOf(src string) string {
-	return `[{"destination":"/run/secrets/x","type":"bind","source":"` + src + `","options":["rbind","ro"]}]`
+	return bindWith(src, `["rbind","ro"]`, "")
 }
+
+// bindWith is a bind of src with options (JSON) and extra mount fields.
+func bindWith(src, options, extra string) string {
+	m := `{"destination":"/run/secrets/x","type":"bind","source":"` + src + `","options":` + options
+	if extra != "" {
+		m += `,` + extra
+	}
+	return `[` + m + `}]`
+}
+
+// mountMappings are a mount's own uid and gid mappings.
+const mountMappings = `"uidMappings":[{"containerID":0,"hostID":100000,"size":65536}],"gidMappings":[{"containerID":0,"hostID":100000,"size":65536}]`
 
 // createUpstream runs createRuntime on an upstream's spec built from its
 // parts, and checks that a refusal mounted and asked nothing, and that an
@@ -86,7 +106,10 @@ var upstreamAnnotation = map[string]string{"redoma/upstream": "grafana"}
 func TestCreateRuntimeUpstream(t *testing.T) {
 	ok := func(name string, err error) { expect(t, name, err, "") }
 	ok("its own credential directory", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindOf(T("/run/redoma-mcp/grafana")), upstreamAnnotation))
-	ok("a file in it", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindOf(T("/run/redoma-mcp/grafana")), upstreamAnnotation))
+	ok("a file in it", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindOf(T("/run/redoma-mcp/grafana/token")), upstreamAnnotation))
+	ok("its own directory idmapped, read-only", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","idmap"]`, ""), upstreamAnnotation))
+	ok("its own directory with mappings, read-only", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro"]`, mountMappings), upstreamAnnotation))
+	ok("an unmapped bind elsewhere", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/a"), `["rbind"]`, ""), upstreamAnnotation))
 	ok("no mount", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, "", upstreamAnnotation))
 	ok("the second uid range", createUpstream(t, upstreamNamespaces, upstreamProcess,
 		`"uidMappings":[{"containerID":0,"hostID":200000,"size":1000}],"gidMappings":[{"containerID":0,"hostID":100000,"size":1000}]`, "", upstreamAnnotation))
@@ -117,6 +140,25 @@ func TestCreateRuntimeUpstreamRefusals(t *testing.T) {
 		{"redoma's sockets", upstreamNamespaces, upstreamProcess, upstreamMappings, bindOf(T("/run/redoma/xds")), upstreamAnnotation, "reaches"},
 		{"Podman's", upstreamNamespaces, upstreamProcess, upstreamMappings, bindOf(T("/run/podman")), upstreamAnnotation, "reaches"},
 		{"both annotations", upstreamNamespaces, upstreamProcess, upstreamMappings, "", map[string]string{"redoma/upstream": "grafana", "redoma/agent": "beta"}, "both agent"},
+		// An idmapped bind lets the upstream's root own what host root owns
+		// under it: only its own credential directory, read-only.
+		{"an idmapped bind elsewhere", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/a"), `["rbind","ro","idmap"]`, ""), upstreamAnnotation, "idmapped"},
+		{"a ridmapped bind elsewhere", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/a"), `["rbind","ridmap"]`, ""), upstreamAnnotation, "idmapped"},
+		{"an idmap with its mappings elsewhere", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/a"), `["rbind","idmap=uids=0-100000-65536;gids=0-100000-65536"]`, ""), upstreamAnnotation, "idmapped"},
+		{"a bind elsewhere with mappings", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/a"), `["rbind","ro"]`, mountMappings), upstreamAnnotation, "idmapped"},
+		{"a bind elsewhere with uid mappings only", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/a"), `["rbind","ro"]`, `"uidMappings":[{"containerID":0,"hostID":100000,"size":1}]`), upstreamAnnotation, "idmapped"},
+		{"a bind elsewhere with gid mappings only", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/a"), `["rbind","ro"]`, `"gidMappings":[{"containerID":0,"hostID":100000,"size":1}]`), upstreamAnnotation, "idmapped"},
+		{"its own directory idmapped, writable", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","idmap"]`, ""), upstreamAnnotation, "writable"},
+		{"its own directory, writable", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","rw"]`, ""), upstreamAnnotation, "writable"},
+		{"a file in it, writable", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana/token"), `["rbind"]`, ""), upstreamAnnotation, "writable"},
+		// The name is a name, never a path: x/../other would exempt another
+		// upstream's credential directory.
+		{"a traversal name", upstreamNamespaces, upstreamProcess, upstreamMappings, bindOf(T("/run/redoma-mcp/other")), map[string]string{"redoma/upstream": "x/../other"}, "not an MCP upstream name"},
+		{"a traversal name, no mount", upstreamNamespaces, upstreamProcess, upstreamMappings, "", map[string]string{"redoma/upstream": "../other"}, "not an MCP upstream name"},
+		{"an absolute name", upstreamNamespaces, upstreamProcess, upstreamMappings, "", map[string]string{"redoma/upstream": "/run/redoma-mcp/other"}, "not an MCP upstream name"},
+		{"an upper-case name", upstreamNamespaces, upstreamProcess, upstreamMappings, "", map[string]string{"redoma/upstream": "Grafana"}, "not an MCP upstream name"},
+		{"an empty name", upstreamNamespaces, upstreamProcess, upstreamMappings, "", map[string]string{"redoma/upstream": ""}, "not an MCP upstream name"},
+		{"the defaults' name", upstreamNamespaces, upstreamProcess, upstreamMappings, "", map[string]string{"redoma/upstream": "_default"}, "not an MCP upstream name"},
 	} {
 		expect(t, tc.name, createUpstream(t, tc.namespaces, tc.process, tc.linux, tc.mounts, tc.annotations), tc.want)
 	}
@@ -195,6 +237,25 @@ func TestPoststartRefusesANetwork(t *testing.T) {
 	}
 }
 
+// Poststart registers no upstream whose name is not one, whatever the
+// hook definitions' filter let through.
+func TestPoststartRefusesABadName(t *testing.T) {
+	for _, name := range []string{"x/../other", "../other", "Grafana", "", "_default"} {
+		cp := &fakeCP{answer: func(register.Request) string { return "" }}
+		m := &fakeMounter{mounted: map[string]int{}}
+		h := upstreamHook(t, cp, m)
+		h.Interfaces = func(string) ([]string, error) { return []string{"lo"}, nil }
+		st := upstreamState()
+		st.Annotations = map[string]string{"redoma/upstream": name}
+		if err := h.Poststart(t.Context(), st); err == nil || !strings.Contains(err.Error(), "not an MCP upstream name") {
+			t.Errorf("%q: %v", name, err)
+		}
+		if len(cp.requests) != 0 {
+			t.Errorf("%q: registered %v", name, cp.requests)
+		}
+	}
+}
+
 // A refused register unmounts too; an agent's container is not poststart's.
 func TestPoststartOthers(t *testing.T) {
 	cp := &fakeCP{answer: func(register.Request) string { return "refused" }}
@@ -228,24 +289,114 @@ func TestPoststopUpstream(t *testing.T) {
 	}
 }
 
+// me is the test's uid, the owner its files have.
+var me = uint32(os.Getuid())
+
 func TestReadSubordinate(t *testing.T) {
 	dir := t.TempDir()
+	mustChmod(t, dir, 0o755)
 	p := filepath.Join(dir, "subuid")
-	if err := os.WriteFile(p, []byte("containers:100000:65536\nother:1:2\n# not ours\ncontainers:200000:10\n"), 0o644); err != nil {
+	// An entry by name and one by uid (shadow-utils takes either), another
+	// user's, a comment.
+	if err := os.WriteFile(p, []byte("containers:100000:65536\nother:1:2\n# not ours\n999:200000:10\n998:300000:10\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readSubordinate(p, "containers")
+	got, err := readSubordinate(p, "containers", "999", me)
 	if err != nil || len(got) != 2 || got[0] != (idRange{100000, 65536}) || got[1] != (idRange{200000, 10}) {
 		t.Errorf("readSubordinate = %v, %v", got, err)
+	}
+	if got, err := readSubordinate(p, "containers", "", me); err != nil || len(got) != 1 {
+		t.Errorf("no uid: %v, %v; want the named entry alone", got, err)
 	}
 	if err := os.WriteFile(p, []byte("containers:x:1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readSubordinate(p, "containers"); err == nil {
+	if _, err := readSubordinate(p, "containers", "999", me); err == nil {
 		t.Error("a bad line: no error")
 	}
-	if got, err := readSubordinate(filepath.Join(dir, "none"), "containers"); got != nil || err != nil {
+	if got, err := readSubordinate(filepath.Join(dir, "none"), "containers", "999", me); got != nil || err != nil {
 		t.Errorf("a missing file: %v, %v", got, err)
+	}
+}
+
+// The subordinate id files decide what an upstream may map: they are
+// trusted as agents.txt is, or refused.
+func TestReadSubordinateRefusesAnUntrustedFile(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, dir, p string)
+		owner uint32
+		want  string
+	}{
+		{"another owner", nil, me + 1, "must be owned by uid"},
+		{"group-writable", func(t *testing.T, dir, p string) { mustChmod(t, p, 0o664) }, me, "writable by it alone"},
+		{"world-writable", func(t *testing.T, dir, p string) { mustChmod(t, p, 0o646) }, me, "writable by it alone"},
+		{"a writable directory", func(t *testing.T, dir, p string) { mustChmod(t, dir, 0o777) }, me, "writable by it alone"},
+		{"a symlink", func(t *testing.T, dir, p string) {
+			if err := os.Rename(p, p+".real"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(p+".real", p); err != nil {
+				t.Fatal(err)
+			}
+		}, me, "symbolic links"},
+		{"a FIFO", func(t *testing.T, dir, p string) {
+			os.Remove(p)
+			if err := syscall.Mkfifo(p, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, me, "not a regular file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "etc")
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			p := filepath.Join(dir, "subuid")
+			if err := os.WriteFile(p, []byte("containers:100000:65536\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tc.setup != nil {
+				tc.setup(t, dir, p)
+			}
+			if _, err := readSubordinate(p, "containers", "", tc.owner); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v; want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func mustChmod(t *testing.T, p string, mode os.FileMode) {
+	t.Helper()
+	if err := os.Chmod(p, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// containers ranges that hold root or a service's id are refused, for
+// upstreams and agents alike: an upstream could map that id.
+func TestSubordinateRangesExcludeRootAndServices(t *testing.T) {
+	for _, tc := range []struct {
+		subuid, subgid, want string
+	}{
+		{"containers:0:65536\n", "containers:100000:65536\n", "holds root's id 0"},
+		{"containers:100000:65536\n", "containers:0:1\n", "holds root's id 0"},
+		{"containers:900:100\n", "containers:100000:65536\n", "holds 961, redoma-sds's"},
+		{"containers:100000:65536\n", "containers:964:1\n", "holds 964, redoma-lead's"},
+		{"999:963:1\n", "containers:100000:65536\n", "holds 963, redoma-relay's"},
+		{"containers:100000:65536\n", "containers:100000:65536\n", ""},
+	} {
+		cp := &fakeCP{answer: func(register.Request) string { return "" }}
+		m := &fakeMounter{mounted: map[string]int{}}
+		h := upstreamHook(t, cp, m)
+		if err := os.WriteFile(h.SubUID, []byte(tc.subuid), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(h.SubGID, []byte(tc.subgid), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := h.subordinate()
+		expect(t, tc.subuid+tc.subgid, err, tc.want)
 	}
 }
 

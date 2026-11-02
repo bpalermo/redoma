@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bpalermo/redoma/common/allowlist"
 	"github.com/bpalermo/redoma/common/config"
 	"github.com/bpalermo/redoma/common/register"
 )
@@ -129,10 +130,20 @@ func TestUpstreamHookDefinitions(t *testing.T) {
 	if limit := time.Duration(*readDef(t, "redoma-upstream-poststart.json").Hook.Timeout) * time.Second; limit <= 30*time.Second+5*time.Second {
 		t.Errorf("poststart timeout %v leaves the binary no room", limit)
 	}
-	match := regexp.MustCompile(readDef(t, "redoma-upstream-create-runtime.json").When.Annotations[`^redoma/upstream$`])
-	for name, want := range map[string]bool{"grafana": true, "Bad_Name": false, "../x": false, "_default": false} {
-		if match.MatchString(name) != want {
-			t.Errorf("createRuntime match of %q = %v", name, !want)
+	// createRuntime and poststart filter on the same value, and it accepts
+	// exactly the names allowlist.ValidName does (the binary refuses any
+	// other too). poststop runs for any value: it only cleans up.
+	value := readDef(t, "redoma-upstream-create-runtime.json").When.Annotations[`^redoma/upstream$`]
+	if got := readDef(t, "redoma-upstream-poststart.json").When.Annotations[`^redoma/upstream$`]; got != value {
+		t.Errorf("poststart matches %q, createRuntime %q", got, value)
+	}
+	match := regexp.MustCompile(value)
+	for _, name := range []string{
+		"grafana", "github-pr", "a", "0", strings.Repeat("a", 41), strings.Repeat("a", 42),
+		"Bad_Name", "Grafana", "../x", "x/../other", "/run/redoma-mcp/other", "_default", "-a", "a b", "a.b", "", "a\n",
+	} {
+		if match.MatchString(name) != allowlist.ValidName(name) {
+			t.Errorf("the hook definitions match %q = %v, allowlist.ValidName = %v", name, match.MatchString(name), allowlist.ValidName(name))
 		}
 	}
 	if register.UpstreamNetnsPrefix != "redoma-mcp-" {

@@ -34,6 +34,7 @@ go_test(
     ]),
     embed = [":ocihook"],
     deps = [
+        "//common/allowlist",
         "//common/config",
         "//common/forbidden",
         "//common/register",

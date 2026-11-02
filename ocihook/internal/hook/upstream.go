@@ -7,16 +7,21 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/bpalermo/redoma/common/allowlist"
 	"github.com/bpalermo/redoma/common/register"
 )
 
@@ -72,10 +77,51 @@ func inRanges(ranges []idRange, start, size uint64) bool {
 	return false
 }
 
-// readSubordinate returns user's ranges in a subuid or subgid file. A
-// missing file has none.
-func readSubordinate(path, user string) ([]idRange, error) {
-	f, err := os.Open(path)
+// openTrusted opens a subordinate id file, which decides who may map
+// what: not through a symlink, a regular file owned by owner (root) and
+// writable by no one else, in a directory that is the same, as agents.txt
+// is. A missing file is fs.ErrNotExist.
+func openTrusted(path string, owner uint32) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	fi, err := f.Stat()
+	if err == nil && !fi.Mode().IsRegular() {
+		err = fmt.Errorf("%s is not a regular file", path)
+	}
+	if err == nil {
+		err = ownedBy(path, fi, owner)
+	}
+	if err == nil {
+		var di os.FileInfo
+		if di, err = os.Lstat(filepath.Dir(path)); err == nil {
+			err = ownedBy(filepath.Dir(path), di, owner)
+		}
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// ownedBy refuses a file or directory not owned by owner, or writable by
+// its group or by others.
+func ownedBy(path string, fi os.FileInfo, owner uint32) error {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || st.Uid != owner || fi.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("%s must be owned by uid %d and writable by it alone (mode %v)", path, owner, fi.Mode())
+	}
+	return nil
+}
+
+// readSubordinate returns the ranges of the user named name, or written
+// by its uid (shadow-utils takes either; "" when it has none), in a subuid
+// or subgid file, which must be owner's (openTrusted). A missing file has
+// none.
+func readSubordinate(path, name, uid string, owner uint32) ([]idRange, error) {
+	f, err := openTrusted(path, owner)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -87,13 +133,13 @@ func readSubordinate(path, user string) ([]idRange, error) {
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		parts := strings.Split(strings.TrimSpace(sc.Text()), ":")
-		if len(parts) != 3 || parts[0] != user {
+		if len(parts) != 3 || (parts[0] != name && (uid == "" || parts[0] != uid)) {
 			continue
 		}
 		start, err1 := strconv.ParseUint(parts[1], 10, 32)
 		size, err2 := strconv.ParseUint(parts[2], 10, 32)
 		if err1 != nil || err2 != nil || size == 0 {
-			return nil, fmt.Errorf("%s: a %s line that is not <start>:<count>: %q", path, user, sc.Text())
+			return nil, fmt.Errorf("%s: a %s line that is not <start>:<count>: %q", path, name, sc.Text())
 		}
 		out = append(out, idRange{start: start, size: size})
 	}
@@ -109,13 +155,47 @@ func (h *Hook) subordinate() (uids, gids []idRange, err error) {
 	if gidFile == "" {
 		gidFile = SubGID
 	}
-	if uids, err = readSubordinate(uidFile, SubordinateUser); err != nil {
+	uid := h.SubordinateUID
+	if uid == "" {
+		if u, err := user.Lookup(SubordinateUser); err == nil {
+			uid = u.Uid
+		}
+	}
+	if uids, err = readSubordinate(uidFile, SubordinateUser, uid, h.SubIDOwner); err != nil {
 		return nil, nil, err
 	}
-	if gids, err = readSubordinate(gidFile, SubordinateUser); err != nil {
+	if gids, err = readSubordinate(gidFile, SubordinateUser, uid, h.SubIDOwner); err != nil {
+		return nil, nil, err
+	}
+	if err := h.checkRanges(uidFile, uids); err != nil {
+		return nil, nil, err
+	}
+	if err := h.checkRanges(gidFile, gids); err != nil {
 		return nil, nil, err
 	}
 	return uids, gids, nil
+}
+
+// checkRanges refuses containers ranges that hold root or a redoma
+// service's id: an upstream may map anything in them, and must never map
+// those. (An agent's own ids are checked against the ranges when it
+// starts: checkNotSubordinate.)
+func (h *Hook) checkRanges(file string, ranges []idRange) error {
+	ids := h.ServiceIDs
+	if ids == nil {
+		ids = ServiceIDs
+	}
+	for _, r := range ranges {
+		if r.holds(0) {
+			return fmt.Errorf("%s: the %s range %d-%d holds root's id 0", file, SubordinateUser, r.start, r.start+r.size-1)
+		}
+		for _, id := range slices.Sorted(maps.Keys(ids)) {
+			if r.holds(uint64(id)) {
+				return fmt.Errorf("%s: the %s range %d-%d holds %d, %s's", file, SubordinateUser, r.start, r.start+r.size-1, id, ids[id])
+			}
+		}
+	}
+	return nil
 }
 
 // checkNotSubordinate refuses an agent whose uid, gid or any additional
@@ -250,6 +330,11 @@ func slicesClone(s []string) []string {
 // createRuntimeUpstream checks an upstream's container and mounts its
 // namespace; poststart registers it.
 func (h *Hook) createRuntimeUpstream(st State, name string) error {
+	// The name decides the one credential directory the container may
+	// mount: it must be a name, never a path (x/../other).
+	if !allowlist.ValidName(name) {
+		return fmt.Errorf("container %s: %q is not an MCP upstream name (lower-case letters, digits and -)", st.ID, name)
+	}
 	if !register.ValidContainer(st.ID) {
 		return fmt.Errorf("not a container ID: %q", st.ID)
 	}
@@ -332,6 +417,9 @@ func (h *Hook) Poststart(ctx context.Context, st State) error {
 	name, ok := st.Annotations[h.UpstreamAnnotation]
 	if !ok || h.UpstreamAnnotation == "" {
 		return nil
+	}
+	if !allowlist.ValidName(name) {
+		return fmt.Errorf("container %s: %q is not an MCP upstream name (lower-case letters, digits and -): not registered", st.ID, name)
 	}
 	if !register.ValidContainer(st.ID) {
 		return fmt.Errorf("not a container ID: %q", st.ID)

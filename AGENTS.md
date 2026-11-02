@@ -579,17 +579,28 @@ is a host MCP upstream's server (docs/mcp-upstreams.md), with its own three
 definitions (`redoma-upstream-*.json`). It is never an agent: a container
 annotated both is refused.
 
-- **createRuntime** (`hook/upstream.go`): the spec must give it a user
+- **createRuntime** (`hook/upstream.go`): `<name>` must be a valid name
+  (`allowlist.ValidName`; a path such as `x/../other` fails the start),
+  since it picks the one credential directory exempted below. The spec
+  must give it a user
   namespace of its own, network and PID namespaces created for it, and no
   namespace joined; `linux.uidMappings` and `gidMappings` wholly inside the
   `containers` ranges of `/etc/subuid` and `/etc/subgid` (where
   `--userns=auto` allocates, and no host id in use lives); no privilege
   to gain and no capability past an agent's; and an agent's mounts, plus
   its own credential directory, `/run/redoma-mcp/<name>`, and nothing else
-  of `/run/redoma-mcp`. Its process ids are its user namespace's, so the
-  agent's uid and gid rules do not apply. The namespace is mounted at
+  of `/run/redoma-mcp`, that directory (or a file in it) read-only. No
+  bind may be idmapped (`idmap`/`ridmap` options, or the mount's own
+  mappings) except that directory: through one, the upstream's root owns
+  what host root owns. `/etc/subuid` and `/etc/subgid` must be root's and
+  writable by no one else (their directory too), their `containers`
+  entries (by name or by that user's uid) may not hold 0 or a service id
+  (961, 963, 964), and a file that breaks either refuses every upstream
+  and every agent. Its process ids are its user namespace's, so the agent's
+  uid and gid rules do not apply. The namespace is mounted at
   `/run/netns/redoma-mcp-<container ID>`; nothing is registered yet.
-- **poststart**: with a user namespace Podman attaches a network after the
+- **poststart**: refuses an invalid `<name>` as createRuntime does. With
+  a user namespace Podman attaches a network after the
   runtime made the namespace, so the spec cannot prove `--network none`.
   The hook enters the namespace (`setns` on a thread that then exits) and
   registers the upstream only when its interfaces are exactly `lo`;
