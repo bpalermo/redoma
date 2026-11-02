@@ -241,12 +241,18 @@ at v1.40.2), so Envoy's standard and distroless builds carry it.
   string, so a request with any query is a 403: MCP's Streamable HTTP
   needs none, and a query would be a second channel, besides the headers,
   through which the agent could configure a server.
-- **A body only on POST.** GET (the session's event stream) and DELETE
-  (the session's end) are allowed on the method, because the MCP filter
-  passes them before reading any body. So RBAC allows them only without a
-  body: no `content-length` other than 0 and no `transfer-encoding`. An
-  HTTP/2 request can still send DATA without either header, so that a
-  server ignores a GET or DELETE body is a step of the upgrade checklist.
+- **Only POST reaches a server.** The MCP filter passes GET (the
+  session's event stream) and DELETE (the session's end) before reading
+  any body, and nothing on the path can see a body that comes without a
+  `content-length`: Envoy's HTTP/1 codec removes `transfer-encoding`
+  before the filters run, and HTTP/2 sends DATA with neither header (the
+  integration test shows a chunked GET passing a header check). A body on
+  them would reach the server unparsed. So RBAC allows GET and DELETE on
+  the method alone, and the route answers both itself with a 405 (`Allow:
+  POST`), which MCP's Streamable HTTP lets a server send for either; they
+  never reach the server. An upstream must therefore work without a
+  server-sent stream on GET and without a client's DELETE, which a
+  stateless HTTP mode does (Grafana's and GitHub's both are).
 - **Argument constraints.** An extraction rule makes an argument visible to
   RBAC, so a tool can be allowed only with, say, `owner` = `example-org`
   and `repo` = `example-repo`, or a `branch` that starts with
@@ -647,9 +653,10 @@ exists; its tool check must list the tool.
 **`route_for` and sessions.** A `tools/call` routed to the second instance
 carries the `Mcp-Session-Id` the first instance gave the client. A
 stateless server (Grafana's, `main.go:1383-1387`, and GitHub's,
-`pkg/http/handler.go:261`, run their SDK's handler stateless) ignores it; a server that keeps sessions does not know it, and
-refuses the call. So `route_for` is for servers whose HTTP mode is
-stateless, which the upgrade checklist confirms for both instances.
+`pkg/http/handler.go:261`, run their SDK's handler stateless) ignores
+it; a server that keeps sessions does not know it, and refuses the call.
+So `route_for` is for servers whose HTTP mode is stateless, which the
+upgrade checklist confirms for both instances.
 
 ### The person's token, and what GitHub does not stop
 
@@ -968,8 +975,8 @@ written checklist, gone through before the digest moves:
 - the parser its dispatch and each allowed tool's argument decoding use
   (case, duplicate keys) against Envoy's, for every argument a constraint
   names ("The rule that follows");
-- that it ignores a body on GET and DELETE, and any query string;
-- that its HTTP mode is still stateless, where `route_for` sends a tool
+- that its HTTP mode is still stateless: it needs no GET stream and no
+  DELETE (Envoy answers both with a 405), and `route_for` can send a tool
   to another instance;
 - that it verifies its backend's TLS certificate, against which roots,
   and which flags or variables turn that off or change the roots;
