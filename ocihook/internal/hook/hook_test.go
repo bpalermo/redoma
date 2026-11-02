@@ -108,6 +108,12 @@ func newHook(cp *fakeCP, m *fakeMounter) (*Hook, *bytes.Buffer) {
 		Forbidden: testForbidden,
 		Graphroot: testGraphroot,
 		Runroot:   T(Runroot),
+		// No subordinate ids unless a test writes them (upstreamHook),
+		// and none read from the host's files or user database.
+		SubUID:         T(SubUID),
+		SubGID:         T(SubGID),
+		SubIDOwner:     uint32(os.Getuid()),
+		SubordinateUID: "999",
 	}, &log
 }
 

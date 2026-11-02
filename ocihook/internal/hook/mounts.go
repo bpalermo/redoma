@@ -147,7 +147,47 @@ func (pl policy) checkMount(m map[string]json.RawMessage, what string) error {
 			return fmt.Errorf("the container mounts %s, which reaches %s: an agent never sees the host's control plane, SPIRE or Podman", source, f)
 		}
 	}
+	if pl.allowed != "" {
+		return pl.checkUpstreamBind(m, what, source, real, options)
+	}
 	return nil
+}
+
+// checkUpstreamBind holds an MCP upstream's bind to its own rules. An
+// idmapped bind (an idmap or ridmap option, or mappings of the mount's
+// own) lets the upstream's root, an unprivileged host id, own what host
+// root owns under it: only its credential directory may be one, and that
+// directory, or anything in it, only read-only, so the container cannot
+// leave entries where the root copier writes.
+func (pl policy) checkUpstreamBind(m map[string]json.RawMessage, what, source, real string, options []string) error {
+	var uidMappings, gidMappings []json.RawMessage
+	if err := field(m, "uidMappings", what, &uidMappings); err != nil {
+		return fmt.Errorf("the container's spec: %w", err)
+	}
+	if err := field(m, "gidMappings", what, &gidMappings); err != nil {
+		return fmt.Errorf("the container's spec: %w", err)
+	}
+	mapped := len(uidMappings) > 0 || len(gidMappings) > 0 || slices.ContainsFunc(options, isIdmapOption)
+	inOwn := pl.inAllowed(filepath.Clean(source)) && pl.inAllowed(real)
+	switch {
+	case mapped && !inOwn:
+		return fmt.Errorf("the container binds %s idmapped: only an MCP upstream's own credential directory may be", source)
+	case inOwn && !slices.Contains(options, "ro"):
+		return fmt.Errorf("the container binds its credential directory %s writable: it is read-only (ro)", source)
+	}
+	return nil
+}
+
+// inAllowed says that p is the upstream's credential directory, or in it.
+func (pl policy) inAllowed(p string) bool {
+	return p == pl.allowed || strings.HasPrefix(p, pl.allowed+"/")
+}
+
+// isIdmapOption is a mount option that idmaps the mount: idmap or ridmap,
+// with or without its mappings (idmap=uids=...;gids=...).
+func isIdmapOption(o string) bool {
+	name, _, _ := strings.Cut(o, "=")
+	return name == "idmap" || name == "ridmap"
 }
 
 // mountEntry is one line of a mountinfo: the device, the path within the

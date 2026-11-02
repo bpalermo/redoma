@@ -333,6 +333,12 @@ type Hook struct {
 	// SubUID and SubGID are the subordinate id files (SubUID, SubGID unless
 	// a test sets its own).
 	SubUID, SubGID string
+	// SubIDOwner is the uid that must own them and their directory: 0,
+	// root, unless a test sets its own.
+	SubIDOwner uint32
+	// SubordinateUID is SubordinateUser's uid, for its entries written by
+	// number: "" looks it up in the host's user database.
+	SubordinateUID string
 	// TokenRoot is UpstreamTokenRoot unless a test sets its own.
 	TokenRoot string
 	// Interfaces lists a mounted network namespace's interfaces; nil is

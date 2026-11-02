@@ -944,7 +944,12 @@ subordinate ids of the user `containers` (podman-run(1) of Podman 4.9,
   entry falls in the `containers` ranges, so no agent shares an id with an
   upstream's process. For an upstream it requires the opposite: a `user`
   namespace entry whose mappings lie wholly inside those ranges and map no
-  host id 0.
+  host id 0. It takes the ranges only from root's `/etc/subuid` and
+  `/etc/subgid`, writable by no one else, and refuses ranges that hold 0
+  or a service's id. No bind of an upstream may be idmapped but its own
+  credential directory's, which is read-only: an idmapped bind of any
+  other host directory would let the upstream's root own what host root
+  owns there.
 - **`--network none` is proven differently.** For an agent the hook reads
   "a network namespace with no path and no user namespace" as proof of
   `--network none`; with a user namespace, Podman creates the network
