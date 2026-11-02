@@ -1,7 +1,8 @@
 # The Debian package of the host side, redoma_<arch>.deb, for amd64 and arm64:
 #
 #   /usr/bin/redoma                                    the binary
-#   /usr/lib/systemd/system/redoma-{xds,relay}.service its units
+#   /usr/lib/systemd/system/redoma-{xds,relay}.service its units, and the
+#     MCP upstreams' templates redoma-mcp@.service, redoma-mcp-token@.{path,service}
 #   /usr/share/containers/oci/hooks.d/redoma-*.json    the OCI hook's definitions
 #   /etc/containers/containers.conf.d/50-redoma-hooks.conf
 #   /usr/lib/sysusers.d/redoma.conf                    its users and groups, 961/963/964
@@ -33,6 +34,9 @@ pkg_files(
     name = "units",
     srcs = [
         "//relay:redoma-relay.service",
+        "//xds:redoma-mcp-token@.path",
+        "//xds:redoma-mcp-token@.service",
+        "//xds:redoma-mcp@.service",
         "//xds:redoma-xds.service",
     ],
     attributes = pkg_attributes(mode = "0644"),

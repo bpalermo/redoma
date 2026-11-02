@@ -6,6 +6,7 @@
 //	redoma msg        the lead's command line for the relay
 //	redoma mcp        the same as MCP tools on stdio
 //	redoma oci-hook   the OCI hook that registers annotated containers
+//	redoma mcp-upstream  a host MCP upstream's container and credential (redoma-mcp@, redoma-mcp-token@)
 //
 // Every subcommand reads the host's settings, /etc/redoma/redoma.conf
 // (--config), and its own flags override them.
@@ -39,7 +40,7 @@ func root() *cobra.Command {
 		SilenceUsage:  true,
 	}
 	cmd.PersistentFlags().String(config.FlagName, config.DefaultPath, "the host's settings file; a file given here must exist")
-	cmd.AddCommand(xds.Command(), relay.Command(), msg.Command(), msg.MCPCommand(), ocihook.Command())
+	cmd.AddCommand(xds.Command(), relay.Command(), msg.Command(), msg.MCPCommand(), ocihook.Command(), xds.UpstreamCommand())
 	return cmd
 }
 

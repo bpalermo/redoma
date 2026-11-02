@@ -35,6 +35,9 @@ drwxr-xr-x root/root usr/bin/
 drwxr-xr-x root/root usr/lib/
 drwxr-xr-x root/root usr/lib/systemd/
 drwxr-xr-x root/root usr/lib/systemd/system/
+-rw-r--r-- root/root usr/lib/systemd/system/redoma-mcp-token@.path
+-rw-r--r-- root/root usr/lib/systemd/system/redoma-mcp-token@.service
+-rw-r--r-- root/root usr/lib/systemd/system/redoma-mcp@.service
 -rw-r--r-- root/root usr/lib/systemd/system/redoma-relay.service
 -rw-r--r-- root/root usr/lib/systemd/system/redoma-xds.service
 drwxr-xr-x root/root usr/lib/sysusers.d/

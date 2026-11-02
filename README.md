@@ -368,6 +368,33 @@ the host Envoy:
 - While Envoy is down no new session can be asked for; the sessions in
   memory are served until they expire.
 
+### MCP upstreams
+
+An agent can use the tools of an existing MCP server (Grafana's, for one)
+without its credential or a route to its backend: the host runs the server
+in a container of its own, with its own credential, and the agent reaches
+it through Envoy at `http://127.0.0.1:8081/mcp/<name>`, where Envoy strips
+any credential header the agent sends and allows only the tools in the
+agent's allowlist. docs/mcp-upstreams.md is the design, with the
+configuration, Grafana's and GitHub's as examples, and what each layer does
+and does not hold.
+
+1. Give `containers` subordinate ids in `/etc/subuid` and `/etc/subgid`,
+   in ranges no host user or group uses (`--userns=auto` allocates from
+   them).
+2. Write `/etc/redoma/mcp/<name>.conf` (the image by digest, its arguments,
+   `token_file`, its egress hosts, the headers to strip) and an allowlist,
+   `/etc/redoma/mcp/<name>/<agent>.conf`, per agent that may use it. Both
+   root's and writable by no one else.
+3. Have the host's minter write the credential somewhere, as a file of
+   its own user's, writable by no one else, on a path of directories only
+   root and that user can write. Add the `redoma-mcp-token@<name>.path`
+   and `.service` drop-ins that name it and, unless the minter is root,
+   its uid (`REDOMA_MCP_TOKEN_OWNER`), and
+   `systemctl enable --now redoma-mcp-token@<name>.path`.
+4. `systemctl enable --now redoma-mcp@<name>`.
+5. Start the agent's shim with `--mcp-upstream=<name>`.
+
 ## The runtime image
 
 The agents run an image with `redoma-shim` as its entrypoint and Claude

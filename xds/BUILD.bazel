@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "xds",
-    srcs = ["command.go"],
+    srcs = [
+        "command.go",
+        "upstream.go",
+    ],
     importpath = "github.com/bpalermo/redoma/xds",
     visibility = ["//visibility:public"],
     deps = [
@@ -19,24 +22,41 @@ go_library(
         "//xds/internal/hostcheck",
         "//xds/internal/identity",
         "//xds/internal/lds",
+        "//xds/internal/mcpconf",
         "//xds/internal/rolesanywhere",
         "//xds/internal/server",
+        "//xds/internal/upstreamrun",
         "@com_github_envoyproxy_go_control_plane//pkg/cache/v3:cache",
         "@com_github_spf13_cobra//:cobra",
         "@com_github_spiffe_go_spiffe_v2//spiffeid",
     ],
 )
 
-# The unit `redoma xds` is installed with.
-exports_files(["redoma-xds.service"])
+# The units `redoma xds` and `redoma mcp-upstream` are installed with.
+exports_files([
+    "redoma-mcp-token@.path",
+    "redoma-mcp-token@.service",
+    "redoma-mcp@.service",
+    "redoma-xds.service",
+])
 
 go_test(
     name = "xds_test",
-    srcs = ["command_test.go"],
+    srcs = [
+        "command_test.go",
+        "upstream_test.go",
+    ],
+    data = [
+        "redoma-mcp-token@.path",
+        "redoma-mcp-token@.service",
+        "redoma-mcp@.service",
+    ],
     embed = [":xds"],
     deps = [
         "//common/config",
         "//xds/internal/hostcheck",
         "//xds/internal/lds",
+        "//xds/internal/mcpconf",
+        "//xds/internal/upstreamrun",
     ],
 )
