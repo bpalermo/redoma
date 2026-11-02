@@ -23,8 +23,9 @@ import (
 // redoma xds out.
 const CheckSocketMode = TunnelSocketMode
 
-// checkMethods are what the tool check sends: the session's start and
-// tools/list, nothing else; a tools/call through it is refused.
+// checkMethods are what the tool check POSTs: the session's start and
+// tools/list, nothing else; a tools/call through it is refused. It ends
+// the session with a DELETE.
 var checkMethods = []string{"initialize", "notifications/initialized", "ping", "tools/list"}
 
 // CheckListenerName names upstream's tool check listener.
@@ -51,8 +52,13 @@ func CheckListener(u *mcpconf.Upstream, socket string) *listenerv3.Listener {
 	}
 	rules := &rbacconfigv3.RBAC{Action: rbacconfigv3.RBAC_ALLOW, Policies: map[string]*rbacconfigv3.Policy{
 		"tool-check": {
-			Permissions: []*rbacconfigv3.Permission{andPerm(methodPerm("POST"), pathPerm(MCPPath(u.Name)), orPerm(methods...))},
-			Principals:  []*rbacconfigv3.Principal{{Identifier: &rbacconfigv3.Principal_Any{Any: true}}},
+			Permissions: []*rbacconfigv3.Permission{andPerm(pathPerm(MCPPath(u.Name)), orPerm(
+				andPerm(methodPerm("POST"), orPerm(methods...)),
+				// The check's end of its session. Only redoma xds reaches
+				// this listener, so a body on it is no agent's.
+				methodPerm("DELETE"),
+			))},
+			Principals: []*rbacconfigv3.Principal{{Identifier: &rbacconfigv3.Principal_Any{Any: true}}},
 		},
 	}}
 	// The server's whole static ceiling: none of the per-agent headers an

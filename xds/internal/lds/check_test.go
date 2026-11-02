@@ -48,6 +48,8 @@ func TestCheckListener(t *testing.T) {
 		{"tools/call", call(p, "read_page", nil), false},
 		{"resources/list", lifecycleCall(p, "resources/list"), false},
 		{"GET", request{path: p, httpMethod: "GET"}, false},
+		{"DELETE, the session's end", request{path: p, httpMethod: "DELETE"}, true},
+		{"DELETE elsewhere", request{path: "/mcp/grafana", httpMethod: "DELETE"}, false},
 		{"GET, as if it had been parsed", request{path: p, httpMethod: "GET", meta: map[string]any{"method": "tools/list"}}, false},
 		{"another path", lifecycleCall("/mcp/grafana", "tools/list"), false},
 		{"a query", lifecycleCall(p+"?x=y", "tools/list"), false},

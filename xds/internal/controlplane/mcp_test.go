@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -509,4 +510,45 @@ func TestAllowlistMismatch(t *testing.T) {
 	if refusal, warning := c.allowlistMismatch("g", own); refusal != "" || warning != "" {
 		t.Errorf("off: %q, %q", refusal, warning)
 	}
+}
+
+// An answer that comes after the container, or the file's port or path,
+// changed is not the upstream's any more: it is dropped, and the check
+// still waits for the new one's.
+func TestToolCheckDropsALateAnswer(t *testing.T) {
+	c := New(Config{EtcDir: t.TempDir()}, nil, nil, nil, slog.New(slog.DiscardHandler))
+	old := checkKey{netns: agent.NetnsID{Dev: 9, Ino: 1}, port: 8000, path: "/mcp"}
+	for _, now := range []checkKey{
+		{netns: agent.NetnsID{Dev: 9, Ino: 2}, port: 8000, path: "/mcp"},
+		{netns: old.netns, port: 8001, path: "/mcp"},
+		{netns: old.netns, port: 8000, path: "/other"},
+	} {
+		c.checks["g"] = &toolCheck{key: now, asking: true}
+		c.checked("g", old, []string{"a"}, nil)
+		if ch := c.checks["g"]; ch.done || !ch.asking || ch.tools != nil {
+			t.Errorf("an answer for %+v taken for %+v: %+v", old, now, ch)
+		}
+	}
+	ch := &toolCheck{key: old, asking: true}
+	c.checks["g"] = ch
+	c.checked("g", old, []string{"a"}, nil)
+	if !ch.done || ch.asking || !slices.Equal(ch.tools, []string{"a"}) {
+		t.Errorf("the answer for the container asked about was dropped: %+v", ch)
+	}
+}
+
+// A change of the file's port or path asks the same container again: the
+// answer was for what the old file reached.
+func TestToolCheckAskedAgainOnAFileChange(t *testing.T) {
+	m, f := newCheckEnv(t)
+	m.file(t, "grafana.conf", checkedConf("refuse"))
+	f.set("grafana", []string{"search_dashboards"})
+	m.register("grafana", "/run/netns/redoma-mcp-x")
+	m.eventually(t, "the upstream", func(v view) bool { return has(v.listeners, "upstream_grafana_egress") })
+	asked := f.count("grafana")
+	m.file(t, "grafana.conf", strings.Replace(checkedConf("refuse"), "port = 8000", "port = 8002", 1))
+	m.eventually(t, "asked again after the port changed", func(view) bool { return f.count("grafana") > asked })
+	asked = f.count("grafana")
+	m.file(t, "grafana.conf", strings.Replace(strings.Replace(checkedConf("refuse"), "port = 8000", "port = 8002", 1), "path = /mcp", "path = /v2/mcp", 1))
+	m.eventually(t, "asked again after the path changed", func(view) bool { return f.count("grafana") > asked })
 }

@@ -20,7 +20,11 @@ host without `/etc/redoma/mcp`.
   socket in `--mcp-check-dir` (`/run/redoma/xds/mcp-check`, made 0770), and
   under `refuse` publishes nothing of an upstream until it has answered;
   a tool a file names that the server does not list invalidates that file.
-  Tools the server lists and no file names are logged.
+  Tools the server lists and no file names are logged. The answer is not
+  kept across a restart of `redoma xds`: under `refuse`, every restart
+  (an upgrade's included) takes the agents' MCP routes away until the
+  upstream has answered again, about a second, or a scan interval when it
+  is slow. Use `warn` for an upstream that must not drop out.
 - New: `/etc/redoma/mcp/<name>.conf` and per-agent allowlists
   `/etc/redoma/mcp/<name>/<agent>.conf`; `redoma mcp-upstream`;
   `redoma-shim --mcp-upstream=<name>` (repeatable) and `--mcp-listener`,

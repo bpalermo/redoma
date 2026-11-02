@@ -884,7 +884,11 @@ arguments. A tool allowed without constraints is always written
     the upstream, in `_default.conf` every agent's list for the upstream,
     in an agent's file that agent's list alone. Under `refuse`, an upstream
     is not published until it has answered: one that cannot be asked
-    fails, and is asked again at the next scan;
+    fails, and is asked again at the next scan. The answer is not kept
+    across a restart of `redoma xds`, so after every restart the agents'
+    routes to such an upstream are gone (a 404) until it has answered
+    again: about a second, or a scan interval when the first questions
+    fail. `warn` keeps them through the restart;
   - `warn`: the mismatch is logged, and everything is published as if
     there were none, before the answer too (the call fails at the server
     instead);
@@ -901,9 +905,14 @@ arguments. A tool allowed without constraints is always written
   `/run/redoma/xds/mcp-check` (`--mcp-check-dir`), routed to the
   upstream's cluster and allowing only `initialize`,
   `notifications/initialized`, `ping` and `tools/list`, POSTed to
-  `/mcp/<upstream>`. It sends no header but the protocol's, and the route
+  `/mcp/<upstream>`, and the DELETE that ends the check's session (a
+  server that keeps sessions is never left with one open, however often
+  it is asked). It sends no header but the protocol's, and the route
   adds none of the per-agent ones, so the server lists its whole static
-  ceiling. A question that fails is asked again every second for 30
+  ceiling. The answer is held only for the container, port and path it
+  was asked through: a change of the `.conf`'s `port` or `path` asks
+  again, and an answer that comes after one is dropped. A question that
+  fails is asked again every second for 30
   seconds (Envoy may not have bound the listener yet).
 - An agent has an upstream when its own file under that upstream exists.
   Without it, `/mcp/<upstream>` is a 404 for that agent.

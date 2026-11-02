@@ -35,9 +35,24 @@ import (
 //
 // Tools the server lists and no file names are logged, whatever the mode.
 
+// checkKey is what an answer holds for: the upstream's container (its
+// namespace), and the port and path its file sends requests to. Either
+// changing asks again.
+type checkKey struct {
+	netns agent.NetnsID
+	port  uint32
+	path  string
+}
+
+// keyOf is the key of upstream name now: its container and its file.
+func (c *Controller) keyOf(name string) checkKey {
+	conf := c.mcpConfs[name]
+	return checkKey{netns: c.upstreams[name].NetnsID, port: conf.Port, path: conf.Path}
+}
+
 // toolCheck is the answer of one upstream's container.
 type toolCheck struct {
-	netns agent.NetnsID
+	key checkKey
 	// asking while a question is out; done once answered, tools the
 	// answer; err the last failure, failed when it came.
 	asking bool
@@ -69,7 +84,7 @@ func (c *Controller) checking(name string) bool {
 // that failed, once a scan has passed).
 func (c *Controller) updateChecks() {
 	for name, ch := range c.checks {
-		if !c.checking(name) || c.upstreams[name].NetnsID != ch.netns {
+		if !c.checking(name) || c.keyOf(name) != ch.key {
 			delete(c.checks, name)
 		}
 	}
@@ -77,24 +92,24 @@ func (c *Controller) updateChecks() {
 		if !c.checking(name) {
 			continue
 		}
-		u := c.upstreams[name]
+		key := c.keyOf(name)
 		ch := c.checks[name]
 		if ch == nil {
-			ch = &toolCheck{netns: u.NetnsID}
+			ch = &toolCheck{key: key}
 			c.checks[name] = ch
 		}
 		if ch.done || ch.asking || (!ch.failed.IsZero() && time.Since(ch.failed) < c.cfg.ScanInterval) || c.ctx == nil {
 			continue
 		}
 		ch.asking = true
-		go c.ask(c.ctx, name, u.NetnsID)
+		go c.ask(c.ctx, name, key)
 	}
 }
 
-// ask asks name's container (netns) for its tools, again every CheckRetry
+// ask asks name's container (key) for its tools, again every CheckRetry
 // for CheckTimeout while it fails (Envoy may not have bound the check
 // listener yet), and hands the answer to Run.
-func (c *Controller) ask(ctx context.Context, name string, netns agent.NetnsID) {
+func (c *Controller) ask(ctx context.Context, name string, key checkKey) {
 	retry, timeout := c.cfg.CheckRetry, c.cfg.CheckTimeout
 	if retry <= 0 {
 		retry = time.Second
@@ -107,7 +122,7 @@ func (c *Controller) ask(ctx context.Context, name string, netns agent.NetnsID) 
 	for {
 		tools, err := c.askTools(ctx, socket, lds.MCPPath(name))
 		if err == nil || ctx.Err() != nil || time.Now().After(deadline) {
-			c.send(ctx, func(c *Controller) { c.checked(name, netns, tools, err) })
+			c.send(ctx, func(c *Controller) { c.checked(name, key, tools, err) })
 			return
 		}
 		select {
@@ -118,10 +133,11 @@ func (c *Controller) ask(ctx context.Context, name string, netns agent.NetnsID) 
 	}
 }
 
-// checked records an answer, if it is still the container's.
-func (c *Controller) checked(name string, netns agent.NetnsID, tools []string, err error) {
+// checked records an answer, if it is still for the container and file
+// asked about: one that comes after either changed is dropped.
+func (c *Controller) checked(name string, key checkKey, tools []string, err error) {
 	ch := c.checks[name]
-	if ch == nil || ch.netns != netns {
+	if ch == nil || ch.key != key {
 		return
 	}
 	ch.asking = false
