@@ -51,6 +51,7 @@ go_test(
         "//xds/internal/identity",
         "//xds/internal/identity/identitytest",
         "//xds/internal/lds",
+        "//xds/internal/mcpconf",
         "//xds/internal/modelauth",
         "//xds/internal/rolesanywhere",
         "//xds/internal/rolesanywhere/rolesanywheretest",
