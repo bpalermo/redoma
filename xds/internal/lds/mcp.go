@@ -62,12 +62,14 @@ type MCPRoute struct {
 //     duplicate keys refused) and extracts method, params.name and the
 //     arguments the allowlists constrain;
 //   - RBAC allows, per upstream path (the whole :path, so no query
-//     string), the lifecycle methods, GET and DELETE of the session without
-//     a body, and tools/call of the agent's tools under their constraints;
-//     nothing else;
-//   - the router sends each path to its upstream's cluster, a route_for
-//     tool to its own upstream's (targets, the upstreams that are up; a
-//     target that is not gets a 503).
+//     string), the lifecycle methods, GET and DELETE, and tools/call of the
+//     agent's tools under their constraints; nothing else;
+//   - the router answers GET and DELETE itself with a 405: the MCP filter
+//     passes them unparsed, and no header tells whether a body follows
+//     (HTTP/1's transfer-encoding is gone by then, HTTP/2 needs none), so
+//     only POST reaches a server. It sends each path to its upstream's
+//     cluster, a route_for tool to its own upstream's (targets, the
+//     upstreams that are up; a target that is not gets a 503).
 func MCPListener(netns, repo string, routes []MCPRoute, targets map[string]*mcpconf.Upstream, strip Strip) *listenerv3.Listener {
 	routes = slices.Clone(routes)
 	slices.SortFunc(routes, func(a, b MCPRoute) int { return strings.Compare(a.Upstream.Name, b.Upstream.Name) })
@@ -180,7 +182,7 @@ func mcpRBAC(routes []MCPRoute) *rbacv3.RBAC {
 			continue
 		}
 		allowed := []*rbacconfigv3.Permission{
-			andPerm(orPerm(methodPerm("GET"), methodPerm("DELETE")), noBodyPerm()),
+			orPerm(methodPerm("GET"), methodPerm("DELETE")),
 		}
 		for _, m := range lifecycle {
 			allowed = append(allowed, metadataPerm(m, "method"))
@@ -273,31 +275,20 @@ func pathPerm(path string) *rbacconfigv3.Permission {
 	})
 }
 
-// noBodyPerm matches a request that announces no body: content-length
-// absent or 0, and no transfer-encoding. The MCP filter passes GET and
-// DELETE before reading a body, so a body on them would reach the server
-// unparsed. (HTTP/2 can send DATA with neither header; that a server
-// ignores such a body is the upgrade checklist's.)
-func noBodyPerm() *rbacconfigv3.Permission {
-	return andPerm(
-		orPerm(
-			headerPerm(&routev3.HeaderMatcher{Name: "content-length", HeaderMatchSpecifier: &routev3.HeaderMatcher_PresentMatch{PresentMatch: false}}),
-			headerPerm(&routev3.HeaderMatcher{Name: "content-length", HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{StringMatch: exact("0")}}),
-		),
-		headerPerm(&routev3.HeaderMatcher{Name: "transfer-encoding", HeaderMatchSpecifier: &routev3.HeaderMatcher_PresentMatch{PresentMatch: false}}),
-	)
-}
-
 func headerPerm(h *routev3.HeaderMatcher) *rbacconfigv3.Permission {
 	return &rbacconfigv3.Permission{Rule: &rbacconfigv3.Permission_Header{Header: h}}
 }
 
-// mcpRoutes routes each upstream's path to its cluster, a route_for tool to
-// its target's first, and anything else to a 404.
+// mcpRoutes answers GET and DELETE of each upstream's path with a 405,
+// routes its other requests to its cluster, a route_for tool to its
+// target's first, and anything else to a 404.
 func mcpRoutes(routes []MCPRoute, targets map[string]*mcpconf.Upstream) *routev3.RouteConfiguration {
 	var list []*routev3.Route
 	for _, r := range routes {
 		u := r.Upstream
+		for _, m := range []string{"GET", "DELETE"} {
+			list = append(list, methodNotAllowed(MCPPath(u.Name), m))
+		}
 		tools := ""
 		if r.Allowlist != nil {
 			tools = strings.Join(r.Allowlist.Tools(), ",")
@@ -331,6 +322,26 @@ func mcpRoutes(routes []MCPRoute, targets map[string]*mcpconf.Upstream) *routev3
 		Domains: []string{"*"},
 		Routes:  list,
 	}}}
+}
+
+// methodNotAllowed answers method on path with a 405 and Allow: POST, as
+// MCP's Streamable HTTP lets a server answer GET (no event stream) and
+// DELETE (no client-ended session).
+func methodNotAllowed(path, method string) *routev3.Route {
+	return &routev3.Route{
+		Match: &routev3.RouteMatch{
+			PathSpecifier: &routev3.RouteMatch_Path{Path: path},
+			Headers: []*routev3.HeaderMatcher{{
+				Name:                 ":method",
+				HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{StringMatch: exact(method)},
+			}},
+		},
+		Action: &routev3.Route_DirectResponse{DirectResponse: &routev3.DirectResponseAction{Status: 405}},
+		ResponseHeadersToAdd: []*corev3.HeaderValueOption{{
+			Header:       &corev3.HeaderValue{Key: "allow", Value: "POST"},
+			AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+		}},
+	}
 }
 
 // upstreamRoute sends match to u's cluster: the path rewritten to the

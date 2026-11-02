@@ -27,6 +27,56 @@
           {
            "match": {
             "path": "/mcp/docs",
+            "headers": [
+             {
+              "name": ":method",
+              "string_match": {
+               "exact": "GET"
+              }
+             }
+            ]
+           },
+           "direct_response": {
+            "status": 405
+           },
+           "response_headers_to_add": [
+            {
+             "header": {
+              "key": "allow",
+              "value": "POST"
+             },
+             "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
+            }
+           ]
+          },
+          {
+           "match": {
+            "path": "/mcp/docs",
+            "headers": [
+             {
+              "name": ":method",
+              "string_match": {
+               "exact": "DELETE"
+              }
+             }
+            ]
+           },
+           "direct_response": {
+            "status": 405
+           },
+           "response_headers_to_add": [
+            {
+             "header": {
+              "key": "allow",
+              "value": "POST"
+             },
+             "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
+            }
+           ]
+          },
+          {
+           "match": {
+            "path": "/mcp/docs",
             "dynamic_metadata": [
              {
               "filter": "envoy.filters.http.mcp",
@@ -123,6 +173,56 @@
              "header": {
               "key": "x-mcp-tools",
               "value": "publish,read_page"
+             },
+             "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
+            }
+           ]
+          },
+          {
+           "match": {
+            "path": "/mcp/grafana",
+            "headers": [
+             {
+              "name": ":method",
+              "string_match": {
+               "exact": "GET"
+              }
+             }
+            ]
+           },
+           "direct_response": {
+            "status": 405
+           },
+           "response_headers_to_add": [
+            {
+             "header": {
+              "key": "allow",
+              "value": "POST"
+             },
+             "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
+            }
+           ]
+          },
+          {
+           "match": {
+            "path": "/mcp/grafana",
+            "headers": [
+             {
+              "name": ":method",
+              "string_match": {
+               "exact": "DELETE"
+              }
+             }
+            ]
+           },
+           "direct_response": {
+            "status": 405
+           },
+           "response_headers_to_add": [
+            {
+             "header": {
+              "key": "allow",
+              "value": "POST"
              },
              "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
             }
@@ -238,60 +338,22 @@
                  "or_rules": {
                   "rules": [
                    {
-                    "and_rules": {
+                    "or_rules": {
                      "rules": [
                       {
-                       "or_rules": {
-                        "rules": [
-                         {
-                          "header": {
-                           "name": ":method",
-                           "string_match": {
-                            "exact": "GET"
-                           }
-                          }
-                         },
-                         {
-                          "header": {
-                           "name": ":method",
-                           "string_match": {
-                            "exact": "DELETE"
-                           }
-                          }
-                         }
-                        ]
+                       "header": {
+                        "name": ":method",
+                        "string_match": {
+                         "exact": "GET"
+                        }
                        }
                       },
                       {
-                       "and_rules": {
-                        "rules": [
-                         {
-                          "or_rules": {
-                           "rules": [
-                            {
-                             "header": {
-                              "name": "content-length",
-                              "present_match": false
-                             }
-                            },
-                            {
-                             "header": {
-                              "name": "content-length",
-                              "string_match": {
-                               "exact": "0"
-                              }
-                             }
-                            }
-                           ]
-                          }
-                         },
-                         {
-                          "header": {
-                           "name": "transfer-encoding",
-                           "present_match": false
-                          }
-                         }
-                        ]
+                       "header": {
+                        "name": ":method",
+                        "string_match": {
+                         "exact": "DELETE"
+                        }
                        }
                       }
                      ]
@@ -512,60 +574,22 @@
                  "or_rules": {
                   "rules": [
                    {
-                    "and_rules": {
+                    "or_rules": {
                      "rules": [
                       {
-                       "or_rules": {
-                        "rules": [
-                         {
-                          "header": {
-                           "name": ":method",
-                           "string_match": {
-                            "exact": "GET"
-                           }
-                          }
-                         },
-                         {
-                          "header": {
-                           "name": ":method",
-                           "string_match": {
-                            "exact": "DELETE"
-                           }
-                          }
-                         }
-                        ]
+                       "header": {
+                        "name": ":method",
+                        "string_match": {
+                         "exact": "GET"
+                        }
                        }
                       },
                       {
-                       "and_rules": {
-                        "rules": [
-                         {
-                          "or_rules": {
-                           "rules": [
-                            {
-                             "header": {
-                              "name": "content-length",
-                              "present_match": false
-                             }
-                            },
-                            {
-                             "header": {
-                              "name": "content-length",
-                              "string_match": {
-                               "exact": "0"
-                              }
-                             }
-                            }
-                           ]
-                          }
-                         },
-                         {
-                          "header": {
-                           "name": "transfer-encoding",
-                           "present_match": false
-                          }
-                         }
-                        ]
+                       "header": {
+                        "name": ":method",
+                        "string_match": {
+                         "exact": "DELETE"
+                        }
                        }
                       }
                      ]
