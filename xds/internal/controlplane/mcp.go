@@ -90,6 +90,18 @@ func (c *Controller) readMCP() {
 		c.mcpConfs = confs
 		c.dirty = true
 	}
+	c.updateChecks()
+	blocked := c.checkBlocks()
+	for _, name := range slices.Sorted(maps.Keys(blocked)) {
+		if c.mcpBlocked[name] != blocked[name] {
+			c.log.Warn("MCP upstream held back by its tool check (tool_check = refuse); nothing of it is published", "upstream", name, "why", blocked[name])
+		}
+	}
+	if !reflect.DeepEqual(blocked, c.mcpBlocked) {
+		c.mcpBlocked = blocked
+		c.dirty = true
+	}
+	c.warnMismatches()
 	for _, a := range c.agents {
 		c.readAgentMCP(a)
 	}
@@ -99,20 +111,31 @@ func (c *Controller) readMCP() {
 func (c *Controller) readAgentMCP(a *running) {
 	dir := c.mcpDir()
 	var routes []lds.MCPRoute
-	errs := map[string]string{}
+	errs, warns := map[string]string{}, map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(c.upTargets())) {
 		al, err := dir.ReadAllowlist(name, a.agent.ID)
-		if err != nil {
-			errs[name] = err.Error()
-			routes = append(routes, lds.MCPRoute{Upstream: c.mcpConfs[name]})
-			continue
+		refusal, warning := c.allowlistMismatch(name, al)
+		if warning != "" {
+			warns[name] = warning
 		}
-		if al != nil {
+		if err != nil {
+			refusal = err.Error()
+		}
+		if refusal != "" {
+			errs[name] = refusal
+			routes = append(routes, lds.MCPRoute{Upstream: c.mcpConfs[name]})
+		} else if al != nil {
 			routes = append(routes, lds.MCPRoute{Upstream: c.mcpConfs[name], Allowlist: al})
 		}
 	}
 	c.logMCPErrors("MCP allowlist invalid; the agent's calls to the upstream are refused", "upstream", a.mcpErrs, errs, "agent", a.agent.ID)
 	a.mcpErrs = errs
+	for _, name := range slices.Sorted(maps.Keys(warns)) {
+		if a.mcpWarns[name] != warns[name] {
+			c.log.Warn("MCP allowlist names tools the upstream does not list (tool_check = warn: published anyway)", "upstream", name, "agent", a.agent.ID, "err", warns[name])
+		}
+	}
+	a.mcpWarns = warns
 	if !reflect.DeepEqual(routes, a.mcp) {
 		a.mcp = routes
 		c.dirty = true
@@ -128,11 +151,12 @@ func (c *Controller) logMCPErrors(msg, key string, before, now map[string]string
 	}
 }
 
-// upTargets are the upstreams that are up, by name.
+// upTargets are the upstreams that are up, by name: registered, with a
+// valid file, and not held back by their tool check.
 func (c *Controller) upTargets() map[string]*mcpconf.Upstream {
 	out := map[string]*mcpconf.Upstream{}
 	for name := range c.upstreams {
-		if u, ok := c.mcpConfs[name]; ok {
+		if u, ok := c.mcpConfs[name]; ok && c.mcpBlocked[name] == "" {
 			out[name] = u
 		}
 	}
@@ -163,11 +187,15 @@ func (c *Controller) mcpUpstreamListeners() []types.Resource {
 	return out
 }
 
+// mcpClusters are the clusters of the upstreams that are up, and of those
+// their tool check asks, up or not.
 func (c *Controller) mcpClusters() []types.Resource {
 	var out []types.Resource
 	up := c.upTargets()
-	for _, name := range slices.Sorted(maps.Keys(up)) {
-		out = append(out, cds.MCPCluster(name, c.upstreams[name].Netns, up[name].Port))
+	for _, name := range slices.Sorted(maps.Keys(c.upstreams)) {
+		if _, ok := up[name]; ok || c.checking(name) {
+			out = append(out, cds.MCPCluster(name, c.upstreams[name].Netns, c.mcpConfs[name].Port))
+		}
 	}
 	return out
 }

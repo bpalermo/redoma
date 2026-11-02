@@ -883,16 +883,28 @@ arguments. A tool allowed without constraints is always written
     the effect any invalid file of its kind has: in the `.conf` it fails
     the upstream, in `_default.conf` every agent's list for the upstream,
     in an agent's file that agent's list alone. Under `refuse`, an upstream
-    that cannot be asked fails, and is asked again at the next scan;
+    is not published until it has answered: one that cannot be asked
+    fails, and is asked again at the next scan;
   - `warn`: the mismatch is logged, and everything is published as if
-    there were none (the call fails at the server instead);
+    there were none, before the answer too (the call fails at the server
+    instead);
   - `off`: no check, and no request is made.
 
+  A tool named under an upstream that its `route_for` sends to another is
+  compared with that other upstream's tools: the `.conf`'s `route_for`
+  tools with their target's (under `refuse`, the upstream waits until its
+  targets have answered too), an allowlist's routed tools likewise.
+
   The question goes through Envoy, not to the server directly: per
-  upstream, `redoma xds` publishes a check listener on a unix socket in
-  `/run/redoma/xds`, routed to the upstream's cluster and allowing only
-  the lifecycle methods and `tools/list`. It sends no header but the
-  protocol's, so the server lists its whole static ceiling.
+  upstream, `redoma xds` publishes a check listener
+  (`upstream_<upstream>_check`) on a unix socket in
+  `/run/redoma/xds/mcp-check` (`--mcp-check-dir`), routed to the
+  upstream's cluster and allowing only `initialize`,
+  `notifications/initialized`, `ping` and `tools/list`, POSTed to
+  `/mcp/<upstream>`. It sends no header but the protocol's, and the route
+  adds none of the per-agent ones, so the server lists its whole static
+  ceiling. A question that fails is asked again every second for 30
+  seconds (Envoy may not have bound the listener yet).
 - An agent has an upstream when its own file under that upstream exists.
   Without it, `/mcp/<upstream>` is a 404 for that agent.
 - The route stays published for as long as the agent is, between turns
@@ -917,7 +929,7 @@ Envoy.
 |---|---|---|
 | `/run/redoma-mcp/<upstream>/` | root, 0700 | the upstream's credential, `token`, copied by `redoma-mcp-token@<upstream>.service` |
 | `/run/netns/redoma-mcp-<container ID>` | the hook | each upstream container's namespace, as for agents |
-| `/run/redoma/xds/mcp-check-<upstream>.sock` | root (Envoy binds it), 0666, in `redoma-sds`'s 0750 directory | the tool check's listener, which only `redoma xds` and root reach |
+| `/run/redoma/xds/mcp-check/mcp-check-<upstream>.sock` | root (Envoy binds it), 0666, in a 0770 directory `redoma xds` makes, in `redoma-sds`'s 0750 `/run/redoma/xds` | the tool check's listener, which only `redoma xds`, the host Envoy and root reach |
 
 `/run/redoma-mcp` is outside `/run/redoma` because the hook refuses every
 mount from `/run/redoma`, for agents and upstreams alike. An upstream's
@@ -929,9 +941,12 @@ listener's socket (a `Pipe` address, which has only a `path` and a `mode`,
 `api/envoy/config/core/v3/address.proto:23-34`). It runs as root, so the
 socket is root's; after the bind it applies `mode` with a `chmod` and
 changes no owner (`source/common/network/socket_impl.cc:73-79`). The
-listener's mode is `0666`, and what limits it is `/run/redoma/xds`, `0750`
-`redoma-sds`: only uid 961, members of `redoma-sds` (the host Envoy) and
-root reach a path in it, the same principals that reach `xds.sock`.
+listener's mode is `0666`, and what limits it is its directories:
+`/run/redoma/xds`, `0750` `redoma-sds`, and in it
+`/run/redoma/xds/mcp-check`, `0770` (Envoy, root with only its
+supplementary groups' rights, creates the socket through the group, as it
+does the tunnels'): only uid 961, members of `redoma-sds` (the host Envoy)
+and root reach a path in it, the same principals that reach `xds.sock`.
 
 ### Users
 

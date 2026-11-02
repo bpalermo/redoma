@@ -171,3 +171,33 @@ func TestReadAllowlistRefusesAnUntrustedParent(t *testing.T) {
 		t.Errorf("a world-writable mcp/: err = %v", err)
 	}
 }
+
+// The defaults' file alone, and the agents with a file of their own.
+func TestReadDefaultsAndAgents(t *testing.T) {
+	d := testDir(t)
+	if got, err := d.ReadDefaults("u"); got != nil || err != nil {
+		t.Errorf("no defaults: %v, %v", got, err)
+	}
+	if got, err := d.Agents("u"); got != nil || err != nil {
+		t.Errorf("no directory: %v, %v", got, err)
+	}
+	write(t, d.AllowlistPath("u", Default), "tool_unconstrained = a\n")
+	write(t, d.AllowlistPath("u", "beta"), "tool_unconstrained = b\n")
+	write(t, d.AllowlistPath("u", "alpha"), "tool_unconstrained = c\n")
+	write(t, filepath.Join(d.Etc, "mcp", "u", "Bad_Name.conf"), "")
+	write(t, filepath.Join(d.Etc, "mcp", "u", "notes.txt"), "")
+	got, err := d.ReadDefaults("u")
+	if err != nil || !slices.Equal(got.Tools(), []string{"a"}) {
+		t.Errorf("ReadDefaults = %v, %v", got, err)
+	}
+	if names, err := d.Agents("u"); err != nil || !slices.Equal(names, []string{"alpha", "beta"}) {
+		t.Errorf("Agents = %q, %v", names, err)
+	}
+	write(t, d.AllowlistPath("u", Default), "tool = a\n")
+	if _, err := d.ReadDefaults("u"); err == nil {
+		t.Error("an invalid defaults file: no error")
+	}
+	if _, err := d.ReadDefaults("_x"); err == nil {
+		t.Error("a bad upstream name: no error")
+	}
+}

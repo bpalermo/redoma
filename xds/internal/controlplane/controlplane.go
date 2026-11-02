@@ -114,6 +114,15 @@ type Config struct {
 	// MCPOwner is the uid that must own <EtcDir>/mcp and its files (the MCP
 	// upstreams' configuration): 0, root, unless a test sets its own.
 	MCPOwner uint32
+	// MCPCheckDir is where Envoy serves each upstream's tool check
+	// listener (lds.CheckSocket); made 0770 for redoma-sds.
+	MCPCheckDir string
+	// AskTools asks an upstream for its tools through its check socket;
+	// nil is toolcheck.Ask. CheckRetry is how long a failed question waits
+	// before it is asked again, for CheckTimeout (1s and 30s when 0).
+	AskTools     func(ctx context.Context, socket, path string) ([]string, error)
+	CheckRetry   time.Duration
+	CheckTimeout time.Duration
 }
 
 type running struct {
@@ -127,10 +136,11 @@ type running struct {
 	awsErr string
 	// mcp are the agent's routes to the MCP upstreams that are up, and
 	// mcpErrs its allowlists' errors, by upstream.
-	mcp     []lds.MCPRoute
-	mcpErrs map[string]string
-	gen     uint64
-	cancel  context.CancelFunc
+	mcp      []lds.MCPRoute
+	mcpErrs  map[string]string
+	mcpWarns map[string]string
+	gen      uint64
+	cancel   context.CancelFunc
 	// sub is the context of its identity subscription, and watching
 	// whether that has started (see Config.SVIDAfterBound).
 	sub      context.Context
@@ -165,6 +175,14 @@ type Controller struct {
 	upstreams map[string]agent.Agent
 	mcpConfs  map[string]*mcpconf.Upstream
 	mcpErrs   map[string]string
+	// checks are the upstreams' tool checks; mcpBlocked the upstreams their
+	// check holds back (tool_check = refuse), with why; mcpWarns the
+	// mismatches logged under warn.
+	checks     map[string]*toolCheck
+	mcpBlocked map[string]string
+	mcpWarns   map[string]string
+	// ctx is Run's, for the questions of the tool check.
+	ctx context.Context
 	// removedIn is, per namespace path, the removal of the listeners bound
 	// there; waiting are the agents to bind at a path not yet clear.
 	removedIn map[string]*removal
@@ -209,6 +227,7 @@ func New(cfg Config, source agent.Source, id Identity, c cache.SnapshotCache, lo
 		wakeC:     make(chan struct{}, 1),
 		agents:    map[string]*running{},
 		upstreams: map[string]agent.Agent{},
+		checks:    map[string]*toolCheck{},
 		removedIn: map[string]*removal{},
 		waiting:   map[string]agent.Agent{},
 		upWaiting: map[string]agent.Agent{},
@@ -224,6 +243,7 @@ func New(cfg Config, source agent.Source, id Identity, c cache.SnapshotCache, lo
 func (c *Controller) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	c.ctx = ctx
 	defer func() {
 		for _, a := range c.agents {
 			a.cancel()
@@ -540,6 +560,7 @@ func (c *Controller) listeners() []types.Resource {
 	for _, host := range c.tunnels() {
 		out = append(out, lds.TunnelListener(host, rolesanywhere.TunnelSocket(c.cfg.AWSTunnelDir, host)))
 	}
+	out = append(out, c.mcpCheckListeners()...)
 	return append(out, c.mcpUpstreamListeners()...)
 }
 

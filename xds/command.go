@@ -102,6 +102,7 @@ func command(f *flags) *cobra.Command {
 	fl.StringVar(&f.awsSocketDir, "aws-socket-dir", "/run/redoma/xds/aws", "where each agent with AWS settings (<etc-dir>/aws/<name>.conf) gets its credentials socket. Empty: no AWS credentials for any agent")
 	fl.Uint32Var(&f.awsPort, "aws-credentials-port", lds.DefaultAWSPort, "the port of the AWS credentials listener, 127.0.0.1 in the namespace of each agent with AWS settings: AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1:<port>/v1/credentials")
 	fl.StringVar(&f.cfg.AWSTunnelDir, "aws-tunnel-dir", "/run/redoma/xds/tunnel", "where the host Envoy serves the tunnels to the Roles Anywhere endpoints the AWS settings name; made 0770 for redoma-sds")
+	fl.StringVar(&f.cfg.MCPCheckDir, "mcp-check-dir", "/run/redoma/xds/mcp-check", "where the host Envoy serves each MCP upstream's tool check listener, which redoma xds asks the upstream's tools through; made 0770 for redoma-sds")
 	fl.StringVar(&f.relay.ID, "relay-id", "", "the relay's SPIFFE ID, which Envoy requires of its certificate (default: spiffe://<trust domain>/host/relay)")
 	return cmd
 }
@@ -160,6 +161,9 @@ func run(ctx context.Context, f flags, log *slog.Logger) error {
 		return err
 	}
 	cfg := f.cfg
+	if err := groupDir(cfg.MCPCheckDir); err != nil {
+		return err
+	}
 	if f.awsSocketDir != "" {
 		aws, err := awsCredentials(f, log)
 		if err != nil {
@@ -182,6 +186,15 @@ func run(ctx context.Context, f flags, log *slog.Logger) error {
 		err = err2
 	}
 	return err
+}
+
+// groupDir makes dir 0770: Envoy, root with only its supplementary groups'
+// rights, creates sockets in it through its group, redoma-sds.
+func groupDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o770); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0o770)
 }
 
 // awsCredentials starts the AWS credentials service: its sockets' directory

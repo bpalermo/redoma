@@ -42,9 +42,11 @@ import (
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	"github.com/bpalermo/redoma/common/sockettest"
 	"github.com/bpalermo/redoma/xds/internal/cds"
 	"github.com/bpalermo/redoma/xds/internal/lds"
 	"github.com/bpalermo/redoma/xds/internal/mcpconf"
+	"github.com/bpalermo/redoma/xds/internal/toolcheck"
 )
 
 // grafana records what the fake Grafana was asked, and with which
@@ -239,6 +241,9 @@ type env struct {
 	grafana   *grafana
 	reached   *reachedLog
 	token     string
+	// up is the upstream as the listeners have it, and dir the test's.
+	up  *mcpconf.Upstream
+	dir string
 }
 
 func setup(t *testing.T) *env {
@@ -321,6 +326,84 @@ func setup(t *testing.T) *env {
 		grafana:   g,
 		reached:   reached,
 		token:     token,
+		up:        up,
+		dir:       dir,
+	}
+}
+
+// TestToolCheck: redoma xds's tool check through the real Envoy's check
+// listener, a unix socket: it lists the server's whole ceiling (the
+// read tools, no write tool), and the listener refuses a tools/call. Skipped
+// where unix sockets are refused (run in CI).
+func TestToolCheck(t *testing.T) {
+	probe, err := net.Listen("unix", filepath.Join(sockettest.Dir(t), "probe.sock"))
+	sockettest.SkipIfRefused(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe.Close()
+	e := setup(t)
+	socket := lds.CheckSocket(sockettest.Dir(t), "grafana")
+	config := filepath.Join(e.dir, "check.json")
+	raw, err := protojson.Marshal(&bootstrapv3.Bootstrap{
+		Node: &corev3.Node{Id: "mcpe2e-check", Cluster: "mcpe2e"},
+		StaticResources: &bootstrapv3.Bootstrap_StaticResources{
+			Listeners: []*listenerv3.Listener{lds.CheckListener(e.up, socket)},
+			Clusters:  []*clusterv3.Cluster{cds.MCPCluster("grafana", "", e.up.Port)},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exited := start(t, binary(t, "ENVOY"), nil,
+		"-c", config, "--disable-hot-restart", "--concurrency", "1", "-l", "warning", "--log-format", "%v", "--base-id", "7")
+	var tools []string
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+		select {
+		case err := <-exited:
+			t.Fatalf("envoy exited: %v", err)
+		default:
+		}
+		tools, err = toolcheck.Ask(t.Context(), toolcheck.Unix(socket), lds.MCPPath("grafana"), "test")
+		if err == nil || time.Now().After(deadline) {
+			break
+		}
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"search_dashboards", "list_datasources", "get_datasource"} {
+		if !slices.Contains(tools, want) {
+			t.Errorf("the check's tools %q lack %s", tools, want)
+		}
+	}
+	for _, w := range writeTools {
+		if slices.Contains(tools, w) {
+			t.Errorf("the check lists the write tool %s", w)
+		}
+	}
+	// A tools/call through the check listener is refused before the server.
+	n := e.grafana.count()
+	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return toolcheck.Unix(socket)(ctx)
+	}}}
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_dashboards","arguments":{}}}`
+	req, err := http.NewRequest(http.MethodPost, "http://check"+lds.MCPPath("grafana"), strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden || e.grafana.count() != n {
+		t.Errorf("a tools/call through the check listener: %d, Grafana asked %d times", resp.StatusCode, e.grafana.count()-n)
 	}
 }
 

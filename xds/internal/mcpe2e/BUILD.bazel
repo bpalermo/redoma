@@ -30,9 +30,11 @@ go_test(
     }),
     target_compatible_with = ["@platforms//os:linux"],
     deps = [
+        "//common/sockettest",
         "//xds/internal/cds",
         "//xds/internal/lds",
         "//xds/internal/mcpconf",
+        "//xds/internal/toolcheck",
         "@com_github_envoyproxy_go_control_plane_envoy//config/bootstrap/v3:bootstrap",
         "@com_github_envoyproxy_go_control_plane_envoy//config/cluster/v3:cluster",
         "@com_github_envoyproxy_go_control_plane_envoy//config/core/v3:core",

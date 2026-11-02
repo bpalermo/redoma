@@ -4,6 +4,7 @@ go_library(
     name = "lds",
     srcs = [
         "aws.go",
+        "check.go",
         "lds.go",
         "mcp.go",
         "relay.go",
@@ -50,6 +51,7 @@ go_test(
     name = "lds_test",
     srcs = [
         "bootstrap_test.go",
+        "check_test.go",
         "egress_test.go",
         "lds_test.go",
         "mcp_test.go",
@@ -67,6 +69,7 @@ go_test(
         "//xds/internal/modelauth",
         "@com_github_envoyproxy_go_control_plane_envoy//config/bootstrap/v3:bootstrap",
         "@com_github_envoyproxy_go_control_plane_envoy//config/cluster/v3:cluster",
+        "@com_github_envoyproxy_go_control_plane_envoy//config/core/v3:core",
         "@com_github_envoyproxy_go_control_plane_envoy//config/listener/v3:listener",
         "@com_github_envoyproxy_go_control_plane_envoy//config/rbac/v3:rbac",
         "@com_github_envoyproxy_go_control_plane_envoy//config/route/v3:route",

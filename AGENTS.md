@@ -168,9 +168,13 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
   - `lds`: an agent's listeners, model and egress, its relay listener,
     its AWS credentials listener and its MCP listener (`mcp.go`: header
     removal, the MCP filter, RBAC from its allowlists, routes per
-    upstream), an MCP upstream's egress listener, and the tunnels to Roles
-    Anywhere; `mcp_test.go` evaluates the RBAC policy with a model of
-    Envoy's matchers;
+    upstream), an MCP upstream's egress listener and its tool check
+    listener (`check.go`: a unix socket allowing the session's start and
+    `tools/list` alone), and the tunnels to Roles Anywhere; `mcp_test.go`
+    evaluates the RBAC policy with a model of Envoy's matchers;
+  - `toolcheck`: asks an MCP upstream for its tools (`initialize`, then
+    `tools/list` by cursor) through its check listener; the control plane's
+    `toolcheck.go` holds the answers and what `tool_check` makes of them;
   - `cds`: an agent's relay and AWS credentials clusters, the tunnels',
     and each MCP upstream's, bound in the upstream's namespace;
   - `identity`: the Delegated Identity API client and the Broker API's
