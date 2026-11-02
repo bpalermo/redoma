@@ -94,6 +94,9 @@ const (
 	// came: one shorter than RefreshBefore (a short session_duration, a
 	// clock ahead) must not be asked for again in a loop.
 	DefaultRefreshMin = 5 * time.Second
+	// DefaultListenRetryMax caps the wait between attempts to open a socket,
+	// which doubles from ListenRetry after each failure.
+	DefaultListenRetryMax = 5 * time.Minute
 	// DefaultListenRetry is how long after a socket failed to open it is
 	// tried again.
 	DefaultListenRetry = 5 * time.Second
@@ -113,13 +116,17 @@ type Service struct {
 	Sessions Sessions
 	Log      *slog.Logger
 	// Zero values are the defaults above; Now is time.Now when nil.
-	PerAgentLimit int
-	RefreshBefore time.Duration
-	RequestWait   time.Duration
-	CallTimeout   time.Duration
-	ListenRetry   time.Duration
-	RefreshMin    time.Duration
-	Now           func() time.Time
+	PerAgentLimit  int
+	RefreshBefore  time.Duration
+	RequestWait    time.Duration
+	CallTimeout    time.Duration
+	ListenRetry    time.Duration
+	ListenRetryMax time.Duration
+	RefreshMin     time.Duration
+	Now            func() time.Time
+
+	// listen opens a socket: listen unless a test replaces it.
+	listen func(path string) (net.Listener, error)
 
 	mu     sync.Mutex
 	agents map[string]*state
@@ -150,6 +157,10 @@ type state struct {
 	failures int
 	// lastErr is the last request's error while a retry is scheduled.
 	lastErr error
+	// listenFailures counts the failed attempts to open the socket since
+	// the last that succeeded, and listenErr is the last one's error.
+	listenFailures int
+	listenErr      string
 }
 
 // fetch is a session request in flight; done is closed when it returns.
@@ -187,6 +198,12 @@ func (s *Service) Start() error {
 	}
 	if s.ListenRetry <= 0 {
 		s.ListenRetry = DefaultListenRetry
+	}
+	if s.ListenRetryMax <= 0 {
+		s.ListenRetryMax = DefaultListenRetryMax
+	}
+	if s.listen == nil {
+		s.listen = listen
 	}
 	if s.RefreshMin <= 0 {
 		s.RefreshMin = DefaultRefreshMin
@@ -311,15 +328,20 @@ func (s *Service) open(id string) *state {
 }
 
 // serve opens the agent's socket and serves it. A socket that cannot be
-// opened is logged and tried again after ListenRetry, for as long as the
-// agent is there; meanwhile Envoy's requests fail and the agent's SDK
-// retries. Called with s.mu held.
+// opened is tried again for as long as the agent is there, after
+// ListenRetry, doubling up to ListenRetryMax; meanwhile Envoy's requests
+// fail and the agent's SDK retries. The first failure is logged as an
+// error, a different error after it as a warning, and the rest only at
+// debug level, so a socket that stays unopenable does not flood the log.
+// Called with s.mu held.
 func (s *Service) serve(st *state) {
 	id, ctx := st.id, st.ctx
-	l, err := listen(s.Socket(id))
+	l, err := s.listen(s.Socket(id))
 	if err != nil {
-		s.Log.Error("the agent's AWS credentials socket; trying again", "agent", id, "err", err, "retry_in", s.ListenRetry)
-		time.AfterFunc(s.ListenRetry, func() {
+		st.listenFailures++
+		wait := min(s.ListenRetry<<min(st.listenFailures-1, 16), s.ListenRetryMax)
+		s.logListenFailure(st, err, wait)
+		time.AfterFunc(wait, func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			if s.agents[id] == st && ctx.Err() == nil && st.srv == nil {
@@ -327,6 +349,10 @@ func (s *Service) serve(st *state) {
 			}
 		})
 		return
+	}
+	if st.listenFailures > 0 {
+		s.Log.Info("the agent's AWS credentials socket opened after failing", "agent", id, "failures", st.listenFailures)
+		st.listenFailures, st.listenErr = 0, ""
 	}
 	st.srv = &http.Server{
 		Handler:           s.handler(st),
@@ -340,6 +366,22 @@ func (s *Service) serve(st *state) {
 		}
 	}()
 	s.Log.Info("AWS credentials socket", "agent", id, "socket", s.Socket(id))
+}
+
+// logListenFailure logs a failed attempt to open st's socket: the first
+// as an error, one whose error differs from the last as a warning, any
+// other at debug level.
+func (s *Service) logListenFailure(st *state, err error, wait time.Duration) {
+	msg, attrs := "the agent's AWS credentials socket did not open; trying again", []any{"agent", st.id, "err", err, "failures", st.listenFailures, "retry_in", wait}
+	switch {
+	case st.listenFailures == 1:
+		s.Log.Error(msg, attrs...)
+	case err.Error() != st.listenErr:
+		s.Log.Warn(msg, attrs...)
+	default:
+		s.Log.Debug(msg, attrs...)
+	}
+	st.listenErr = err.Error()
 }
 
 func (s *Service) close(st *state) {

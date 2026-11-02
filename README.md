@@ -256,6 +256,8 @@ role_arn = arn:<partition>:iam::<account>:role/<name>
 
 The three must be in one partition and account, and the trust anchor and
 the profile in one region, which is where the sessions are asked for. The
+region must be one of the partition's: `cn-` regions are `aws-cn`'s,
+`us-gov-` ones `aws-us-gov`'s, every other one `aws`'s. The
 trust anchor holds the CA that issues the agents' SVIDs (SPIRE's). The
 role's trust policy should require the agent's SPIFFE ID, for example a
 condition that `aws:PrincipalTag/x509SAN/URI` equals
@@ -270,7 +272,8 @@ Run the agent's container with:
 -e AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1:9911/v1/credentials
 ```
 
-The port is `redoma xds --aws-credentials-port` (9911 by default). Only
+The port is `redoma xds --aws-credentials-port` (9911 by default), which
+refuses the ports of the agents' other listeners, 8080, 3128 and 7070. Only
 `GET /v1/credentials` is served:
 
 - 200 with `AccessKeyId`, `SecretAccessKey`, `Token` and `Expiration`

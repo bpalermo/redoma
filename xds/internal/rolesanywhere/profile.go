@@ -56,9 +56,10 @@ func parseRolesAnywhere(arn, kind string) (parsed, error) {
 
 // Validate checks the three ARNs and the duration: each ARN in its exact
 // form; the trust anchor's region one of its partition's; the trust anchor
-// and the profile in one partition, region and account, the role in that partition and account (Roles Anywhere maps a
-// certificate to roles of its own account only); the duration in whole
-// seconds between MinDuration and MaxDuration.
+// and the profile in one partition, region and account, the role in that
+// partition and account (Roles Anywhere maps a certificate to roles of its
+// own account only); the duration in whole seconds between MinDuration and
+// MaxDuration.
 func (p Profile) Validate() error {
 	anchor, err := parseRolesAnywhere(p.TrustAnchorARN, "trust-anchor")
 	if err != nil {

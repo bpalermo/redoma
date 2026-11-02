@@ -4,7 +4,11 @@ Changes that a host running redoma must act on, newest first. Until 1.0, a
 release may break what an earlier one set up; each such change is listed
 here with what to do about it.
 
-## Unreleased
+## 0.2.0
+
+Not released yet: its candidates are tagged v0.2.0-rc.<n>, from
+v0.2.0-rc.1, and their packages are versioned 0.2.0~rc.<n>. A host on
+0.1.0, or on any of its candidates, acts on every entry below.
 
 ### New: AWS credentials for the agents that opt in
 
@@ -29,9 +33,10 @@ To use it:
    `AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1:9911/v1/credentials`.
 
 `redoma xds` makes two directories under its own: `/run/redoma/xds/aws`
-(0750) and `/run/redoma/xds/tunnel` (0770). Its unit is unchanged: it still
-has no network, and reaches Roles Anywhere through a tunnel the host Envoy
-serves, with TLS of its own.
+(0750) and `/run/redoma/xds/tunnel` (0770). Its unit's sandbox settings
+are unchanged (only the unit's comments are): it still has no network, and
+reaches Roles Anywhere through a tunnel the host Envoy serves, with TLS of
+its own.
 
 ## 0.1.0
 

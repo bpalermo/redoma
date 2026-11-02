@@ -25,7 +25,10 @@ sh_test(
     name = "release_tag_test",
     size = "small",
     srcs = ["release_tag_test.sh"],
-    data = ["release-tag.sh"],
+    data = [
+        "release-tag.sh",
+        "//:VERSION",
+    ],
 )
 
 # The files a release uploads (release-assets.sh, the `build` job of

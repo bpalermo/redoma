@@ -45,5 +45,19 @@ GITHUB_OUTPUT="${dir}/output" bash "${script}" "${dir}/VERSION" v0.1.0-rc.2 >/de
 	fail=1
 }
 
+# The repository's own VERSION is a release's, never a candidate's: with
+# 0.2.0-rc.1 in it, the tag v0.2.0-rc.1 would publish a final release whose
+# packages are versioned 0.2.0-rc.1, a Debian revision. Its first candidate
+# is a prerelease of <VERSION>~rc.1.
+repo_version="${TEST_SRCDIR}/_main/VERSION"
+v="$(tr -d '[:space:]' <"${repo_version}")"
+if [[ ! ${v} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+	echo "FAIL: VERSION is '${v}', not <major>.<minor>.<patch>" >&2
+	fail=1
+elif ! got="$(bash "${script}" "${repo_version}" "v${v}-rc.1")" || [[ ${got} != "$(printf 'deb=%s~rc.1\nprerelease=true' "${v}")" ]]; then
+	echo "FAIL: v${v}-rc.1 against VERSION: '${got:-}'" >&2
+	fail=1
+fi
+
 [ "${fail}" = 0 ]
 echo "release tags as expected"
