@@ -5,7 +5,9 @@
 // the server uses its configured token, whatever the agent sends; the
 // headers that could override it never reach the server; a tool outside the
 // agent's allowlist, or outside a constraint, is refused before the server;
-// and the server registers no write tool under --disable-write.
+// only the upstream's path, without a query, and only POST reach the
+// server; a case-variant "Name" never runs the tool it names; and the
+// server registers no write tool under --disable-write.
 //
 // Namespaces play no part here: the listener and the cluster are bound on
 // the host's loopback (an empty namespace path), so the test runs
@@ -17,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -93,23 +96,35 @@ func (g *grafana) count() int {
 	return len(g.requests)
 }
 
-// headerLog records the headers of every request that reaches the MCP
-// server (the proxy in front of it, which Envoy's cluster points at).
-type headerLog struct {
-	mu      sync.Mutex
-	headers []http.Header
+// reachedLog records every request that reaches the MCP server (the proxy
+// in front of it, which Envoy's cluster points at): the path and query it
+// asks for, and its headers.
+type reachedLog struct {
+	mu       sync.Mutex
+	requests []reachedRequest
 }
 
-func (h *headerLog) add(hd http.Header) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.headers = append(h.headers, hd.Clone())
+type reachedRequest struct {
+	uri    string // path and query, as the server receives them
+	header http.Header
 }
 
-func (h *headerLog) all() []http.Header {
+func (h *reachedLog) add(r *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return slices.Clone(h.headers)
+	h.requests = append(h.requests, reachedRequest{uri: r.URL.RequestURI(), header: r.Header.Clone()})
+}
+
+func (h *reachedLog) all() []reachedRequest {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.requests)
+}
+
+func (h *reachedLog) count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.requests)
 }
 
 func freePort(t *testing.T) int {
@@ -122,24 +137,46 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-// waitPort waits until something accepts on port.
-func waitPort(t *testing.T, port int, what string, exited <-chan error) {
-	t.Helper()
+// errExited is a process that exited before it listened, as one that lost
+// its port to another process between freePort and its bind does.
+var errExited = errors.New("exited before listening")
+
+// waitPort waits until something accepts on port, or the process exits.
+func waitPort(port int, exited <-chan error) error {
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-exited:
-			t.Fatalf("%s exited before listening: %v", what, err)
+			return fmt.Errorf("%w: %v", errExited, err)
 		default:
 		}
 		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
 		if err == nil {
 			c.Close()
-			return
+			return nil
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("%s is not listening on %d", what, port)
+	return fmt.Errorf("not listening on %d", port)
+}
+
+// listen starts a process on a free port, run(port), and waits until it
+// listens. freePort closes its probe before the process binds, so another
+// process can take the port in between: the process then exits, and listen
+// tries again on another port.
+func listen(t *testing.T, what string, run func(port int) <-chan error) int {
+	t.Helper()
+	for attempt := 1; ; attempt++ {
+		port := freePort(t)
+		err := waitPort(port, run(port))
+		if err == nil {
+			return port
+		}
+		if !errors.Is(err, errExited) || attempt == 3 {
+			t.Fatalf("%s: %v", what, err)
+		}
+		t.Logf("%s: %v; again on another port", what, err)
+	}
 }
 
 // start runs a binary until the test ends, its output in the test's log
@@ -179,7 +216,7 @@ func binary(t *testing.T, env string) string {
 
 // The agent's allowlist: search anywhere, and one datasource by UID.
 var allowlist = &mcpconf.Allowlist{Sets: []mcpconf.Set{
-	{Tools: []mcpconf.Tool{{Name: "search_dashboards"}}},
+	{Tools: []mcpconf.Tool{{Name: "search_dashboards", Unconstrained: true}}},
 	{Tools: []mcpconf.Tool{{Name: "get_datasource", Constraints: []mcpconf.Constraint{
 		{Path: []string{"arguments", "uid"}, Value: "allowed-ds"},
 	}}}},
@@ -197,10 +234,11 @@ var writeTools = []string{
 }
 
 type env struct {
-	agentURL string
-	grafana  *grafana
-	reached  *headerLog
-	token    string
+	agentURL  string
+	agentAddr string // 127.0.0.1:<port>, for raw requests
+	grafana   *grafana
+	reached   *reachedLog
+	token     string
 }
 
 func setup(t *testing.T) *env {
@@ -216,27 +254,32 @@ func setup(t *testing.T) *env {
 	t.Cleanup(gs.Close)
 
 	// mcp-grafana, as an upstream's unit runs it (docs/mcp-upstreams.md,
-	// "Grafana"), on a loopback port of its own.
-	serverPort := freePort(t)
-	exited := start(t, binary(t, "MCP_GRAFANA"), []string{
-		"GRAFANA_URL=" + gs.URL,
-		"GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE=" + token,
-		"HOME=" + dir,
-	},
-		"-t", "streamable-http", fmt.Sprintf("--address=127.0.0.1:%d", serverPort), "--endpoint-path=/mcp",
-		"--disable-write",
-		"--enabled-tools=search,datasource,prometheus,loki,dashboard,alerting,navigation,tempo,pyroscope,annotations",
-		"--disable-api", "--disable-sql", "--disable-assistant",
-	)
-	waitPort(t, serverPort, "mcp-grafana", exited)
+	// "Grafana": its ceiling and arguments, usage statistics off, so
+	// nothing leaves loopback), on a loopback port of its own.
+	serverPort := listen(t, "mcp-grafana", func(port int) <-chan error {
+		return start(t, binary(t, "MCP_GRAFANA"), []string{
+			"GRAFANA_URL=" + gs.URL,
+			"GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE=" + token,
+			"HOME=" + dir,
+		},
+			"-t", "streamable-http", fmt.Sprintf("--address=127.0.0.1:%d", port), "--endpoint-path=/mcp",
+			"--disable-write",
+			"--enabled-tools=search,datasource,prometheus,loki,dashboard,alerting,navigation,tempo,pyroscope,annotations",
+			"--disable-api", "--disable-admin", "--disable-incident", "--disable-oncall", "--disable-sql",
+			"--disable-assistant", "--disable-rendering", "--disable-snapshot", "--disable-plugin",
+			"--disable-provisioning",
+			"--loki-guardrail-mode=enforce", "--prometheus-guardrail-mode=enforce",
+			"--usage-stats=disabled",
+		)
+	})
 
-	// A recording proxy in front of it: every header Envoy forwards is
-	// what the server would read.
-	reached := &headerLog{}
+	// A recording proxy in front of it: every path and header Envoy
+	// forwards is what the server would read.
+	reached := &reachedLog{}
 	target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", serverPort))
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
-			reached.add(r.In.Header)
+			reached.add(r.In)
 			r.SetURL(target)
 			r.Out.Host = target.Host
 		},
@@ -250,33 +293,34 @@ func setup(t *testing.T) *env {
 		Name: "grafana", Port: uint32(proxyPort), Path: "/mcp", MaxRequestBytes: mcpconf.DefaultMaxRequestBytes,
 		StripHeaderPrefixes: []string{"x-grafana-"}, StripHeaders: []string{"authorization"},
 	}
-	listener := lds.MCPListener("", "a", []lds.MCPRoute{{Upstream: up, Allowlist: allowlist}}, nil, lds.StripOf([]*mcpconf.Upstream{up}))
-	agentPort := freePort(t)
-	listener.GetAddress().GetSocketAddress().PortSpecifier = &corev3.SocketAddress_PortValue{PortValue: uint32(agentPort)}
-	bootstrap := &bootstrapv3.Bootstrap{
-		Node: &corev3.Node{Id: "mcpe2e", Cluster: "mcpe2e"},
-		StaticResources: &bootstrapv3.Bootstrap_StaticResources{
-			Listeners: []*listenerv3.Listener{listener},
-			Clusters:  []*clusterv3.Cluster{cds.MCPCluster("grafana", "", uint32(proxyPort))},
-		},
-	}
-	raw, err := protojson.Marshal(bootstrap)
-	if err != nil {
-		t.Fatal(err)
-	}
-	config := filepath.Join(dir, "envoy.json")
-	if err := os.WriteFile(config, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	exited = start(t, binary(t, "ENVOY"), nil,
-		"-c", config, "--disable-hot-restart", "--concurrency", "1", "-l", "warning", "--log-format", "%v")
-	waitPort(t, agentPort, "envoy", exited)
+	agentPort := listen(t, "envoy", func(port int) <-chan error {
+		listener := lds.MCPListener("", "a", []lds.MCPRoute{{Upstream: up, Allowlist: allowlist}}, nil, lds.StripOf([]*mcpconf.Upstream{up}))
+		listener.GetAddress().GetSocketAddress().PortSpecifier = &corev3.SocketAddress_PortValue{PortValue: uint32(port)}
+		bootstrap := &bootstrapv3.Bootstrap{
+			Node: &corev3.Node{Id: "mcpe2e", Cluster: "mcpe2e"},
+			StaticResources: &bootstrapv3.Bootstrap_StaticResources{
+				Listeners: []*listenerv3.Listener{listener},
+				Clusters:  []*clusterv3.Cluster{cds.MCPCluster("grafana", "", uint32(proxyPort))},
+			},
+		}
+		raw, err := protojson.Marshal(bootstrap)
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := filepath.Join(dir, "envoy.json")
+		if err := os.WriteFile(config, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return start(t, binary(t, "ENVOY"), nil,
+			"-c", config, "--disable-hot-restart", "--concurrency", "1", "-l", "warning", "--log-format", "%v")
+	})
 
 	return &env{
-		agentURL: fmt.Sprintf("http://127.0.0.1:%d%s", agentPort, lds.MCPPath("grafana")),
-		grafana:  g,
-		reached:  reached,
-		token:    token,
+		agentURL:  fmt.Sprintf("http://127.0.0.1:%d%s", agentPort, lds.MCPPath("grafana")),
+		agentAddr: fmt.Sprintf("127.0.0.1:%d", agentPort),
+		grafana:   g,
+		reached:   reached,
+		token:     token,
 	}
 }
 
@@ -335,6 +379,39 @@ func (e *env) post(t *testing.T, raw []byte, headers map[string]string) (int, ma
 	}
 	return resp.StatusCode, out
 }
+
+// raw sends one HTTP/1.1 request to the agent's listener exactly as given,
+// target and headers unparsed by a client, and returns the status.
+func (e *env) raw(t *testing.T, method, target string, headers []string, body string) int {
+	t.Helper()
+	c, err := net.DialTimeout("tcp", e.agentAddr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	req := method + " " + target + " HTTP/1.1\r\nHost: " + e.agentAddr + "\r\nConnection: close\r\n" +
+		"Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\n" +
+		"MCP-Protocol-Version: 2025-06-18\r\n"
+	for _, h := range headers {
+		req += h + "\r\n"
+	}
+	if _, err := io.WriteString(c, req+"\r\n"+body); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, target, err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+// listDatasources is a tools/call of a registered tool the allowlist does
+// not name: what a smuggled body would try.
+const listDatasources = `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_datasources","arguments":{}}}`
 
 func (e *env) initialize(t *testing.T) {
 	t.Helper()
@@ -416,17 +493,105 @@ func TestGrafanaUpstream(t *testing.T) {
 		}
 	})
 
+	// Self-contained: it sends the override headers itself, so it proves
+	// the stripping whichever subtests run before it.
 	t.Run("authorization and x-grafana-* never reach the server", func(t *testing.T) {
-		all := e.reached.all()
-		if len(all) == 0 {
-			t.Fatal("nothing reached the server")
+		n := e.reached.count()
+		if code, _ := e.rpc(t, "tools/list", map[string]any{}, override); code != http.StatusOK {
+			t.Fatalf("tools/list: %d", code)
 		}
-		for _, h := range all {
-			for k := range h {
+		if code, isErr := e.callTool(t, "search_dashboards", map[string]any{"query": "c"}, override); code != http.StatusOK || isErr {
+			t.Fatalf("search_dashboards: %d, error %v", code, isErr)
+		}
+		got := e.reached.all()[n:]
+		if len(got) != 2 {
+			t.Fatalf("%d requests reached the server, want 2", len(got))
+		}
+		for _, r := range got {
+			for k := range r.header {
 				lk := strings.ToLower(k)
 				if lk == "authorization" || strings.HasPrefix(lk, "x-grafana-") {
-					t.Errorf("the server got %s: %q", k, h.Values(k))
+					t.Errorf("the server got %s: %q", k, r.header.Values(k))
 				}
+			}
+		}
+	})
+
+	// The route rewrites /mcp/grafana to the server's /mcp; nothing else
+	// reaches it: no other path, no query, whatever the agent sends. Each of
+	// these is refused (RBAC's 403, the catch-all's 404, or 400 for an
+	// escaped slash) before the server.
+	t.Run("only the upstream's path reaches the server", func(t *testing.T) {
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_dashboards","arguments":{}}}`
+		length := fmt.Sprintf("Content-Length: %d", len(body))
+		for _, target := range []string{
+			"/mcp/grafana/x",
+			"/mcp/grafana/",
+			"/mcp/grafana/..%2Fother",
+			"/mcp/grafana%2Fx",
+			"/mcp/grafana/../other",
+			"/mcp/other",
+			"/mcp/GRAFANA",
+			"/mcp",
+			"/",
+			"/mcp/grafana?x=y",
+			"/mcp/grafana?",
+			"/mcp/grafana?Authorization=Bearer%20agent-token",
+		} {
+			n := e.reached.count()
+			code := e.raw(t, "POST", target, []string{length}, body)
+			if code != http.StatusForbidden && code != http.StatusNotFound && code != http.StatusBadRequest {
+				t.Errorf("POST %s: %d, want it refused", target, code)
+			}
+			if e.reached.count() != n {
+				t.Errorf("POST %s reached the server as %q", target, e.reached.all()[n].uri)
+			}
+		}
+		// Merged slashes are the same path, so that one is allowed, and
+		// reaches the server as its own /mcp.
+		n := e.reached.count()
+		if code := e.raw(t, "POST", "//mcp//grafana", []string{length}, body); code != http.StatusOK {
+			t.Errorf("POST //mcp//grafana: %d, want 200", code)
+		}
+		if e.reached.count() != n+1 {
+			t.Errorf("POST //mcp//grafana did not reach the server")
+		}
+		for _, r := range e.reached.all() {
+			if r.uri != "/mcp" {
+				t.Errorf("the server was asked for %q, want /mcp alone", r.uri)
+			}
+		}
+	})
+
+	// The MCP filter passes GET and DELETE before reading a body, and no
+	// header tells RBAC one follows: Envoy's HTTP/1 codec removes
+	// transfer-encoding before the filters run. So the route answers both
+	// itself with a 405, body or not, and a tools/call smuggled in their
+	// body never reaches the server. (A DELETE without Mcp-Session-Id is
+	// the MCP filter's 400 before that.)
+	t.Run("GET and DELETE never reach the server", func(t *testing.T) {
+		chunked := fmt.Sprintf("%x\r\n%s\r\n0\r\n\r\n", len(listDatasources), listDatasources)
+		length := fmt.Sprintf("Content-Length: %d", len(listDatasources))
+		for _, tc := range []struct {
+			method  string
+			headers []string
+			body    string
+			want    []int
+		}{
+			{"GET", nil, "", []int{http.StatusMethodNotAllowed}},
+			{"DELETE", nil, "", []int{http.StatusMethodNotAllowed, http.StatusBadRequest}},
+			{"DELETE", []string{"Mcp-Session-Id: s1"}, "", []int{http.StatusMethodNotAllowed}},
+			{"GET", []string{length}, listDatasources, []int{http.StatusMethodNotAllowed}},
+			{"GET", []string{"Transfer-Encoding: chunked"}, chunked, []int{http.StatusMethodNotAllowed}},
+			{"DELETE", []string{length}, listDatasources, []int{http.StatusMethodNotAllowed, http.StatusBadRequest}},
+			{"DELETE", []string{"Transfer-Encoding: chunked"}, chunked, []int{http.StatusMethodNotAllowed, http.StatusBadRequest}},
+		} {
+			n, g := e.reached.count(), e.grafana.count()
+			if code := e.raw(t, tc.method, lds.MCPPath("grafana"), tc.headers, tc.body); !slices.Contains(tc.want, code) {
+				t.Errorf("%s %q: %d, want one of %v", tc.method, tc.headers, code, tc.want)
+			}
+			if e.reached.count() != n || e.grafana.count() != g {
+				t.Errorf("%s %q reached the server", tc.method, tc.headers)
 			}
 		}
 	})
@@ -460,12 +625,12 @@ func TestGrafanaUpstream(t *testing.T) {
 			{"get_datasource", map[string]any{"uid": "other-ds"}},
 			{"get_datasource", map[string]any{"name": "allowed-ds"}}, // the constrained argument missing
 		} {
-			n, r := e.grafana.count(), len(e.reached.all())
+			n, r := e.grafana.count(), e.reached.count()
 			code, _ := e.callTool(t, tc.tool, tc.args, nil)
 			if code != http.StatusForbidden {
 				t.Errorf("%s %v: %d, want 403", tc.tool, tc.args, code)
 			}
-			if e.grafana.count() != n || len(e.reached.all()) != r {
+			if e.grafana.count() != n || e.reached.count() != r {
 				t.Errorf("%s %v reached the server", tc.tool, tc.args)
 			}
 		}
@@ -501,6 +666,30 @@ func TestGrafanaUpstream(t *testing.T) {
 		}
 		if code != http.StatusOK || !reached {
 			t.Errorf("%s: %d, other-ds reached %v: mcp-grafana no longer reads a case variant; update docs/mcp-upstreams.md and this test", raw, code, reached)
+		}
+	})
+
+	// The rest of Grafana's boundary is the tool name, which RBAC reads with
+	// exact case. It holds only because the server's dispatch (the MCP Go
+	// SDK) decodes params case-exactly too: a "Name" next to "name" must
+	// never run the tool it names. If a release changes the SDK or its
+	// decoding, this fails.
+	t.Run("a case-variant tool name never runs that tool", func(t *testing.T) {
+		for _, raw := range []string{
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_dashboards","Name":"list_datasources","arguments":{}}}`,
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"Name":"list_datasources","name":"search_dashboards","arguments":{}}}`,
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_dashboards","NAME":"list_datasources","arguments":{}}}`,
+		} {
+			n := e.grafana.count()
+			code, _ := e.post(t, []byte(raw), nil)
+			if code != http.StatusOK && code != http.StatusBadRequest {
+				t.Errorf("%s: %d", raw, code)
+			}
+			for _, r := range e.grafana.since(n) {
+				if r.path == "/api/datasources" {
+					t.Errorf("%s ran list_datasources", raw)
+				}
+			}
 		}
 	})
 

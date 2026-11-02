@@ -1060,9 +1060,15 @@ Under `bazel test //...`, with no network:
   server; that a tool outside the agent's allowlist, or outside a
   constraint, or a method outside the lifecycle, is refused before the
   server; that a body that is not MCP, or has a duplicate key, is refused;
-  that no write tool is registered under `--disable-write`; and that a
-  case-variant argument key still reaches past a constraint (the known
-  limit above). It runs on the host's loopback, without namespaces.
+  that no write tool is registered under `--disable-write`; that only
+  `/mcp/grafana`, without a query, reaches the server, as its `/mcp`
+  (another path, an escaped slash, a query string are refused before it);
+  that GET and DELETE never reach it, a chunked body included; that a
+  case-variant `Name` next to `name` never runs the tool it names; and
+  that a case-variant argument key still reaches past a constraint (the
+  known limit above). The server runs with `--usage-stats=disabled`, so
+  nothing leaves loopback. It runs on the host's loopback, without
+  namespaces.
 
 ## Open questions
 
