@@ -1,0 +1,22 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "rolesanywhere",
+    srcs = [
+        "client.go",
+        "profile.go",
+        "tunnel.go",
+    ],
+    importpath = "github.com/bpalermo/redoma/xds/internal/rolesanywhere",
+    visibility = ["//xds:__subpackages__"],
+)
+
+go_test(
+    name = "rolesanywhere_test",
+    srcs = [
+        "rolesanywhere_test.go",
+        "tunnel_test.go",
+    ],
+    embed = [":rolesanywhere"],
+    deps = ["//xds/internal/rolesanywhere/rolesanywheretest"],
+)
