@@ -95,11 +95,10 @@ type line struct {
 var trailingComment = regexp.MustCompile(`(^|[ \t])#`)
 
 // readLines reads a trusted file into its lines: blank lines and lines
-// starting with # skipped, `[section]` lines kept with an empty value. A
-// # is a comment only at the start of a line: a value that starts with #,
-// or has ` #` in it, is refused, not passed on with the comment. A missing
-// file is nil lines and
-// fs.ErrNotExist.
+// starting with # skipped, `[section]` lines kept with an empty value. A #
+// is a comment only at the start of a line: a value that starts with #, or
+// has ` #` in it, is refused, not passed on with the comment. A missing
+// file is nil lines and fs.ErrNotExist.
 func (d Dir) readLines(path string) ([]line, error) {
 	f, err := d.open(path)
 	if err != nil {

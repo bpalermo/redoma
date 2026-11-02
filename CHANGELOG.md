@@ -4,7 +4,11 @@ Changes that a host running redoma must act on, newest first. Until 1.0, a
 release may break what an earlier one set up; each such change is listed
 here with what to do about it.
 
-## Unreleased
+## 0.3.0
+
+Not released yet: its candidates are tagged v0.3.0-rc.<n>, from
+v0.3.0-rc.1, and their packages are versioned 0.3.0~rc.<n>. A host on
+0.2.0, or on any of its candidates, acts on every entry below.
 
 ### New: host MCP upstreams
 
@@ -20,7 +24,11 @@ host without `/etc/redoma/mcp`.
   socket in `--mcp-check-dir` (`/run/redoma/xds/mcp-check`, made 0770), and
   under `refuse` publishes nothing of an upstream until it has answered;
   a tool a file names that the server does not list invalidates that file.
-  Tools the server lists and no file names are logged.
+  Tools the server lists and no file names are logged. The answer is not
+  kept across a restart of `redoma xds`: under `refuse`, every restart
+  (an upgrade's included) takes the agents' MCP routes away until the
+  upstream has answered again, about a second, or a scan interval when it
+  is slow. Use `warn` for an upstream that must not drop out.
 - New: `/etc/redoma/mcp/<name>.conf` and per-agent allowlists
   `/etc/redoma/mcp/<name>/<agent>.conf`; `redoma mcp-upstream`;
   `redoma-shim --mcp-upstream=<name>` (repeatable) and `--mcp-listener`,
@@ -43,13 +51,19 @@ host without `/etc/redoma/mcp`.
   /etc/subuid /etc/subgid` show what to fix.
 - The `.deb`'s upgrade restarts running `redoma-mcp@*` units, and its
   removal stops them and the credential's watchers.
-- The OCI hook refuses an agent with an idmapped mount (`:idmap`,
-  `:ridmap`, or a mount with its own uid or gid mappings), of any type.
-  redoma's launchers add none; a container started by hand with one is
-  refused from this release on.
 - An upstream's argument constraints hold only for a server that reads its
   arguments with exact case: Grafana's does not (docs/mcp-upstreams.md, "A
   parser differential").
+
+### Action: no agent has an idmapped mount
+
+The OCI hook refuses an agent container with an idmapped mount (`:idmap`,
+`:ridmap`, or a mount with uid or gid mappings of its own), of any type,
+on every host, whether it runs MCP upstreams or not. An agent runs in the
+host's user namespace, and an idmapped bind would let its ids own what
+another id, root included, owns in a directory the hook does not forbid.
+redoma's launchers add no such mount; a container started by hand with
+one is refused from this release on: drop the option.
 
 ### Action: the bootstrap's egress DNS cache skips search domains
 
