@@ -1,0 +1,28 @@
+# redoma-mcp-token@<name>.path: copies a host MCP upstream's credential into
+# /run/redoma-mcp/<name>/ whenever the host's minter replaces it
+# (docs/mcp-upstreams.md, "The credential").
+#
+# The path watched is the host's to name, in a drop-in: redoma names no path
+# of its own here. A drop-in
+#
+#   /etc/systemd/system/redoma-mcp-token@<name>.path.d/source.conf
+#   [Path]
+#   PathChanged=<the minter's file>
+#
+# and its twin for the service,
+#
+#   /etc/systemd/system/redoma-mcp-token@<name>.service.d/source.conf
+#   [Service]
+#   Environment=REDOMA_MCP_TOKEN_SOURCE=<the minter's file>
+#
+# then `systemctl enable --now redoma-mcp-token@<name>.path`. Without the
+# drop-in systemd refuses the unit (a path unit needs a path).
+[Unit]
+Description=redoma MCP upstream %i's credential, copied when it changes
+Documentation=https://github.com/bpalermo/redoma/blob/main/docs/mcp-upstreams.md
+
+[Path]
+Unit=redoma-mcp-token@%i.service
+
+[Install]
+WantedBy=paths.target

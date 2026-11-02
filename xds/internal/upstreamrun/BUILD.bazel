@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "upstreamrun",
+    srcs = ["upstreamrun.go"],
+    importpath = "github.com/bpalermo/redoma/xds/internal/upstreamrun",
+    visibility = ["//xds:__subpackages__"],
+    deps = [
+        "//common/atomicfile",
+        "//xds/internal/mcpconf",
+    ],
+)
+
+go_test(
+    name = "upstreamrun_test",
+    srcs = ["upstreamrun_test.go"],
+    embed = [":upstreamrun"],
+    deps = ["//xds/internal/mcpconf"],
+)

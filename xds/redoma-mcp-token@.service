@@ -1,0 +1,36 @@
+# redoma-mcp-token@<name>.service: one copy of a host MCP upstream's
+# credential, from REDOMA_MCP_TOKEN_SOURCE (a drop-in, see
+# redoma-mcp-token@.path) to the token_file of /etc/redoma/mcp/<name>.conf,
+# under /run/redoma-mcp/<name>/ (0700, root's), atomically, 0600. A missing
+# or empty source fails the copy and keeps the last credential.
+[Unit]
+Description=redoma MCP upstream %i's credential, copied once
+Documentation=https://github.com/bpalermo/redoma/blob/main/docs/mcp-upstreams.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/redoma mcp-upstream token %i ${REDOMA_MCP_TOKEN_SOURCE}
+
+# /run/redoma-mcp/<name>, root 0700, kept between copies: the upstream's
+# container mounts it.
+RuntimeDirectory=redoma-mcp/%i
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+
+# It reads the source (anywhere, a home directory included) and
+# /etc/redoma/mcp, and writes its runtime directory alone.
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native

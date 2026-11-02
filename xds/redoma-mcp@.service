@@ -1,0 +1,26 @@
+# redoma-mcp@<name>: a host MCP upstream's server (docs/mcp-upstreams.md), the
+# container its /etc/redoma/mcp/<name>.conf describes, run by Podman in the
+# foreground: --network none, --userns=auto, no capability, a read-only
+# root, its credential's directory (token_file) mounted read-only. The OCI
+# hook checks the container and, once its namespace has nothing but lo,
+# registers it with redoma xds, which publishes its egress listener and its
+# cluster. One instance serves every agent whose allowlist names it.
+#
+# Installed by the redoma package in /usr/lib/systemd/system. Start one with
+# `systemctl enable --now redoma-mcp@<name>`. It refuses to start while its
+# credential file is missing: enable redoma-mcp-token@<name>.path first.
+[Unit]
+Description=redoma MCP upstream %i
+Documentation=https://github.com/bpalermo/redoma/blob/main/docs/mcp-upstreams.md
+Wants=redoma-xds.service
+After=redoma-xds.service redoma-mcp-token@%i.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/redoma mcp-upstream run %i
+ExecStop=/usr/bin/podman stop --ignore --time 10 redoma-mcp-%i
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

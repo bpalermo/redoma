@@ -83,7 +83,9 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
   - `shim/` is `redoma-shim`, the agent image's entrypoint.
 - Each subcommand of `redoma` is a root-level package that exports its
   cobra command: `xds/` (`redoma xds`, with its unit
-  `xds/redoma-xds.service`), `relay/` (`redoma relay`, with
+  `xds/redoma-xds.service`, and `redoma mcp-upstream`, with the MCP
+  upstreams' templates `xds/redoma-mcp@.service` and
+  `xds/redoma-mcp-token@.{path,service}`), `relay/` (`redoma relay`, with
   `relay/redoma-relay.service`), `msg/` (`redoma msg` and `redoma mcp`),
   `ocihook/` (`redoma oci-hook`, with its `hooks.d/` definitions and the
   `containers.conf.d/` drop-in).
@@ -144,6 +146,9 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
     on the host's loopback. The two are release binaries `MODULE.bazel`
     pins by sha256 (about 110 MB, fetched for the test alone); bump both
     with the Envoy or server version the docs name;
+  - `upstreamrun`: what an MCP upstream's units run: its container's
+    Podman command line from its `.conf`, and the atomic copy of its
+    credential into `/run/redoma-mcp/<name>/`;
   - `modelauth`: how the model listeners inject the credential;
   - `rolesanywhere`: IAM Roles Anywhere's CreateSession signed with an
     SVID held in memory, the ARNs' validation, and `Tunnels`, the HTTP

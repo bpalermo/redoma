@@ -6,6 +6,27 @@ here with what to do about it.
 
 ## Unreleased
 
+### New: host MCP upstreams
+
+An agent can use an existing MCP server's tools through the host Envoy:
+`http://127.0.0.1:8081/mcp/<name>` in its namespace, a new listener, with
+the server in a container of its own holding its own credential
+(docs/mcp-upstreams.md; README.md, "MCP upstreams"). Nothing changes on a
+host without `/etc/redoma/mcp`.
+
+- New: `/etc/redoma/mcp/<name>.conf` and per-agent allowlists
+  `/etc/redoma/mcp/<name>/<agent>.conf`; `redoma mcp-upstream`; the units
+  `redoma-mcp@.service`, `redoma-mcp-token@.path` and
+  `redoma-mcp-token@.service`; three hook definitions for containers
+  annotated `redoma/upstream=<name>`.
+- The OCI hook now also refuses an agent that mounts anything of
+  `/run/redoma-mcp`, or whose uid or gids fall in the `containers`
+  subordinate ranges of `/etc/subuid` and `/etc/subgid`. Check your agents'
+  `--user` against those ranges before upgrading.
+- An upstream's argument constraints hold only for a server that reads its
+  arguments with exact case: Grafana's does not (docs/mcp-upstreams.md, "A
+  parser differential").
+
 ### Action: the bootstrap's egress DNS cache skips search domains
 
 The egress listeners' DNS cache now resolves with c-ares without the host's
