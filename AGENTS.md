@@ -154,8 +154,11 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
   at-least-once delivery, used by both of its ends; `common/sockettest`:
   the unix-socket test helpers; `common/version`: the stamped version.
 - `CHANGELOG.md`: what a host must act on, per release; a change that
-  breaks a host (a path, a flag's default, a unit) adds an entry under
-  "Unreleased".
+  breaks a host (a path, a flag's default, a unit) adds an entry under a
+  "## Unreleased" section above the newest release's, made by the first
+  such change. Before its tag, a release renames that section to its
+  version, with no date (the tag has it), and says which release
+  candidates must act on each entry.
 - `examples/`: an Envoy bootstrap and an SDS secret file, held to the code
   by `//xds/internal/lds:lds_test`.
 - `deb/`: the Debian package of the host side (see "The package").
@@ -913,9 +916,9 @@ linux/amd64 and linux/arm64 (an index of both):
 ## Versions
 
 - The binaries are pure Go (`pure = "on"`).
-- `VERSION` is the release being worked towards, the base of the packages'
-  version (see "The package"); the binaries report `git describe` of their commit
-  (`bazel/workspace_status.sh`).
+- `VERSION` is the release being worked towards, the base of the
+  packages' version (see "The package"); the binaries report
+  `git describe` of their commit (`bazel/workspace_status.sh`).
 
 ## Pull requests
 
