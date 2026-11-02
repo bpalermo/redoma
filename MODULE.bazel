@@ -229,3 +229,39 @@ claude_code(
     },
     version = "2.1.312",
 )
+
+# The MCP upstreams' integration test (//xds/internal/mcpe2e): Envoy's own
+# release binary, the Envoy redoma's configuration targets, and Grafana's MCP
+# server, both pinned by the sha256 GitHub lists for the release asset. Only
+# the test reads them; nothing ships them.
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_file(
+    name = "envoy_linux_amd64",
+    executable = True,
+    sha256 = "1d64506e25c1844f146162ddb2ece7010fa4e784faddb40a079021491f1f03cc",
+    urls = ["https://github.com/envoyproxy/envoy/releases/download/v1.40.2/envoy-1.40.2-linux-x86_64"],
+)
+
+http_file(
+    name = "envoy_linux_arm64",
+    executable = True,
+    sha256 = "b9d6d1e06dd5838a3506de9f4deebad3de9a2ce6cadb87cd76222ca286213baf",
+    urls = ["https://github.com/envoyproxy/envoy/releases/download/v1.40.2/envoy-1.40.2-linux-aarch_64"],
+)
+
+http_archive(
+    name = "mcp_grafana_linux_amd64",
+    build_file_content = 'exports_files(["mcp-grafana"])',
+    sha256 = "f93bfbd94cde68cc2e43cf5ba55da4f8e28b1a36b14fb14dadd566fc36b1312b",
+    urls = ["https://github.com/grafana/mcp-grafana/releases/download/v2.2.0/mcp-grafana_Linux_x86_64.tar.gz"],
+)
+
+http_archive(
+    name = "mcp_grafana_linux_arm64",
+    build_file_content = 'exports_files(["mcp-grafana"])',
+    sha256 = "6478ef322152bf15c0cec565d6bdfa5c3d123e1080aaf03bd370418849267b16",
+    urls = ["https://github.com/grafana/mcp-grafana/releases/download/v2.2.0/mcp-grafana_Linux_arm64.tar.gz"],
+)

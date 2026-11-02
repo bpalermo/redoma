@@ -1,0 +1,42 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+# Envoy and Grafana's MCP server, the release binaries MODULE.bazel pins, for
+# the host's architecture. Loopback only: no network, no privilege.
+go_test(
+    name = "mcpe2e_test",
+    size = "medium",
+    srcs = ["mcpe2e_test.go"],
+    data = select({
+        # keep
+        "@platforms//cpu:aarch64": [
+            "@envoy_linux_arm64//file",
+            "@mcp_grafana_linux_arm64//:mcp-grafana",
+        ],
+        "//conditions:default": [
+            "@envoy_linux_amd64//file",
+            "@mcp_grafana_linux_amd64//:mcp-grafana",
+        ],
+    }),
+    env = select({
+        # keep
+        "@platforms//cpu:aarch64": {
+            "ENVOY": "$(rlocationpath @envoy_linux_arm64//file)",
+            "MCP_GRAFANA": "$(rlocationpath @mcp_grafana_linux_arm64//:mcp-grafana)",
+        },
+        "//conditions:default": {
+            "ENVOY": "$(rlocationpath @envoy_linux_amd64//file)",
+            "MCP_GRAFANA": "$(rlocationpath @mcp_grafana_linux_amd64//:mcp-grafana)",
+        },
+    }),
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//xds/internal/cds",
+        "//xds/internal/lds",
+        "//xds/internal/mcpconf",
+        "@com_github_envoyproxy_go_control_plane_envoy//config/bootstrap/v3:bootstrap",
+        "@com_github_envoyproxy_go_control_plane_envoy//config/cluster/v3:cluster",
+        "@com_github_envoyproxy_go_control_plane_envoy//config/core/v3:core",
+        "@com_github_envoyproxy_go_control_plane_envoy//config/listener/v3:listener",
+        "@org_golang_google_protobuf//encoding/protojson",
+    ],
+)

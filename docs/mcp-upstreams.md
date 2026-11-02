@@ -171,9 +171,16 @@ at v1.40.2), so Envoy's standard and distroless builds carry it.
   that server's tools decode them with `mapstructure.WeakDecode`, which
   matches keys case-insensitively. An argument constraint therefore holds
   only for tools whose own decoding is case-exact, which the upgrade
-  checklist verifies per allowed tool (see "Upgrading an upstream"). Each
-  upstream's parser is part of its trust, which is one reason the server's
-  own limits stay the first layer (see "Layered limits").
+  checklist verifies per allowed tool (see "Upgrading an upstream").
+  **mcp-grafana v2.2.0 is such a server for every tool:** it decodes a
+  tool's arguments with `encoding/json` (`tools.go:177-191`), which matches
+  keys case-insensitively, the last one winning. A call with
+  `{"uid": "allowed", "UID": "other"}` passes a constraint on `uid` and
+  reaches `other`; the integration test shows it, and fails if a release
+  changes it. So, for Grafana, an argument constraint is no boundary, and a
+  narrower data scope is Grafana's to enforce (below). Each upstream's
+  parser is part of its trust, which is one reason the server's own limits
+  stay the first layer (see "Layered limits").
 - **Risk, stated plainly.** A bug in this filter could do one of two things:
   - **Pass a call RBAC should have refused.** The server's own ceiling and
     the backend's permissions for the upstream's credential still hold.
@@ -436,9 +443,12 @@ unless needed.
   `grafana_api_request`. `generate_deeplink` with `shorten=true` creates a
   short URL, a write; it stays read-only by not passing
   `--enable-write-tools=generate_deeplink`.
-- **Constraints.** The query tools take a scalar `datasourceUid`, so a set
-  can confine an agent to some datasources. Query text (`expr`, `logql`)
-  is free text and not constrained.
+- **Constraints do not confine it.** The query tools take a scalar
+  `datasourceUid`, but the server decodes arguments case-insensitively (see
+  "A parser differential"), so a set constrained to some datasources is
+  advisory: a case-variant key reaches any datasource the token can read.
+  Allowlists for Grafana name tools, which RBAC does hold; which data an
+  agent reads is the token's.
 
 ### Its token
 
@@ -446,10 +456,13 @@ A dedicated Grafana service account with the **Viewer** role, its token
 with an expiry. Viewer is the backend's layer: even a write tool that were
 registered and allowed would be refused by Grafana. What Viewer still
 exposes is every datasource's data, logs included, and logs can carry
-secrets, which then enter the model's context. Narrow the data, not the
-role: per-agent `datasourceUid` sets, Loki's enforced matchers
-(`--loki-enforced-matchers`, which needs `--disable-api`), folder
-permissions on the service account.
+secrets, which then enter the model's context. Narrow the data on
+Grafana's side, where it holds: the service account's datasource and
+folder permissions (where the Grafana edition has them), Loki's enforced
+matchers (`--loki-enforced-matchers`, which needs `--disable-api`), or,
+for agents that must see different data, a second upstream instance with
+its own service account, each agent's allowlist naming only its
+instance.
 
 ### Its configuration
 
@@ -480,16 +493,13 @@ max_request_bytes = 1048576
 
 ```
 # /etc/redoma/mcp/grafana/example.conf
-[set]
-tool = query_prometheus
-tool = list_prometheus_metric_names
-tool = list_prometheus_label_values
-constrain = * arguments.datasourceUid = prometheus-main
-[set]
-tool = query_loki_logs
-tool = list_loki_label_values
-constrain = * arguments.datasourceUid = loki-main
-[set]
+# Tools only: for this server a datasourceUid constraint is advisory (see
+# "Constraints do not confine it").
+tool_unconstrained = query_prometheus
+tool_unconstrained = list_prometheus_metric_names
+tool_unconstrained = list_prometheus_label_values
+tool_unconstrained = query_loki_logs
+tool_unconstrained = list_loki_label_values
 tool_unconstrained = search_dashboards
 tool_unconstrained = get_dashboard_summary
 tool_unconstrained = list_datasources
@@ -848,8 +858,7 @@ credential for each call.
    routes, clusters, egress listeners and the tool check in `redoma xds`;
    the hook's upstream registration; `redoma-mcp@.service` and
    `redoma-mcp-token@.{path,service}`; the shim's `--mcp-upstream`.
-2. Grafana as the first upstream: read tools, for one agent, with
-   `datasourceUid` sets.
+2. Grafana as the first upstream: read tools, for one agent.
 3. GitHub, once its HTTP mode holds a token file: read tools first, then
    writes, then `github-pr`.
 4. Publishing, and a read-only git upstream (open question 2).
@@ -874,12 +883,18 @@ Under `bazel test //...`, with no network:
   and the cluster's source namespace;
 - the hook's registration of upstreams and its refusals;
 - the tool check against a fake upstream, under each `tool_check` value;
-- an integration test that runs Envoy and Grafana's MCP server, both
-  pinned by digest, with a fake Grafana behind it. It checks that the
-  configured token is the one Grafana sees, that `x-grafana-*` and
-  `authorization` from the agent never reach the server, that a tool
-  outside the agent's allowlist is refused, and that write tools are absent
-  under `--disable-write`.
+- an integration test (`xds/internal/mcpe2e`) that runs an agent's MCP
+  listener in Envoy v1.40.2 in front of Grafana's MCP server v2.2.0, both
+  the release binaries pinned by sha256 in `MODULE.bazel`, with a fake
+  Grafana behind it. It checks that the configured token is the one Grafana
+  sees whatever the agent sends, and a rotated token without a restart;
+  that `x-grafana-*` and `authorization` from the agent never reach the
+  server; that a tool outside the agent's allowlist, or outside a
+  constraint, or a method outside the lifecycle, is refused before the
+  server; that a body that is not MCP, or has a duplicate key, is refused;
+  that no write tool is registered under `--disable-write`; and that a
+  case-variant argument key still reaches past a constraint (the known
+  limit above). It runs on the host's loopback, without namespaces.
 
 ## Open questions
 
