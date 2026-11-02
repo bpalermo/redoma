@@ -41,7 +41,7 @@ tool_unconstrained = search_dashboards
 				{Path: []string{"arguments", "datasourceUid"}, Value: "loki-main"},
 			}},
 		}},
-		{Tools: []Tool{{Name: "search_dashboards"}}},
+		{Tools: []Tool{{Name: "search_dashboards", Unconstrained: true}}},
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ReadAllowlist =\n%+v\nwant\n%+v", got, want)
@@ -63,7 +63,7 @@ func TestReadAllowlistDefaultsFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &Allowlist{Sets: []Set{{Tools: []Tool{{Name: "ping_tool"}}}, {Tools: []Tool{{Name: "own_tool"}}}}}
+	want := &Allowlist{Sets: []Set{{Tools: []Tool{{Name: "ping_tool", Unconstrained: true}}}, {Tools: []Tool{{Name: "own_tool", Unconstrained: true}}}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ReadAllowlist = %+v, want %+v", got, want)
 	}
@@ -105,7 +105,15 @@ func TestReadAllowlistRefuses(t *testing.T) {
 		{"constraint unknown tool", "tool = t\nconstrain = u arguments.a = b\n", `"u" is no tool = line of its set`},
 		{"constraint on unconstrained", "tool_unconstrained = t\nconstrain = t arguments.a = b\n", `"t" is no tool = line of its set`},
 		{"constraint before its tool", "constrain = t arguments.a = b\ntool = t\n", `"t" is no tool = line of its set`},
-		{"constraint in another set", "tool = t\n[set]\nconstrain = t arguments.a = b\n", `"t" is no tool = line of its set`},
+		{"constraint in another set", "tool = t\nconstrain = t arguments.a = b\n[set]\nconstrain = t arguments.a = b\n", `"t" is no tool = line of its set`},
+		// A tool = line no constrain line reaches would allow the tool with
+		// any arguments: refused, never read as unconstrained.
+		{"a lone tool", "tool = t\n", "tool t: no constrain line of its set reaches it"},
+		{"a tool after the star", "tool = a\nconstrain = * arguments.repo = r\ntool = b\n", "tool b: no constrain line"},
+		{"a tool after the star, with a later set", "tool = pull_request_read\nconstrain = * arguments.repo = example-repo\ntool = create_pull_request\n[set]\ntool_unconstrained = x\n", "tool create_pull_request: no constrain line"},
+		{"a lone tool in a later set", "tool_unconstrained = x\n[set]\ntool = t\n", "tool t: no constrain line"},
+		{"a tool another tool's constraint skips", "tool = a\ntool = b\nconstrain = a arguments.x = y\n", "tool b: no constrain line"},
+		{"a trailing comment", "tool_unconstrained = t # note\n", "starts a comment only at the start of a line"},
 		{"star with no tools", "constrain = * arguments.a = b\n", "no tool = line"},
 		{"bad section", "[sets]\n", "[set]"},
 		{"empty set", "[set]\n[set]\ntool = t\n", "empty set"},
@@ -123,6 +131,16 @@ func TestReadAllowlistRefuses(t *testing.T) {
 }
 
 // A bad defaults file fails every agent's list for the upstream.
+// The refusal of an unreached tool = line points at that line.
+func TestReadAllowlistUnconstrainedToolLine(t *testing.T) {
+	d := testDir(t)
+	write(t, d.AllowlistPath("u", "a"), "tool = a\nconstrain = * arguments.repo = r\ntool = b\n[set]\ntool_unconstrained = c\n")
+	_, err := d.ReadAllowlist("u", "a")
+	if err == nil || !strings.Contains(err.Error(), "a.conf:3:") || !strings.Contains(err.Error(), "tool_unconstrained = b") {
+		t.Errorf("err = %v; want line 3 and the tool_unconstrained hint", err)
+	}
+}
+
 func TestReadAllowlistRefusesBadDefaults(t *testing.T) {
 	d := testDir(t)
 	write(t, d.AllowlistPath("u", Default), "tool = a b\n")

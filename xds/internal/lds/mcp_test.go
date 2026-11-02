@@ -8,6 +8,7 @@ import (
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	rbacconfigv3 "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	streamv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/stream/v3"
 	headermutationv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	mcpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/mcp/v3"
 	rbacv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
@@ -50,11 +51,11 @@ func testRoutes() []MCPRoute {
 					constraint("arguments.datasourceUid", "loki-main", false),
 					constraint("arguments.logql", "{app=", true),
 				}},
-				{Name: "search_dashboards"},
+				{Name: "search_dashboards", Unconstrained: true},
 			}},
 		}}},
 		{Upstream: docsUp, Allowlist: &mcpconf.Allowlist{Sets: []mcpconf.Set{{Tools: []mcpconf.Tool{
-			{Name: "read_page"}, {Name: "publish", Constraints: []mcpconf.Constraint{constraint("arguments.space", "agents/", true)}},
+			{Name: "read_page", Unconstrained: true}, {Name: "publish", Constraints: []mcpconf.Constraint{constraint("arguments.space", "agents/", true)}},
 		}}}}},
 	}
 }
@@ -169,11 +170,25 @@ func TestMCPListenerStripsHeaders(t *testing.T) {
 	}
 }
 
-// request is what Envoy's RBAC sees of an MCP request: the path, the
-// method and the MCP filter's metadata (nested, as the filter writes it).
+// request is what Envoy's RBAC sees of an MCP request: the :path (the
+// query string included), the method, other headers, and the MCP filter's
+// metadata (nested, as the filter writes it).
 type request struct {
 	path, httpMethod string
+	headers          map[string]string
 	meta             map[string]any
+}
+
+// header is req's header name as RBAC reads it, and whether it is present.
+func (req request) header(name string) (string, bool) {
+	switch name {
+	case ":path":
+		return req.path, true
+	case ":method":
+		return req.httpMethod, true
+	}
+	v, ok := req.headers[name]
+	return v, ok
 }
 
 func call(path, tool string, args map[string]any) request {
@@ -223,13 +238,16 @@ func permMatches(t *testing.T, p *rbacconfigv3.Permission, req request) bool {
 			}
 		}
 		return false
-	case p.GetUrlPath() != nil:
-		return stringMatches(t, p.GetUrlPath().GetPath(), req.path)
 	case p.GetHeader() != nil:
-		if p.GetHeader().GetName() != ":method" {
-			t.Fatalf("header %q", p.GetHeader().GetName())
+		h := p.GetHeader()
+		if h.GetInvertMatch() || h.GetTreatMissingHeaderAsEmpty() {
+			t.Fatalf("header matcher %v not modelled", h)
 		}
-		return stringMatches(t, p.GetHeader().GetStringMatch(), req.httpMethod)
+		v, present := req.header(h.GetName())
+		if _, ok := h.GetHeaderMatchSpecifier().(*routev3.HeaderMatcher_PresentMatch); ok {
+			return present == h.GetPresentMatch()
+		}
+		return present && stringMatches(t, h.GetStringMatch(), v)
 	case p.GetSourcedMetadata() != nil:
 		m := p.GetSourcedMetadata().GetMetadataMatcher()
 		if m.GetFilter() != mcpFilter || p.GetSourcedMetadata().GetMetadataSource() != rbacconfigv3.MetadataSource_DYNAMIC {
@@ -307,6 +325,10 @@ func TestMCPListenerRBAC(t *testing.T) {
 		{"no method (a response)", request{path: g, httpMethod: "POST", meta: map[string]any{}}, false},
 		{"GET of the session", request{path: g, httpMethod: "GET"}, true},
 		{"DELETE of the session", request{path: d, httpMethod: "DELETE"}, true},
+		{"GET with a query", request{path: g + "?x=y", httpMethod: "GET"}, false},
+		{"a query string", call(g+"?x=y", "search_dashboards", nil), false},
+		{"an empty query", call(g+"?", "search_dashboards", nil), false},
+		{"a fragment", call(g+"#x", "search_dashboards", nil), false},
 		{"PUT", request{path: g, httpMethod: "PUT"}, false},
 		{"another path", lifecycleCall("/mcp/nobody", "initialize"), false},
 		{"a sub-path", call(g+"/x", "search_dashboards", nil), false},
@@ -314,6 +336,63 @@ func TestMCPListenerRBAC(t *testing.T) {
 	} {
 		if got := allows(t, r, tc.req); got != tc.want {
 			t.Errorf("%s: allowed = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Empty constraints never mean any arguments: a tool with none that is
+// not Unconstrained (no tool_unconstrained line) gets no permission at
+// all, while an Unconstrained one is allowed with any.
+func TestMCPListenerEmptyConstraintsAllowNothing(t *testing.T) {
+	g := MCPPath("grafana")
+	routes := []MCPRoute{{Upstream: grafanaUp, Allowlist: &mcpconf.Allowlist{Sets: []mcpconf.Set{{Tools: []mcpconf.Tool{
+		{Name: "bare"},
+		{Name: "bare_empty", Constraints: []mcpconf.Constraint{}},
+		{Name: "open", Unconstrained: true},
+	}}}}}}
+	_, _, _, _, r := mcpParts(t, MCPListener("/n", "a", routes, nil, Strip{}))
+	for _, args := range []map[string]any{nil, {}, {"repo": "any"}} {
+		for _, tool := range []string{"bare", "bare_empty"} {
+			if allows(t, r, call(g, tool, args)) {
+				t.Errorf("%s with %v allowed", tool, args)
+			}
+		}
+		if !allows(t, r, call(g, "open", args)) {
+			t.Errorf("open with %v refused", args)
+		}
+	}
+}
+
+// redoma's listener ports are among those an upstream's port may not be.
+func TestReservedPortsHoldTheListeners(t *testing.T) {
+	for _, p := range []uint32{EgressPort, ModelPort, RelayPort, MCPPort, DefaultAWSPort} {
+		if !slices.Contains(mcpconf.ReservedPorts, p) {
+			t.Errorf("port %d is not in mcpconf.ReservedPorts %v", p, mcpconf.ReservedPorts)
+		}
+	}
+}
+
+// The access log is the audit record: it has every field the doc's
+// "Audit" names.
+func TestMCPListenerAccessLog(t *testing.T) {
+	h, _, _, _, _ := mcpParts(t, testMCPListener())
+	s := &streamv3.StdoutAccessLog{}
+	if err := h.GetAccessLog()[0].GetTypedConfig().UnmarshalTo(s); err != nil {
+		t.Fatal(err)
+	}
+	fields := s.GetLogFormat().GetJsonFormat().GetFields()
+	for k, want := range map[string]string{
+		"agent": "a", "listener": "mcp", "method": "%REQ(:METHOD)%", "path": "%REQ(:PATH)%",
+		"request_id": "%REQ(X-REQUEST-ID)%", "cluster": "%UPSTREAM_CLUSTER%",
+		"code": "%RESPONSE_CODE%", "code_details": "%RESPONSE_CODE_DETAILS%",
+		"mcp_method": "%DYNAMIC_METADATA(envoy.filters.http.mcp:method)%",
+		"mcp_tool":   "%DYNAMIC_METADATA(envoy.filters.http.mcp:params:name)%",
+		"mcp":        "%DYNAMIC_METADATA(envoy.filters.http.mcp)%",
+		"flags":      "%RESPONSE_FLAGS%", "duration_ms": "%DURATION%",
+		"bytes_in": "%BYTES_RECEIVED%", "bytes_out": "%BYTES_SENT%",
+	} {
+		if got := fields[k].GetStringValue(); got != want {
+			t.Errorf("access log %s = %q, want %q", k, got, want)
 		}
 	}
 }
@@ -355,13 +434,22 @@ func TestMCPListenerRoutes(t *testing.T) {
 	h, _, _, _, _ := mcpParts(t, testMCPListener())
 	routes := h.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
 	type summary struct {
-		path, tool, cluster, rewrite, host string
-		status                             uint32
-		headers                            string
+		path, method, tool, cluster, rewrite, host string
+		status                                     uint32
+		headers                                    string
 	}
 	var got []summary
 	for _, r := range routes {
 		s := summary{path: r.GetMatch().GetPath() + r.GetMatch().GetPrefix(), status: r.GetDirectResponse().GetStatus()}
+		for _, h := range r.GetMatch().GetHeaders() {
+			if h.GetName() != ":method" || h.GetInvertMatch() {
+				t.Fatalf("route header matcher %v", h)
+			}
+			s.method = h.GetStringMatch().GetExact()
+		}
+		for _, h := range r.GetResponseHeadersToAdd() {
+			s.headers += "response " + h.GetHeader().GetKey() + "=" + h.GetHeader().GetValue() + ";"
+		}
 		for _, m := range r.GetMatch().GetDynamicMetadata() {
 			if m.GetPath()[0].GetKey() == "params" {
 				s.tool = m.GetValue().GetStringMatch().GetExact()
@@ -373,10 +461,15 @@ func TestMCPListenerRoutes(t *testing.T) {
 		}
 		got = append(got, s)
 	}
+	// GET and DELETE first, answered by Envoy: only POST reaches a server.
 	want := []summary{
+		{path: "/mcp/docs", method: "GET", status: 405, headers: "response allow=POST;"},
+		{path: "/mcp/docs", method: "DELETE", status: 405, headers: "response allow=POST;"},
 		{path: "/mcp/docs", tool: "publish", cluster: "mcp_docs-writer", rewrite: "/rpc", host: "127.0.0.1:8083"},
 		{path: "/mcp/docs", tool: "delete_page", status: 503},
 		{path: "/mcp/docs", cluster: "mcp_docs", rewrite: "/", host: "127.0.0.1:8082", headers: "x-mcp-tools=publish,read_page;"},
+		{path: "/mcp/grafana", method: "GET", status: 405, headers: "response allow=POST;"},
+		{path: "/mcp/grafana", method: "DELETE", status: 405, headers: "response allow=POST;"},
 		{path: "/mcp/grafana", cluster: "mcp_grafana", rewrite: "/mcp", host: "127.0.0.1:8000"},
 		{path: "/", status: 404},
 	}
