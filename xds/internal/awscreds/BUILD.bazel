@@ -1,0 +1,26 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "awscreds",
+    srcs = [
+        "config.go",
+        "service.go",
+    ],
+    importpath = "github.com/bpalermo/redoma/xds/internal/awscreds",
+    visibility = ["//xds:__subpackages__"],
+    deps = ["//xds/internal/rolesanywhere"],
+)
+
+go_test(
+    name = "awscreds_test",
+    srcs = [
+        "config_test.go",
+        "service_test.go",
+    ],
+    embed = [":awscreds"],
+    deps = [
+        "//common/sockettest",
+        "//xds/internal/rolesanywhere",
+        "//xds/internal/rolesanywhere/rolesanywheretest",
+    ],
+)
