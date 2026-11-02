@@ -181,23 +181,7 @@ func mcpRBAC(routes []MCPRoute) *rbacv3.RBAC {
 		if r.Allowlist == nil {
 			continue
 		}
-		allowed := []*rbacconfigv3.Permission{
-			orPerm(methodPerm("GET"), methodPerm("DELETE")),
-		}
-		for _, m := range lifecycle {
-			allowed = append(allowed, metadataPerm(m, "method"))
-		}
-		for _, set := range r.Allowlist.Sets {
-			for _, t := range set.Tools {
-				if len(t.Constraints) == 0 && !t.Unconstrained {
-					// Empty constraints never mean any arguments: only
-					// tool_unconstrained says that.
-					continue
-				}
-				allowed = append(allowed, toolPerm(t))
-			}
-		}
-		perms = append(perms, andPerm(pathPerm(MCPPath(r.Upstream.Name)), orPerm(allowed...)))
+		perms = append(perms, andPerm(pathPerm(MCPPath(r.Upstream.Name)), orPerm(routeAllows(r.Allowlist)...)))
 	}
 	rules := &rbacconfigv3.RBAC{Action: rbacconfigv3.RBAC_ALLOW, Policies: map[string]*rbacconfigv3.Policy{}}
 	if len(perms) > 0 {
@@ -207,6 +191,28 @@ func mcpRBAC(routes []MCPRoute) *rbacv3.RBAC {
 		}
 	}
 	return &rbacv3.RBAC{Rules: rules}
+}
+
+// routeAllows is what an agent may send on one upstream's path: GET and
+// DELETE (the route answers both), the lifecycle methods, and its tools.
+func routeAllows(a *mcpconf.Allowlist) []*rbacconfigv3.Permission {
+	allowed := []*rbacconfigv3.Permission{
+		orPerm(methodPerm("GET"), methodPerm("DELETE")),
+	}
+	for _, m := range lifecycle {
+		allowed = append(allowed, metadataPerm(m, "method"))
+	}
+	for _, set := range a.Sets {
+		for _, t := range set.Tools {
+			if len(t.Constraints) == 0 && !t.Unconstrained {
+				// Empty constraints never mean any arguments: only
+				// tool_unconstrained says that.
+				continue
+			}
+			allowed = append(allowed, toolPerm(t))
+		}
+	}
+	return allowed
 }
 
 // toolPerm allows tools/call of t, with each of its constraints.
