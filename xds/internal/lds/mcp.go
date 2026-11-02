@@ -61,12 +61,15 @@ type MCPRoute struct {
 //   - the MCP filter parses the JSON-RPC body (REJECT_NO_MCP, BODY,
 //     duplicate keys refused) and extracts method, params.name and the
 //     arguments the allowlists constrain;
-//   - RBAC allows, per upstream path, the lifecycle methods, GET and
-//     DELETE of the session, and tools/call of the agent's tools under their
-//     constraints; nothing else;
-//   - the router sends each path to its upstream's cluster, a route_for
-//     tool to its own upstream's (targets, the upstreams that are up; a
-//     target that is not gets a 503).
+//   - RBAC allows, per upstream path (the whole :path, so no query
+//     string), the lifecycle methods, GET and DELETE, and tools/call of the
+//     agent's tools under their constraints; nothing else;
+//   - the router answers GET and DELETE itself with a 405: the MCP filter
+//     passes them unparsed, and no header tells whether a body follows
+//     (HTTP/1's transfer-encoding is gone by then, HTTP/2 needs none), so
+//     only POST reaches a server. It sends each path to its upstream's
+//     cluster, a route_for tool to its own upstream's (targets, the
+//     upstreams that are up; a target that is not gets a 503).
 func MCPListener(netns, repo string, routes []MCPRoute, targets map[string]*mcpconf.Upstream, strip Strip) *listenerv3.Listener {
 	routes = slices.Clone(routes)
 	slices.SortFunc(routes, func(a, b MCPRoute) int { return strings.Compare(a.Upstream.Name, b.Upstream.Name) })
@@ -186,6 +189,11 @@ func mcpRBAC(routes []MCPRoute) *rbacv3.RBAC {
 		}
 		for _, set := range r.Allowlist.Sets {
 			for _, t := range set.Tools {
+				if len(t.Constraints) == 0 && !t.Unconstrained {
+					// Empty constraints never mean any arguments: only
+					// tool_unconstrained says that.
+					continue
+				}
 				allowed = append(allowed, toolPerm(t))
 			}
 		}
@@ -250,24 +258,37 @@ func metadataMatch(m *matcherv3.StringMatcher, path ...string) *rbacconfigv3.Per
 }
 
 func methodPerm(method string) *rbacconfigv3.Permission {
-	return &rbacconfigv3.Permission{Rule: &rbacconfigv3.Permission_Header{Header: &routev3.HeaderMatcher{
+	return headerPerm(&routev3.HeaderMatcher{
 		Name:                 ":method",
 		HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{StringMatch: exact(method)},
-	}}}
+	})
 }
 
+// pathPerm matches the request's :path exactly. Unlike url_path, :path
+// holds the query string, so a request with any query matches no
+// permission: MCP needs none, and the route would pass one on to the
+// server.
 func pathPerm(path string) *rbacconfigv3.Permission {
-	return &rbacconfigv3.Permission{Rule: &rbacconfigv3.Permission_UrlPath{UrlPath: &matcherv3.PathMatcher{
-		Rule: &matcherv3.PathMatcher_Path{Path: exact(path)},
-	}}}
+	return headerPerm(&routev3.HeaderMatcher{
+		Name:                 ":path",
+		HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{StringMatch: exact(path)},
+	})
 }
 
-// mcpRoutes routes each upstream's path to its cluster, a route_for tool to
-// its target's first, and anything else to a 404.
+func headerPerm(h *routev3.HeaderMatcher) *rbacconfigv3.Permission {
+	return &rbacconfigv3.Permission{Rule: &rbacconfigv3.Permission_Header{Header: h}}
+}
+
+// mcpRoutes answers GET and DELETE of each upstream's path with a 405,
+// routes its other requests to its cluster, a route_for tool to its
+// target's first, and anything else to a 404.
 func mcpRoutes(routes []MCPRoute, targets map[string]*mcpconf.Upstream) *routev3.RouteConfiguration {
 	var list []*routev3.Route
 	for _, r := range routes {
 		u := r.Upstream
+		for _, m := range []string{"GET", "DELETE"} {
+			list = append(list, methodNotAllowed(MCPPath(u.Name), m))
+		}
 		tools := ""
 		if r.Allowlist != nil {
 			tools = strings.Join(r.Allowlist.Tools(), ",")
@@ -303,6 +324,26 @@ func mcpRoutes(routes []MCPRoute, targets map[string]*mcpconf.Upstream) *routev3
 	}}}
 }
 
+// methodNotAllowed answers method on path with a 405 and Allow: POST, as
+// MCP's Streamable HTTP lets a server answer GET (no event stream) and
+// DELETE (no client-ended session).
+func methodNotAllowed(path, method string) *routev3.Route {
+	return &routev3.Route{
+		Match: &routev3.RouteMatch{
+			PathSpecifier: &routev3.RouteMatch_Path{Path: path},
+			Headers: []*routev3.HeaderMatcher{{
+				Name:                 ":method",
+				HeaderMatchSpecifier: &routev3.HeaderMatcher_StringMatch{StringMatch: exact(method)},
+			}},
+		},
+		Action: &routev3.Route_DirectResponse{DirectResponse: &routev3.DirectResponseAction{Status: 405}},
+		ResponseHeadersToAdd: []*corev3.HeaderValueOption{{
+			Header:       &corev3.HeaderValue{Key: "allow", Value: "POST"},
+			AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+		}},
+	}
+}
+
 // upstreamRoute sends match to u's cluster: the path rewritten to the
 // server's, Host to its own address, u's per-agent headers set with tools.
 func upstreamRoute(match *routev3.RouteMatch, u *mcpconf.Upstream, tools string) *routev3.Route {
@@ -329,11 +370,21 @@ func metadataMatcher(value string, path ...string) *matcherv3.MetadataMatcher {
 	return metadataPerm(value, path...).GetSourcedMetadata().GetMetadataMatcher()
 }
 
+// mcpAccessLog is the audit record (docs/mcp-upstreams.md, "Audit"): on
+// top of the common fields, the request id, the cluster the request
+// reached (which instance, under route_for), the MCP method and tool, the
+// MCP filter's whole metadata (every extracted argument), and the response
+// code's details, which tell RBAC's 403 (rbac_access_denied_...) from the
+// server's.
 func mcpAccessLog(repo string) []*accesslogv3.AccessLog {
 	return accessLogFields(map[string]string{
 		"agent": repo, "listener": "mcp",
-		"mcp_method": "%DYNAMIC_METADATA(" + mcpFilter + ":method)%",
-		"mcp_tool":   "%DYNAMIC_METADATA(" + mcpFilter + ":params:name)%",
+		"request_id":   "%REQ(X-REQUEST-ID)%",
+		"cluster":      "%UPSTREAM_CLUSTER%",
+		"code_details": "%RESPONSE_CODE_DETAILS%",
+		"mcp_method":   "%DYNAMIC_METADATA(" + mcpFilter + ":method)%",
+		"mcp_tool":     "%DYNAMIC_METADATA(" + mcpFilter + ":params:name)%",
+		"mcp":          "%DYNAMIC_METADATA(" + mcpFilter + ")%",
 	})
 }
 

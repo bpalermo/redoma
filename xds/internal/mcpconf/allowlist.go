@@ -21,9 +21,14 @@ type Constraint struct {
 }
 
 // Tool is a tool an allowlist's set allows, under all its constraints.
+// Unconstrained is a tool_unconstrained line, allowed with any arguments;
+// it is the only way to say so. A Tool with no constraints that is not
+// Unconstrained allows nothing: empty constraints never mean any
+// arguments.
 type Tool struct {
-	Name        string
-	Constraints []Constraint
+	Name          string
+	Constraints   []Constraint
+	Unconstrained bool
 }
 
 // Set is one set of an allowlist: its tools, each under its constraints.
@@ -100,12 +105,12 @@ func (d Dir) ReadAllowlist(upstream, agent string) (*Allowlist, error) {
 	return &Allowlist{Sets: slices.Concat(defaults, own)}, nil
 }
 
-// setBuilder is a set being read: its tools in file order, which of them
-// take constraints, and the line of its [set] (0 for the lines before the
-// first).
+// setBuilder is a set being read: its tools in file order, the line of
+// each tool = line (the tools that take constraints), and the line of its
+// [set] (0 for the lines before the first).
 type setBuilder struct {
 	set         Set
-	constrained map[string]bool
+	constrained map[string]int
 	n           int
 }
 
@@ -134,7 +139,7 @@ type setsReader struct {
 }
 
 func newSetBuilder(n int) *setBuilder {
-	return &setBuilder{constrained: map[string]bool{}, n: n}
+	return &setBuilder{constrained: map[string]int{}, n: n}
 }
 
 // line reads one line; an error comes with the line it is about.
@@ -147,7 +152,7 @@ func (r *setsReader) line(l line) (int, error) {
 		}
 		return r.finish(l.n)
 	case l.key == keyTool || l.key == keyToolUnconstrained:
-		err = r.cur.addTool(l.value, l.key == keyTool)
+		err = r.cur.addTool(l.value, l.key == keyTool, l.n)
 	case l.key == keyConstrain:
 		err = r.cur.constrain(l.value)
 	default:
@@ -157,8 +162,16 @@ func (r *setsReader) line(l line) (int, error) {
 }
 
 // finish ends the current set and starts one at line next: a [set] with no
-// tool is an error, the lines before the first [set] may be none.
+// tool is an error, the lines before the first [set] may be none. So is a
+// tool = line no constrain line reached (one after the set's constrain =
+// * lines, or in a set with none): it would allow the tool with any
+// arguments, which only tool_unconstrained may say.
 func (r *setsReader) finish(next int) (int, error) {
+	for _, t := range r.cur.set.Tools {
+		if n := r.cur.constrained[t.Name]; n > 0 && len(t.Constraints) == 0 {
+			return n, fmt.Errorf("tool %s: no constrain line of its set reaches it (constraints follow their tools); to allow it with any arguments, write tool_unconstrained = %s", t.Name, t.Name)
+		}
+	}
 	switch {
 	case len(r.cur.set.Tools) > 0:
 		r.sets = append(r.sets, r.cur.set)
@@ -169,7 +182,7 @@ func (r *setsReader) finish(next int) (int, error) {
 	return 0, nil
 }
 
-func (b *setBuilder) addTool(name string, constrainable bool) error {
+func (b *setBuilder) addTool(name string, constrainable bool, n int) error {
 	if !toolName.MatchString(name) {
 		return fmt.Errorf("%q is not a tool name", name)
 	}
@@ -178,9 +191,9 @@ func (b *setBuilder) addTool(name string, constrainable bool) error {
 			return fmt.Errorf("%s is listed twice in its set", name)
 		}
 	}
-	b.set.Tools = append(b.set.Tools, Tool{Name: name})
+	b.set.Tools = append(b.set.Tools, Tool{Name: name, Unconstrained: !constrainable})
 	if constrainable {
-		b.constrained[name] = true
+		b.constrained[name] = n
 	}
 	return nil
 }
@@ -198,7 +211,7 @@ func (b *setBuilder) constrain(value string) error {
 	c := Constraint{Path: strings.Split(path, "."), Value: v, Prefix: op == "^="}
 	matched := false
 	for i, t := range b.set.Tools {
-		if b.constrained[t.Name] && (target == "*" || target == t.Name) {
+		if b.constrained[t.Name] > 0 && (target == "*" || target == t.Name) {
 			b.set.Tools[i].Constraints = append(b.set.Tools[i].Constraints, c)
 			matched = true
 		}

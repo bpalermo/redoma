@@ -216,7 +216,7 @@ func TestAWSCredentials(t *testing.T) {
 			t.Errorf("%s: %v, want a directory %v", path, fi.Mode(), want)
 		}
 	}
-	for _, port := range []uint32{0, 65536, lds.ModelPort, lds.EgressPort, lds.RelayPort} {
+	for _, port := range []uint32{0, 65536, lds.ModelPort, lds.EgressPort, lds.RelayPort, lds.MCPPort} {
 		f.awsPort = port
 		if _, err := awsCredentials(f, slog.New(slog.DiscardHandler)); err == nil {
 			t.Errorf("port %d accepted", port)
