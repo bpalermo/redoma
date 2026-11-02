@@ -376,8 +376,11 @@ and does not hold.
    `token_file`, its egress hosts, the headers to strip) and an allowlist,
    `/etc/redoma/mcp/<name>/<agent>.conf`, per agent that may use it. Both
    root's and writable by no one else.
-3. Have the host's minter write the credential somewhere, add the
-   `redoma-mcp-token@<name>.path` and `.service` drop-ins that name it, and
+3. Have the host's minter write the credential somewhere, as a file of
+   its own user's, writable by no one else, on a path of directories only
+   root and that user can write. Add the `redoma-mcp-token@<name>.path`
+   and `.service` drop-ins that name it and, unless the minter is root,
+   its uid (`REDOMA_MCP_TOKEN_OWNER`), and
    `systemctl enable --now redoma-mcp-token@<name>.path`.
 4. `systemctl enable --now redoma-mcp@<name>`.
 5. Start the agent's shim with `--mcp-upstream=<name>`.

@@ -14,9 +14,14 @@
 #   /etc/systemd/system/redoma-mcp-token@<name>.service.d/source.conf
 #   [Service]
 #   Environment=REDOMA_MCP_TOKEN_SOURCE=<the minter's file>
+#   Environment=REDOMA_MCP_TOKEN_OWNER=<the minter's uid, if not root>
 #
 # then `systemctl enable --now redoma-mcp-token@<name>.path`. Without the
 # drop-in systemd refuses the unit (a path unit needs a path).
+#
+# PathChanged= fires on a change only, never for a file that already exists
+# when this unit starts: the first copy after a boot is made by
+# redoma-mcp@<name>.service, which runs the copy before every start.
 [Unit]
 Description=redoma MCP upstream %i's credential, copied when it changes
 Documentation=https://github.com/bpalermo/redoma/blob/main/docs/mcp-upstreams.md

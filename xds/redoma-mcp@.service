@@ -4,15 +4,20 @@
 # root, its credential's directory (token_file) mounted read-only. The OCI
 # hook checks the container and, once its namespace has nothing but lo,
 # registers it with redoma xds, which publishes its egress listener and its
-# cluster. One instance serves every agent whose allowlist names it.
+# cluster. One instance serves every agent whose allowlist names it. The
+# server runs as its user namespace's root (an unprivileged host uid).
 #
 # Installed by the redoma package in /usr/lib/systemd/system. Start one with
-# `systemctl enable --now redoma-mcp@<name>`. It refuses to start while its
-# credential file is missing: enable redoma-mcp-token@<name>.path first.
+# `systemctl enable --now redoma-mcp@<name>`. Every start first runs
+# redoma-mcp-token@<name>.service, which copies the credential: /run is a
+# tmpfs, so after a boot the copy exists only once that has run, and its
+# path unit fires only on a change. While the minter has written nothing,
+# the start fails on the missing credential and is retried; the minter's
+# first write then makes the copy (redoma-mcp-token@<name>.path).
 [Unit]
 Description=redoma MCP upstream %i
 Documentation=https://github.com/bpalermo/redoma/blob/main/docs/mcp-upstreams.md
-Wants=redoma-xds.service
+Wants=redoma-xds.service redoma-mcp-token@%i.service
 After=redoma-xds.service redoma-mcp-token@%i.service
 
 [Service]

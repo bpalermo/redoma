@@ -18,7 +18,9 @@ host without `/etc/redoma/mcp`.
   `/etc/redoma/mcp/<name>/<agent>.conf`; `redoma mcp-upstream`; the units
   `redoma-mcp@.service`, `redoma-mcp-token@.path` and
   `redoma-mcp-token@.service`; three hook definitions for containers
-  annotated `redoma/upstream=<name>`.
+  annotated `redoma/upstream=<name>`. The credential's copy takes only
+  the minter's own file (`REDOMA_MCP_TOKEN_OWNER`, root by default), on
+  a path no one else can write.
 - The OCI hook now also refuses an agent that mounts anything of
   `/run/redoma-mcp`, or whose uid or gids fall in the `containers`
   subordinate ranges of `/etc/subuid` and `/etc/subgid`. Check your agents'

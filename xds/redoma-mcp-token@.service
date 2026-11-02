@@ -3,13 +3,23 @@
 # redoma-mcp-token@.path) to the token_file of /etc/redoma/mcp/<name>.conf,
 # under /run/redoma-mcp/<name>/ (0700, root's), atomically, 0600. A missing
 # or empty source fails the copy and keeps the last credential.
+#
+# The source must be the minter's: a regular file owned by
+# REDOMA_MCP_TOKEN_OWNER (root unless the drop-in names another uid),
+# writable by no one else, on a path of directories only root and that uid
+# can write, reached without following a symlink. Anything else is refused,
+# so a minter cannot point this root copy at another file.
+#
+# Run by redoma-mcp-token@<name>.path at every change, and by
+# redoma-mcp@<name>.service before every start.
 [Unit]
 Description=redoma MCP upstream %i's credential, copied once
 Documentation=https://github.com/bpalermo/redoma/blob/main/docs/mcp-upstreams.md
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/redoma mcp-upstream token %i ${REDOMA_MCP_TOKEN_SOURCE}
+Environment=REDOMA_MCP_TOKEN_OWNER=0
+ExecStart=/usr/bin/redoma mcp-upstream token --owner=${REDOMA_MCP_TOKEN_OWNER} %i ${REDOMA_MCP_TOKEN_SOURCE}
 
 # /run/redoma-mcp/<name>, root 0700, kept between copies: the upstream's
 # container mounts it.

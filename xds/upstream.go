@@ -16,9 +16,11 @@ import (
 // run (docs/mcp-upstreams.md):
 //
 //	redoma mcp-upstream run <name>             redoma-mcp@<name>.service
-//	redoma mcp-upstream token <name> <source>  redoma-mcp-token@<name>.service
+//	redoma mcp-upstream token --owner=<uid> <name> <source>
+//	                                           redoma-mcp-token@<name>.service
 func UpstreamCommand() *cobra.Command {
 	var etc, podman string
+	var owner uint32
 	cmd := &cobra.Command{
 		Use:   "mcp-upstream",
 		Short: "Run a host MCP upstream's container, and copy its credential",
@@ -61,9 +63,10 @@ func UpstreamCommand() *cobra.Command {
 			if u.TokenFile == "" {
 				return errors.New("upstream " + u.Name + " has no token_file")
 			}
-			return upstreamrun.CopyToken(args[1], u.TokenFile)
+			return upstreamrun.CopyToken(args[1], u.TokenFile, owner)
 		},
 	}
+	token.Flags().Uint32Var(&owner, "owner", 0, "the minter's uid: the source must be its file, on a path of directories only root and it can write")
 	cmd.AddCommand(run, token)
 	return cmd
 }

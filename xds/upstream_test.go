@@ -27,6 +27,9 @@ func TestUpstreamUnits(t *testing.T) {
 		"\nExecStart=/usr/bin/redoma mcp-upstream run %i\n",
 		"\nExecStop=/usr/bin/podman stop --ignore --time 10 " + upstreamrun.ContainerName("%i") + "\n",
 		"\nAfter=redoma-xds.service redoma-mcp-token@%i.service\n",
+		// Every start copies the credential first: after a boot /run is
+		// empty, and the path unit fires only on a change.
+		"\nWants=redoma-xds.service redoma-mcp-token@%i.service\n",
 	} {
 		if !strings.Contains(run, want) {
 			t.Errorf("redoma-mcp@.service lacks %q", want)
@@ -34,7 +37,8 @@ func TestUpstreamUnits(t *testing.T) {
 	}
 	token := unit(t, "redoma-mcp-token@.service")
 	for _, want := range []string{
-		"\nExecStart=/usr/bin/redoma mcp-upstream token %i ${REDOMA_MCP_TOKEN_SOURCE}\n",
+		"\nExecStart=/usr/bin/redoma mcp-upstream token --owner=${REDOMA_MCP_TOKEN_OWNER} %i ${REDOMA_MCP_TOKEN_SOURCE}\n",
+		"\nEnvironment=REDOMA_MCP_TOKEN_OWNER=0\n",
 		"\nRuntimeDirectory=" + strings.TrimSuffix(strings.TrimPrefix(mcpconf.TokenDir("%i"), "/run/"), "/") + "\n",
 		"\nRuntimeDirectoryMode=0700\n",
 		"\nRuntimeDirectoryPreserve=yes\n",
@@ -54,5 +58,10 @@ func TestUpstreamUnits(t *testing.T) {
 	}
 	if !sub["run"] || !sub["token"] {
 		t.Errorf("mcp-upstream subcommands %v", sub)
+	}
+	for _, c := range UpstreamCommand().Commands() {
+		if f := c.Flags().Lookup("owner"); c.Name() == "token" && (f == nil || f.DefValue != "0") {
+			t.Errorf("token --owner: %v, want a flag defaulting to root", f)
+		}
 	}
 }

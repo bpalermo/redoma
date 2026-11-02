@@ -147,8 +147,10 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
     pins by sha256 (about 110 MB, fetched for the test alone); bump both
     with the Envoy or server version the docs name;
   - `upstreamrun`: what an MCP upstream's units run: its container's
-    Podman command line from its `.conf`, and the atomic copy of its
-    credential into `/run/redoma-mcp/<name>/`;
+    Podman command line from its `.conf` (the server as its user
+    namespace's root), and the atomic copy of its credential into
+    `/run/redoma-mcp/<name>/`, from a source it walks without following
+    a symlink and takes only as the minter's own file;
   - `modelauth`: how the model listeners inject the credential;
   - `rolesanywhere`: IAM Roles Anywhere's CreateSession signed with an
     SVID held in memory, the ARNs' validation, and `Tunnels`, the HTTP
