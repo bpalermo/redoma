@@ -55,8 +55,8 @@ func parseRolesAnywhere(arn, kind string) (parsed, error) {
 }
 
 // Validate checks the three ARNs and the duration: each ARN in its exact
-// form; the trust anchor and the profile in one partition, region and
-// account, the role in that partition and account (Roles Anywhere maps a
+// form; the trust anchor's region one of its partition's; the trust anchor
+// and the profile in one partition, region and account, the role in that partition and account (Roles Anywhere maps a
 // certificate to roles of its own account only); the duration in whole
 // seconds between MinDuration and MaxDuration.
 func (p Profile) Validate() error {
@@ -67,6 +67,9 @@ func (p Profile) Validate() error {
 	profile, err := parseRolesAnywhere(p.ProfileARN, "profile")
 	if err != nil {
 		return err
+	}
+	if partitionOf(anchor.region) != anchor.partition {
+		return fmt.Errorf("trust anchor %q: region %s is not in partition %s", p.TrustAnchorARN, anchor.region, anchor.partition)
 	}
 	if profile.partition != anchor.partition || profile.region != anchor.region || profile.account != anchor.account {
 		return fmt.Errorf("profile %q is not in the trust anchor's partition, region and account (%s, %s, %s)", p.ProfileARN, anchor.partition, anchor.region, anchor.account)
@@ -83,6 +86,19 @@ func (p Profile) Validate() error {
 		return fmt.Errorf("session duration %s is not whole seconds between %s and %s", d, MinDuration, MaxDuration)
 	}
 	return nil
+}
+
+// partitionOf is the partition a region is in: China's regions (cn-) are
+// aws-cn's, GovCloud's (us-gov-) aws-us-gov's, every other one aws's.
+func partitionOf(region string) string {
+	switch {
+	case strings.HasPrefix(region, "cn-"):
+		return "aws-cn"
+	case strings.HasPrefix(region, "us-gov-"):
+		return "aws-us-gov"
+	default:
+		return "aws"
+	}
 }
 
 func (p Profile) duration() time.Duration {

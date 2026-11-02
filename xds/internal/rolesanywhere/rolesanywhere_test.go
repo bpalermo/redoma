@@ -258,3 +258,50 @@ func TestParseCertificate(t *testing.T) {
 		}
 	}
 }
+
+// TestValidateRegionOfPartition: a region belongs to one partition, so an
+// ARN whose region is another partition's is refused when the settings are
+// read, not retried against an endpoint that never answers.
+func TestValidateRegionOfPartition(t *testing.T) {
+	in := func(partition, region string) Profile {
+		return Profile{
+			TrustAnchorARN: inPart(partition, "rolesanywhere", region, account, "trust-anchor/"+rolesanywheretest.AnchorID),
+			ProfileARN:     inPart(partition, "rolesanywhere", region, account, "profile/"+rolesanywheretest.ProfileID),
+			RoleARN:        inPart(partition, "iam", "", account, "role/r"),
+		}
+	}
+	for _, ok := range [][2]string{
+		{"aws", "us-east-1"},
+		{"aws", "eu-west-3"},
+		{"aws", "ap-southeast-2"},
+		{"aws-cn", "cn-north-1"},
+		{"aws-cn", "cn-northwest-1"},
+		{"aws-us-gov", "us-gov-west-1"},
+		{"aws-us-gov", "us-gov-east-1"},
+	} {
+		if err := in(ok[0], ok[1]).Validate(); err != nil {
+			t.Errorf("%s in %s: %v", ok[1], ok[0], err)
+		}
+	}
+	for _, bad := range [][2]string{
+		{"aws", "cn-north-1"},
+		{"aws", "us-gov-west-1"},
+		{"aws-cn", "us-east-1"},
+		{"aws-cn", "us-gov-west-1"},
+		{"aws-us-gov", "us-east-1"},
+		{"aws-us-gov", "cn-north-1"},
+	} {
+		if err := in(bad[0], bad[1]).Validate(); err == nil {
+			t.Errorf("%s accepted in %s", bad[1], bad[0])
+		}
+	}
+}
+
+// TestCreateSessionNeedsAClient: no HTTP client is an error, never a
+// fallback to the default one (a proxy from the environment, a direct dial).
+func TestCreateSessionNeedsAClient(t *testing.T) {
+	cert, _, _ := certificate(t, false)
+	if _, err := (&Client{}).CreateSession(context.Background(), validProfile(), cert); !errors.Is(err, ErrNoHTTPClient) {
+		t.Fatalf("no client: %v, want ErrNoHTTPClient", err)
+	}
+}
