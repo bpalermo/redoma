@@ -224,7 +224,16 @@
            "@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
            "dns_cache_config": {
             "name": "egress",
-            "dns_lookup_family": "V4_PREFERRED"
+            "dns_lookup_family": "V4_PREFERRED",
+            "typed_dns_resolver_config": {
+             "name": "envoy.network.dns_resolver.cares",
+             "typed_config": {
+              "@type": "type.googleapis.com/envoy.extensions.network.dns_resolver.cares.v3.CaresDnsResolverConfig",
+              "dns_resolver_options": {
+               "no_default_search_domain": true
+              }
+             }
+            }
            }
           }
          },
@@ -490,7 +499,16 @@
            "@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
            "dns_cache_config": {
             "name": "egress",
-            "dns_lookup_family": "V4_PREFERRED"
+            "dns_lookup_family": "V4_PREFERRED",
+            "typed_dns_resolver_config": {
+             "name": "envoy.network.dns_resolver.cares",
+             "typed_config": {
+              "@type": "type.googleapis.com/envoy.extensions.network.dns_resolver.cares.v3.CaresDnsResolverConfig",
+              "dns_resolver_options": {
+               "no_default_search_domain": true
+              }
+             }
+            }
            }
           }
          },

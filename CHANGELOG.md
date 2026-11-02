@@ -6,6 +6,34 @@ here with what to do about it.
 
 ## Unreleased
 
+### Action: the bootstrap's egress DNS cache skips search domains
+
+The egress listeners' DNS cache now resolves with c-ares without the host's
+DNS search domains (`no_default_search_domain`), so a name an agent picks
+below an allowlist wildcard never resolves as a name under a search
+domain. Envoy refuses two configs of one cache name, and the bootstrap's
+`egress_dfp` cluster carries a copy of the cache: until both match, Envoy
+refuses every new or changed egress listener (an agent that already has
+one keeps it; one that starts gets none).
+
+Upgrade the package and the bootstrap together, in this order: install
+the new package (Envoy keeps the egress listeners it has), then add to the
+`egress_dfp` cluster's `dns_cache_config`, after
+`dns_lookup_family: V4_PREFERRED`,
+
+```yaml
+            typed_dns_resolver_config:
+              name: envoy.network.dns_resolver.cares
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.network.dns_resolver.cares.v3.CaresDnsResolverConfig
+                dns_resolver_options:
+                  no_default_search_domain: true
+```
+
+as `examples/envoy.yaml` has it, and restart Envoy. A restarted Envoy with
+the old bootstrap, or the new one with the old package, has no egress
+listener at all.
+
 ### New: suffix wildcards in the egress allowlists
 
 A line of `/etc/redoma/egress/_default.txt` or `<name>.txt` may now be a
@@ -19,9 +47,7 @@ Nothing to do for allowlists without one. Before adding one, weigh the
 risk: the agent may pick any name below the domain, so a wildcard over a
 shared service domain (a cloud provider's storage endpoints for a region,
 a hosting provider's shared domain) lets it reach anyone's resources
-there, including ones it can exfiltrate to. Prefer exact hosts. And run
-Envoy where `/etc/resolv.conf` has no `search` line: Envoy's resolver may
-append the search domains to a name that does not resolve.
+there, including ones it can exfiltrate to. Prefer exact hosts.
 
 ## 0.2.0
 

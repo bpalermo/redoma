@@ -201,10 +201,9 @@ whole region, lets the agent reach other people's buckets too, including
 one it can write to and exfiltrate through. redoma refuses one-label
 domains but does not know which domains are public suffixes (`co.uk`, a
 hosting provider's shared domain): that judgment is the administrator's.
-Envoy's resolver may also append the host's DNS search domains to a name
-that does not resolve, so a wildcard can reach names under those domains:
-run Envoy where `/etc/resolv.conf` has no `search` line, or keep to exact
-hosts.
+The egress DNS cache resolves a name as written, never with the host's DNS
+search domains appended, so a name below a wildcard's domain that does not
+resolve gets no tunnel rather than one to a name under a search domain.
 
 ### SPIRE
 
@@ -232,7 +231,9 @@ see `docs/broker-identity.md`. The Delegated Identity API stays the default.
 
 `examples/envoy.yaml` is a bootstrap: ADS from `/run/redoma/xds/xds.sock`,
 the `anthropic` cluster for the model listeners and the `egress_dfp`
-cluster for the egress proxies. Envoy runs as root with the supplementary
+cluster for the egress proxies, whose DNS cache must stay exactly the
+egress listeners' (c-ares, no search domains), or Envoy refuses those
+listeners. Envoy runs as root with the supplementary
 groups `redoma-sds` and `redoma-relay`, sees `/run/netns`, and reads
 `/etc/redoma/secrets/anthropic-key.yaml`. When an agent has AWS settings, Envoy
 also serves the tunnels to Roles Anywhere (see "AWS credentials"). Envoy keeps its listeners while
