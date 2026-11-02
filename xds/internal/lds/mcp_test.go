@@ -325,11 +325,6 @@ func TestMCPListenerRBAC(t *testing.T) {
 		{"no method (a response)", request{path: g, httpMethod: "POST", meta: map[string]any{}}, false},
 		{"GET of the session", request{path: g, httpMethod: "GET"}, true},
 		{"DELETE of the session", request{path: d, httpMethod: "DELETE"}, true},
-		{"DELETE with an empty body", request{path: d, httpMethod: "DELETE", headers: map[string]string{"content-length": "0"}}, true},
-		{"GET with a body", request{path: g, httpMethod: "GET", headers: map[string]string{"content-length": "64"}}, false},
-		{"GET with a chunked body", request{path: g, httpMethod: "GET", headers: map[string]string{"transfer-encoding": "chunked"}}, false},
-		{"DELETE with a body", request{path: d, httpMethod: "DELETE", headers: map[string]string{"content-length": "64"}}, false},
-		{"DELETE chunked, length 0", request{path: d, httpMethod: "DELETE", headers: map[string]string{"content-length": "0", "transfer-encoding": "chunked"}}, false},
 		{"GET with a query", request{path: g + "?x=y", httpMethod: "GET"}, false},
 		{"a query string", call(g+"?x=y", "search_dashboards", nil), false},
 		{"an empty query", call(g+"?", "search_dashboards", nil), false},
@@ -439,13 +434,22 @@ func TestMCPListenerRoutes(t *testing.T) {
 	h, _, _, _, _ := mcpParts(t, testMCPListener())
 	routes := h.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
 	type summary struct {
-		path, tool, cluster, rewrite, host string
-		status                             uint32
-		headers                            string
+		path, method, tool, cluster, rewrite, host string
+		status                                     uint32
+		headers                                    string
 	}
 	var got []summary
 	for _, r := range routes {
 		s := summary{path: r.GetMatch().GetPath() + r.GetMatch().GetPrefix(), status: r.GetDirectResponse().GetStatus()}
+		for _, h := range r.GetMatch().GetHeaders() {
+			if h.GetName() != ":method" || h.GetInvertMatch() {
+				t.Fatalf("route header matcher %v", h)
+			}
+			s.method = h.GetStringMatch().GetExact()
+		}
+		for _, h := range r.GetResponseHeadersToAdd() {
+			s.headers += "response " + h.GetHeader().GetKey() + "=" + h.GetHeader().GetValue() + ";"
+		}
 		for _, m := range r.GetMatch().GetDynamicMetadata() {
 			if m.GetPath()[0].GetKey() == "params" {
 				s.tool = m.GetValue().GetStringMatch().GetExact()
@@ -457,10 +461,15 @@ func TestMCPListenerRoutes(t *testing.T) {
 		}
 		got = append(got, s)
 	}
+	// GET and DELETE first, answered by Envoy: only POST reaches a server.
 	want := []summary{
+		{path: "/mcp/docs", method: "GET", status: 405, headers: "response allow=POST;"},
+		{path: "/mcp/docs", method: "DELETE", status: 405, headers: "response allow=POST;"},
 		{path: "/mcp/docs", tool: "publish", cluster: "mcp_docs-writer", rewrite: "/rpc", host: "127.0.0.1:8083"},
 		{path: "/mcp/docs", tool: "delete_page", status: 503},
 		{path: "/mcp/docs", cluster: "mcp_docs", rewrite: "/", host: "127.0.0.1:8082", headers: "x-mcp-tools=publish,read_page;"},
+		{path: "/mcp/grafana", method: "GET", status: 405, headers: "response allow=POST;"},
+		{path: "/mcp/grafana", method: "DELETE", status: 405, headers: "response allow=POST;"},
 		{path: "/mcp/grafana", cluster: "mcp_grafana", rewrite: "/mcp", host: "127.0.0.1:8000"},
 		{path: "/", status: 404},
 	}
