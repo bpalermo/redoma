@@ -118,6 +118,9 @@ func TestCreateRuntimeUpstream(t *testing.T) {
 	ok("its own credential directory", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindOf(T("/run/redoma-mcp/grafana")), upstreamAnnotation))
 	ok("a file in it", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindOf(T("/run/redoma-mcp/grafana/token")), upstreamAnnotation))
 	ok("its own directory idmapped, read-only", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","idmap"]`, ""), upstreamAnnotation))
+	ok("its own directory, rro alone", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","rro"]`, ""), upstreamAnnotation))
+	ok("its own directory as Podman 4.9 binds a file read-only", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana/token"), `["bind","rprivate","ro","nosuid","noexec","nodev"]`, ""), upstreamAnnotation))
+	ok("its own directory idmapped with its mappings", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","idmap=uids=0-100000-65536;gids=0-100000-65536"]`, ""), upstreamAnnotation))
 	ok("its own directory with mappings, read-only", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro"]`, mountMappings), upstreamAnnotation))
 	ok("an unmapped bind elsewhere", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/a"), `["rbind"]`, ""), upstreamAnnotation))
 	ok("no mount", createUpstream(t, upstreamNamespaces, upstreamProcess, upstreamMappings, "", upstreamAnnotation))
@@ -159,12 +162,25 @@ func TestCreateRuntimeUpstreamRefusals(t *testing.T) {
 		{"a bind elsewhere with uid mappings only", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/a"), `["rbind","ro"]`, `"uidMappings":[{"containerID":0,"hostID":100000,"size":1}]`), upstreamAnnotation, "idmapped"},
 		{"a bind elsewhere with gid mappings only", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/a"), `["rbind","ro"]`, `"gidMappings":[{"containerID":0,"hostID":100000,"size":1}]`), upstreamAnnotation, "idmapped"},
 		{"its own directory idmapped, writable", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","idmap"]`, ""), upstreamAnnotation, "writable"},
-		{"its own directory, writable", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","rw"]`, ""), upstreamAnnotation, "writable"},
+		{"its own directory, writable", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","rw"]`, ""), upstreamAnnotation, `"rw"`},
 		{"a file in it, writable", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana/token"), `["rbind"]`, ""), upstreamAnnotation, "writable"},
 		// Options apply in order, so rw after ro wins: any rw is refused.
-		{"its own directory, ro then rw", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","rw"]`, ""), upstreamAnnotation, "writable"},
-		{"its own directory idmapped, ro then rw", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","idmap","rw"]`, ""), upstreamAnnotation, "writable"},
-		{"its own directory, rw then ro", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","rw","ro"]`, ""), upstreamAnnotation, "writable"},
+		{"its own directory, ro then rw", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","rw"]`, ""), upstreamAnnotation, `"rw"`},
+		{"its own directory idmapped, ro then rw", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","idmap","rw"]`, ""), upstreamAnnotation, `"rw"`},
+		{"its own directory, rw then ro", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","rw","ro"]`, ""), upstreamAnnotation, `"rw"`},
+		// rrw applies recursively after the ro remount, in any position:
+		// only listed options pass, so it is refused wherever it stands.
+		{"its own directory, ro then rrw", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","rrw"]`, ""), upstreamAnnotation, `"rrw"`},
+		{"its own directory idmapped, ro then rrw", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","idmap","rrw"]`, ""), upstreamAnnotation, `"rrw"`},
+		{"its own directory, rrw then ro", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","rrw","ro"]`, ""), upstreamAnnotation, `"rrw"`},
+		{"its own directory, an unknown option", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","exec"]`, ""), upstreamAnnotation, `"exec"`},
+		{"its own directory, ridmap", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","ro","ridmap"]`, ""), upstreamAnnotation, `"ridmap"`},
+		// The read-only rule holds when either the source or its resolved
+		// path is in the directory.
+		{"a symlink in it to outside, rbind", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana/out"), `["rbind"]`, ""), upstreamAnnotation, "writable"},
+		{"a symlink outside to it, rbind", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/in"), `["rbind"]`, ""), upstreamAnnotation, "writable"},
+		{"a symlink outside to it, rbind rw", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/in"), `["rbind","rw"]`, ""), upstreamAnnotation, `"rw"`},
+		{"a file through a symlink outside to it, rbind", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/in/token"), `["rbind"]`, ""), upstreamAnnotation, "writable"},
 		// A symlink that starts on one side of the credential directory and
 		// resolves to the other is judged on both: idmapped, it is refused.
 		{"an idmapped symlink in it to outside", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana/out"), `["rbind","ro","idmap"]`, ""), upstreamAnnotation, "idmapped"},

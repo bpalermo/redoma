@@ -153,13 +153,19 @@ func (pl policy) checkMount(m map[string]json.RawMessage, what string) error {
 	return nil
 }
 
-// checkUpstreamBind holds an MCP upstream's bind to its own rules. An
-// idmapped bind (an idmap or ridmap option, or mappings of the mount's
+// checkUpstreamBind holds an MCP upstream's bind to its own rules.
+//
+// An idmapped bind (an idmap or ridmap option, or mappings of the mount's
 // own) lets the upstream's root, an unprivileged host id, own what host
-// root owns under it: only its credential directory may be one, and that
-// directory, or anything in it, only read-only, so the container cannot
-// leave entries where the root copier writes: ro, and no rw anywhere in
-// the options (runc and crun apply them in order, so a later rw wins).
+// root owns under it: only its credential directory may be one, as written
+// and as resolved.
+//
+// A bind of that directory, or of anything in it, as written or as
+// resolved, must be read-only, so the container cannot leave entries where
+// the root copier writes. It may carry only credentialOptions, ro or rro
+// among them: runc and crun apply options in order, and recursively
+// (rrw, with mount_setattr, after the ro remount), so a rule that looks
+// for ro and refuses known writable spellings misses the next one.
 func (pl policy) checkUpstreamBind(m map[string]json.RawMessage, what, source, real string, options []string) error {
 	var uidMappings, gidMappings []json.RawMessage
 	if err := field(m, "uidMappings", what, &uidMappings); err != nil {
@@ -169,16 +175,33 @@ func (pl policy) checkUpstreamBind(m map[string]json.RawMessage, what, source, r
 		return fmt.Errorf("the container's spec: %w", err)
 	}
 	mapped := len(uidMappings) > 0 || len(gidMappings) > 0 || slices.ContainsFunc(options, isIdmapOption)
-	inOwn := pl.inAllowed(filepath.Clean(source)) && pl.inAllowed(real)
-	switch {
-	case mapped && !inOwn:
+	clean := filepath.Clean(source)
+	if mapped && !(pl.inAllowed(clean) && pl.inAllowed(real)) {
 		return fmt.Errorf("the container binds %s idmapped: only an MCP upstream's own credential directory may be", source)
-	case inOwn && (!slices.Contains(options, "ro") || slices.Contains(options, "rw")):
-		// The runtime applies options in order, a later rw clearing ro:
-		// any rw is refused, wherever it stands.
-		return fmt.Errorf("the container binds its credential directory %s writable: it is read-only (ro, and no rw)", source)
+	}
+	if !pl.inAllowed(clean) && !pl.inAllowed(real) {
+		return nil
+	}
+	for _, o := range options {
+		if !credentialOption(o) {
+			return fmt.Errorf("the container binds its credential directory %s with the option %q: only %v (and idmap=...) may be given, so it stays read-only", source, o, credentialOptions)
+		}
+	}
+	if !slices.Contains(options, "ro") && !slices.Contains(options, "rro") {
+		return fmt.Errorf("the container binds its credential directory %s writable: it is read-only (ro or rro)", source)
 	}
 	return nil
+}
+
+// credentialOptions are the only options a bind of an upstream's
+// credential directory may carry: the bind, read-only, idmap, the
+// restrictions, and the propagation Podman 4.9 sets (rprivate).
+var credentialOptions = []string{"bind", "rbind", "ro", "rro", "idmap", "nosuid", "nodev", "noexec", "rprivate"}
+
+// credentialOption says that o is one of credentialOptions, or idmap with
+// its mappings (idmap=uids=...;gids=...).
+func credentialOption(o string) bool {
+	return slices.Contains(credentialOptions, o) || strings.HasPrefix(o, "idmap=")
 }
 
 // inAllowed says that p is the upstream's credential directory, or in it.
