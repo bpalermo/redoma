@@ -178,8 +178,9 @@ func TestCreateRuntimeChecksTheMounts(t *testing.T) {
 		"a bind with gid mappings": {`[{"destination":"/x","type":"bind","source":"` + T("/srv/redoma/work/a") + `","options":["rbind"],"gidMappings":[{"containerID":0,"hostID":0,"size":1}]}]`, "idmapped"},
 		"an idmapped tmpfs":        {`[{"destination":"/x","type":"tmpfs","source":"tmpfs","options":["idmap"]}]`, "idmapped"},
 		// An empty mapping maps nothing: not an idmap.
-		"empty mappings":            {`[{"destination":"/x","type":"bind","source":"` + T("/srv/redoma/work/a") + `","options":["rbind"],"uidMappings":[],"gidMappings":null}]`, ""},
-		"an idmapped bind of /root": {`[{"destination":"/x","type":"bind","source":"/root","options":["rbind","idmap"]}]`, "idmapped"},
+		"empty mappings":                {`[{"destination":"/x","type":"bind","source":"` + T("/srv/redoma/work/a") + `","options":["rbind"],"uidMappings":[],"gidMappings":null}]`, ""},
+		"empty mappings, the other way": {`[{"destination":"/x","type":"bind","source":"` + T("/srv/redoma/work/a") + `","options":["rbind"],"uidMappings":null,"gidMappings":[]}]`, ""},
+		"an idmapped bind of /root":     {`[{"destination":"/x","type":"bind","source":"/root","options":["rbind","idmap"]}]`, "idmapped"},
 	} {
 		expect(t, name, create(t, agentProcess, tc.mounts), tc.want)
 	}

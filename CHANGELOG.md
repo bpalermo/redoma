@@ -43,13 +43,19 @@ host without `/etc/redoma/mcp`.
   /etc/subuid /etc/subgid` show what to fix.
 - The `.deb`'s upgrade restarts running `redoma-mcp@*` units, and its
   removal stops them and the credential's watchers.
-- The OCI hook refuses an agent with an idmapped mount (`:idmap`,
-  `:ridmap`, or a mount with its own uid or gid mappings), of any type.
-  redoma's launchers add none; a container started by hand with one is
-  refused from this release on.
 - An upstream's argument constraints hold only for a server that reads its
   arguments with exact case: Grafana's does not (docs/mcp-upstreams.md, "A
   parser differential").
+
+### Action: no agent has an idmapped mount
+
+The OCI hook refuses an agent container with an idmapped mount (`:idmap`,
+`:ridmap`, or a mount with uid or gid mappings of its own), of any type,
+on every host, whether it runs MCP upstreams or not. An agent runs in the
+host's user namespace, and an idmapped bind would let its ids own what
+another id, root included, owns in a directory the hook does not forbid.
+redoma's launchers add no such mount; a container started by hand with
+one is refused from this release on: drop the option.
 
 ### Action: the bootstrap's egress DNS cache skips search domains
 
