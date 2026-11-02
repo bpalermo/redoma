@@ -6,10 +6,12 @@
 #
 # A listing with no path at all, an empty layer's, prints nothing and
 # succeeds. grep's 1 (no line selected) is that case; any other failure of
-# the pipeline, grep's 2 included, is the function's.
-layer_dups() {
+# the pipeline, grep's 2 included, is the function's: the body is a subshell
+# with its own pipefail, so that holds whatever the caller set.
+layer_dups() (
+	set -o pipefail
 	sed -e 's#^\./##' -e 's#/$##' |
 		{ grep -v '^\.\?$' || (($? == 1)); } |
 		sort |
 		uniq -d
-}
+)
