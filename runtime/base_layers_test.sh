@@ -6,12 +6,15 @@
 # pull the image.
 #
 # Every layer blob of one architecture's OCI layout is listed, zstd or gzip
-# (found by its magic bytes), with each path normalized: no leading ./ and
-# no trailing /, so ./etc/ and etc are the same path.
+# (found by its magic bytes), and checked by layer_dups (layer_dups.sh).
 #
 # Arguments: the architecture, the runfiles path of the OCI layout
 # directory of the image's index for it, and the number of layers it has.
 set -euo pipefail
+
+# layer_dups.sh is linted with this script, through its sh_library.
+# shellcheck source=/dev/null
+source "$(cd "$(dirname "$0")" && pwd)/layer_dups.sh"
 
 arch=$1
 layout="${TEST_SRCDIR}/$2"
@@ -27,7 +30,10 @@ for blob in "${layout}"/blobs/sha256/*; do
 	*) continue ;;
 	esac
 	layers=$((layers + 1))
-	dups="$(sed -e 's#^\./##' -e 's#/$##' <<<"${listing}" | grep -v '^\.\?$' | sort | uniq -d)"
+	if ! dups="$(layer_dups <<<"${listing}")"; then
+		echo "FAIL (${arch}): could not check layer $(basename "${blob}")" >&2
+		exit 1
+	fi
 	if [[ -n ${dups} ]]; then
 		echo "FAIL (${arch}): layer $(basename "${blob}") lists these paths more than once:" >&2
 		echo "${dups}" >&2

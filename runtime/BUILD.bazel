@@ -28,6 +28,7 @@ load("@rules_img//img:layer.bzl", "file_metadata", "image_layer", "layer_from_ta
 load("@rules_img//img:load.bzl", "image_load")
 load("@rules_img//img:push.bzl", "image_push")
 load("@rules_img//img:test.bzl", "image_structure_test")
+load("@rules_shell//shell:sh_library.bzl", "sh_library")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//bazel/platforms:transition.bzl", "platform_files")
 
@@ -88,8 +89,10 @@ group(
 
 flatten(
     name = "system",
-    # Each input tarball has its own ./etc/ (and ./var/...) entry: one per
-    # path, or Podman refuses to pull the layer (base_layers_test).
+    # cacerts, group and passwd each have their own ./etc/ entry, the only
+    # path they share; dpkg_status has its one file and no directory entry.
+    # A layer needs one entry per path, or Podman refuses to pull it
+    # (base_layers_test).
     deduplicate = True,
     tars = [
         ":cacerts",
@@ -310,7 +313,21 @@ sh_test(
         "4" if image == "base" else "5",
     ],
     data = [":%s_oci_layout_%s" % (image, arch)],
+    deps = [":layer_dups"],
 ) for arch in PLATFORMS for image in ("base", "image")]
+
+# The check each layer gets: which paths a tar listing names twice.
+sh_library(
+    name = "layer_dups",
+    srcs = ["layer_dups.sh"],
+)
+
+sh_test(
+    name = "layer_dups_test",
+    size = "small",
+    srcs = ["layer_dups_test.sh"],
+    deps = [":layer_dups"],
+)
 
 # The base's version label, read from each architecture's config as pushed,
 # is the packages' version.
