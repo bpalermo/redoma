@@ -37,5 +37,6 @@ go_test(
     deps = [
         "//common/config",
         "//xds/internal/hostcheck",
+        "//xds/internal/lds",
     ],
 )

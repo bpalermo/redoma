@@ -192,6 +192,13 @@ func awsCredentials(f flags, log *slog.Logger) (*awscreds.Service, error) {
 	if f.awsPort == 0 || f.awsPort > 65535 {
 		return nil, fmt.Errorf("--aws-credentials-port %d is not a port", f.awsPort)
 	}
+	// The agents' other listeners are bound on 127.0.0.1 of the same
+	// namespace: one port twice would fail every bind of the agent's.
+	for _, taken := range []uint32{lds.ModelPort, lds.EgressPort, lds.RelayPort} {
+		if f.awsPort == taken {
+			return nil, fmt.Errorf("--aws-credentials-port %d is another listener's (model %d, egress %d, relay %d)", f.awsPort, lds.ModelPort, lds.EgressPort, lds.RelayPort)
+		}
+	}
 	if err := os.MkdirAll(f.cfg.AWSTunnelDir, 0o770); err != nil {
 		return nil, err
 	}

@@ -1,6 +1,7 @@
 # redoma-xds: the host Envoy's control plane for the agent containers. Serves
-# the listeners of every running agent (LDS), their relay clusters (CDS) and
-# each agent's SPIFFE identity (SDS) over ADS on /run/redoma/xds/xds.sock,
+# the listeners of every running agent (LDS), their relay and AWS
+# credentials clusters and the tunnels to IAM Roles Anywhere (CDS), and each
+# agent's SPIFFE identity (SDS) over ADS on /run/redoma/xds/xds.sock,
 # fetching the identities from SPIRE: the Delegated Identity API on the SPIRE
 # agent's admin socket, or the SPIFFE Broker API (identity_api and the
 # spire_* sockets in /etc/redoma/redoma.conf).
@@ -51,7 +52,10 @@ UMask=0077
 
 # It reads /etc/redoma, /run/redoma/active and /run/netns (and in Broker
 # mode /etc/passwd and /etc/group, to check who may reach the Workload API),
-# connects to SPIRE's unix sockets and listens on its own; nothing else.
+# and the system's CA certificates; connects to SPIRE's unix sockets and to
+# the tunnels the host Envoy serves in /run/redoma/xds/tunnel; and listens
+# on its own sockets, the agents' AWS credentials ones in
+# /run/redoma/xds/aws among them; nothing else.
 # Connecting to a socket needs no write access to its file system, so the
 # read-only system is no obstacle to SPIRE's sockets. It reads no other
 # process's /proc: an agent's PID comes from the pidfd's fdinfo, its own.
@@ -63,7 +67,8 @@ ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
 # Unix sockets are file system objects and reach across network namespaces;
-# this one has no network at all.
+# this one has no network at all. It reaches IAM Roles Anywhere only through
+# the host Envoy's tunnels, unix sockets, with TLS of its own end to end.
 PrivateNetwork=yes
 RestrictAddressFamilies=AF_UNIX
 IPAddressDeny=any

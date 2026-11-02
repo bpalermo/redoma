@@ -283,7 +283,15 @@ The port is `redoma xds --aws-credentials-port` (9911 by default). Only
   Anywhere refused the SVID for that anchor, profile and role) or
   `rolesanywhere_unavailable`.
 
-The listener is the agent's identity: the request carries none.
+The answers of 503 and 429 also carry a JSON body,
+`{"code": <reason>, "message": ...}`, the shape the SDKs read an
+endpoint's error from.
+
+The listener is the agent's identity: the request carries none, and there
+is no `AWS_CONTAINER_AUTHORIZATION_TOKEN`. Anything that can make a request
+from inside the agent's container, a server-side request forgery in a tool
+the agent runs included, can get the agent's credentials; the boundary is
+the container, and the role should grant no more than the agent needs.
 
 The SDKs allow about a second per attempt, so `redoma xds` asks for a
 session as soon as the agent's SVID arrives, keeps it in memory, and asks
@@ -300,9 +308,10 @@ the host Envoy:
 - The TLS is `redoma xds`'s own, end to end, verified against the system's
   CA certificates, so Envoy carries only ciphertext.
 - The host's Envoy must be able to resolve and reach
-  `rolesanywhere.<region>.amazonaws.com` on port 443, and to create sockets
-  in `/run/redoma/xds/tunnel` (an Envoy in a container mounts
-  `/run/redoma/xds` writable).
+  `rolesanywhere.<region>.amazonaws.com` on port 443
+  (`rolesanywhere.<region>.amazonaws.com.cn` in the aws-cn partition), and
+  to create sockets in `/run/redoma/xds/tunnel` (an Envoy in a container
+  mounts `/run/redoma/xds` writable).
 - While Envoy is down no new session can be asked for; the sessions in
   memory are served until they expire.
 

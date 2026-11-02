@@ -22,8 +22,9 @@ To use it:
    `profile_arn = arn:<partition>:rolesanywhere:<region>:<account>:profile/<id>`
    and `role_arn = arn:<partition>:iam::<account>:role/<name>`.
 2. Let the host's Envoy reach `rolesanywhere.<region>.amazonaws.com:443`
-   and create sockets in `/run/redoma/xds/tunnel`: an Envoy in a container
-   mounts `/run/redoma/xds` writable, not read-only.
+   (`.amazonaws.com.cn` in the aws-cn partition) and create sockets in
+   `/run/redoma/xds/tunnel`: an Envoy in a container mounts
+   `/run/redoma/xds` writable, not read-only.
 3. Run the agent's container with
    `AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1:9911/v1/credentials`.
 

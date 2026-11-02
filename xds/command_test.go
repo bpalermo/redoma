@@ -9,6 +9,7 @@ import (
 
 	"github.com/bpalermo/redoma/common/config"
 	"github.com/bpalermo/redoma/xds/internal/hostcheck"
+	"github.com/bpalermo/redoma/xds/internal/lds"
 )
 
 // TestCheckRelayID: only spiffe://<td>/host/relay, exactly as go-spiffe
@@ -215,7 +216,7 @@ func TestAWSCredentials(t *testing.T) {
 			t.Errorf("%s: %v, want a directory %v", path, fi.Mode(), want)
 		}
 	}
-	for _, port := range []uint32{0, 65536} {
+	for _, port := range []uint32{0, 65536, lds.ModelPort, lds.EgressPort, lds.RelayPort} {
 		f.awsPort = port
 		if _, err := awsCredentials(f, slog.New(slog.DiscardHandler)); err == nil {
 			t.Errorf("port %d accepted", port)
