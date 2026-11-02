@@ -33,6 +33,7 @@ import (
 	routerv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	genericv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/http/injected_credentials/generic/v3"
+	caresv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/network/dns_resolver/cares/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"google.golang.org/protobuf/proto"
@@ -268,10 +269,7 @@ func egressListener(netns, repo string, hosts []string) *listenerv3.Listener {
 	})
 	filters := []*hcmv3.HttpFilter{
 		httpFilter("envoy.filters.http.dynamic_forward_proxy", &dfpv3.FilterConfig{
-			ImplementationSpecifier: &dfpv3.FilterConfig_DnsCacheConfig{DnsCacheConfig: &commondfpv3.DnsCacheConfig{
-				Name:            "egress",
-				DnsLookupFamily: clusterv3.Cluster_V4_PREFERRED,
-			}},
+			ImplementationSpecifier: &dfpv3.FilterConfig_DnsCacheConfig{DnsCacheConfig: egressDNSCache()},
 		}),
 	}
 	return &listenerv3.Listener{
@@ -280,6 +278,24 @@ func egressListener(netns, repo string, hosts []string) *listenerv3.Listener {
 		FilterChains: []*listenerv3.FilterChain{{
 			Filters: []*listenerv3.Filter{hcm(repo, "egress", &routev3.RouteConfiguration{VirtualHosts: vhosts}, filters, nil)},
 		}},
+	}
+}
+
+// egressDNSCache is the egress listeners' DNS cache, which the bootstrap's
+// egress_dfp cluster must repeat exactly: Envoy refuses two configs of one
+// cache name. It resolves with c-ares without the host's search domains: an
+// allowlist wildcard lets the agent pick a name below its domain, and one
+// that does not resolve must not become a name under a search domain.
+func egressDNSCache() *commondfpv3.DnsCacheConfig {
+	return &commondfpv3.DnsCacheConfig{
+		Name:            "egress",
+		DnsLookupFamily: clusterv3.Cluster_V4_PREFERRED,
+		TypedDnsResolverConfig: &corev3.TypedExtensionConfig{
+			Name: "envoy.network.dns_resolver.cares",
+			TypedConfig: mustAny(&caresv3.CaresDnsResolverConfig{
+				DnsResolverOptions: &corev3.DnsResolverOptions{NoDefaultSearchDomain: true},
+			}),
+		},
 	}
 }
 

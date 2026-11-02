@@ -8,8 +8,10 @@ import (
 	bootstrapv3 "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	dfpclusterv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/clusters/dynamic_forward_proxy/v3"
+	commondfpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/common/dynamic_forward_proxy/v3"
 	dfpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/dynamic_forward_proxy/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	caresv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/network/dns_resolver/cares/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	_ "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -99,6 +101,27 @@ func egressCache(t *testing.T) proto.Message {
 	}
 	t.Fatal("no egress listener with a forward proxy filter")
 	return nil
+}
+
+// TestEgressCacheSkipsSearchDomains: the egress DNS cache resolves a name
+// as written, never with the host's search domains appended. An allowlist
+// wildcard lets the agent pick the name below its domain, so a name that
+// does not resolve must stay unresolved rather than become one under a
+// search domain. TestExampleBootstrap holds the bootstrap's copy of the
+// cache to this one, field for field.
+func TestEgressCacheSkipsSearchDomains(t *testing.T) {
+	cache, ok := egressCache(t).(*commondfpv3.DnsCacheConfig)
+	if !ok {
+		t.Fatal("the egress cache is not a DnsCacheConfig")
+	}
+	r := cache.GetTypedDnsResolverConfig()
+	var cares caresv3.CaresDnsResolverConfig
+	if r.GetName() != "envoy.network.dns_resolver.cares" || r.GetTypedConfig().UnmarshalTo(&cares) != nil {
+		t.Fatalf("typed_dns_resolver_config %v: want c-ares", r)
+	}
+	if !cares.GetDnsResolverOptions().GetNoDefaultSearchDomain() {
+		t.Errorf("c-ares options %v: want no_default_search_domain", cares.GetDnsResolverOptions())
+	}
 }
 
 // TestExampleSecret: examples/anthropic-key.yaml is an SDS file of the
