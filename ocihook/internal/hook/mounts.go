@@ -129,6 +129,18 @@ func (pl policy) checkMount(m map[string]json.RawMessage, what string) error {
 			return fmt.Errorf("the container's spec: %w", err)
 		}
 	}
+	mapped, err := isMapped(m, what, options)
+	if err != nil {
+		return err
+	}
+	// An idmapped mount lets the container's ids own what other ids own
+	// on the host: an agent's, which run in the host's user namespace, a
+	// tree root owns, through a bind of any directory that is not
+	// forbidden. No agent has one, and no mount of an upstream but its
+	// own credential directory's bind (checkUpstreamBind).
+	if mapped && (pl.allowed == "" || !isBind(typ, options)) {
+		return fmt.Errorf("the container mounts %q idmapped (an idmap or ridmap option, or mappings of the mount's own): an agent never has an idmapped mount, an MCP upstream only its credential directory's bind", source)
+	}
 	if !isBind(typ, options) {
 		if !slices.Contains(mountTypes, typ) {
 			return fmt.Errorf("the container mounts %q of type %q: an agent has binds and the runtime's own file systems only", source, typ)
@@ -167,14 +179,10 @@ func (pl policy) checkMount(m map[string]json.RawMessage, what string) error {
 // (rrw, with mount_setattr, after the ro remount), so a rule that looks
 // for ro and refuses known writable spellings misses the next one.
 func (pl policy) checkUpstreamBind(m map[string]json.RawMessage, what, source, real string, options []string) error {
-	var uidMappings, gidMappings []json.RawMessage
-	if err := field(m, "uidMappings", what, &uidMappings); err != nil {
-		return fmt.Errorf("the container's spec: %w", err)
+	mapped, err := isMapped(m, what, options)
+	if err != nil {
+		return err
 	}
-	if err := field(m, "gidMappings", what, &gidMappings); err != nil {
-		return fmt.Errorf("the container's spec: %w", err)
-	}
-	mapped := len(uidMappings) > 0 || len(gidMappings) > 0 || slices.ContainsFunc(options, isIdmapOption)
 	clean := filepath.Clean(source)
 	if mapped && !(pl.inAllowed(clean) && pl.inAllowed(real)) {
 		return fmt.Errorf("the container binds %s idmapped: only an MCP upstream's own credential directory may be", source)
@@ -224,6 +232,19 @@ func (pl policy) checkNoSubmounts(host []mountEntry) error {
 // inAllowed says that p is the upstream's credential directory, or in it.
 func (pl policy) inAllowed(p string) bool {
 	return p == pl.allowed || strings.HasPrefix(p, pl.allowed+"/")
+}
+
+// isMapped says that a mount is idmapped: an idmap or ridmap option, or
+// uid or gid mappings of the mount's own.
+func isMapped(m map[string]json.RawMessage, what string, options []string) (bool, error) {
+	var uidMappings, gidMappings []json.RawMessage
+	if err := field(m, "uidMappings", what, &uidMappings); err != nil {
+		return false, fmt.Errorf("the container's spec: %w", err)
+	}
+	if err := field(m, "gidMappings", what, &gidMappings); err != nil {
+		return false, fmt.Errorf("the container's spec: %w", err)
+	}
+	return len(uidMappings) > 0 || len(gidMappings) > 0 || slices.ContainsFunc(options, isIdmapOption), nil
 }
 
 // isIdmapOption is a mount option that idmaps the mount: idmap or ridmap,
