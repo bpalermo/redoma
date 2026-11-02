@@ -3,6 +3,7 @@ package cds
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"testing"
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -119,5 +120,60 @@ func TestRelayClusterPinsTheRelayID(t *testing.T) {
 	}
 	if got := tls.GetCommonTlsContext().GetTlsCertificateSdsSecretConfigs(); len(got) != 1 || got[0].GetName() != "agent/beta" {
 		t.Errorf("client certificate %v, want the agent's SVID", got)
+	}
+}
+
+// TestAWSCluster: testdata/aws.json, written by hand from the design: the
+// agent's own socket of redoma xds, plain HTTP/1.1, no TLS.
+func TestAWSCluster(t *testing.T) {
+	want := golden(t, "testdata/aws.json")
+	got := AWSCluster("beta", "/run/redoma/xds/aws/beta.sock")
+	if diff := cmp.Diff(want, got, protocmp.Transform()); diff != "" {
+		t.Errorf("AWS cluster differs from testdata/aws.json (-golden +cds):\n%s", diff)
+	}
+	if err := got.ValidateAll(); err != nil {
+		t.Error(err)
+	}
+}
+
+// TestTunnelCluster: testdata/tunnel.json, written by hand from the design.
+func TestTunnelCluster(t *testing.T) {
+	const host = "rolesanywhere.us-east-1.amazonaws.com"
+	want := golden(t, "testdata/tunnel.json")
+	got := TunnelCluster(host)
+	if diff := cmp.Diff(want, got, protocmp.Transform()); diff != "" {
+		t.Errorf("tunnel cluster differs from testdata/tunnel.json (-golden +cds):\n%s", diff)
+	}
+	if err := got.ValidateAll(); err != nil {
+		t.Error(err)
+	}
+}
+
+// TestTunnelClusterLeadsOnlyToTheEndpoint: the tunnel's one way out is
+// host:443: a single endpoint, that host and port, and nothing that could
+// add another (no EDS, no discovery of its own, no TLS that would make
+// Envoy a party to the session).
+func TestTunnelClusterLeadsOnlyToTheEndpoint(t *testing.T) {
+	for _, host := range []string{"rolesanywhere.us-east-1.amazonaws.com", "rolesanywhere.cn-north-1.amazonaws.com.cn"} {
+		c := TunnelCluster(host)
+		if c.GetType() != clusterv3.Cluster_LOGICAL_DNS || c.GetEdsClusterConfig() != nil || c.GetClusterType() != nil {
+			t.Errorf("%s: discovery %v", host, c.GetType())
+		}
+		if c.GetTransportSocket() != nil || len(c.GetTransportSocketMatches()) != 0 {
+			t.Errorf("%s: Envoy does TLS of its own", host)
+		}
+		var addrs []string
+		for _, l := range c.GetLoadAssignment().GetEndpoints() {
+			for _, e := range l.GetLbEndpoints() {
+				sa := e.GetEndpoint().GetAddress().GetSocketAddress()
+				addrs = append(addrs, sa.GetAddress()+":"+strconv.Itoa(int(sa.GetPortValue())))
+				if sa.GetResolverName() != "" || sa.GetNamedPort() != "" || e.GetEndpoint().GetHostname() != "" || len(e.GetEndpoint().GetAdditionalAddresses()) != 0 {
+					t.Errorf("%s: an endpoint with more than a host and port: %v", host, e)
+				}
+			}
+		}
+		if len(addrs) != 1 || addrs[0] != host+":443" {
+			t.Errorf("%s: endpoints %q, want exactly %s:443", host, addrs, host)
+		}
 	}
 }

@@ -2,7 +2,11 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "cds",
-    srcs = ["cds.go"],
+    srcs = [
+        "aws.go",
+        "cds.go",
+        "tunnel.go",
+    ],
     importpath = "github.com/bpalermo/redoma/xds/internal/cds",
     visibility = ["//xds:__subpackages__"],
     deps = [

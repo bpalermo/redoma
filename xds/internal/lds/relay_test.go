@@ -46,3 +46,41 @@ func TestRelayLeavesTheOthers(t *testing.T) {
 		}
 	}
 }
+
+// TestAWSListener: testdata/aws.json, written by hand from the design:
+// HTTP/1.1 on 127.0.0.1:<port> in the agent's namespace, GET
+// /v1/credentials to the agent's own AWS cluster with a 5s timeout, a 404
+// for any other path, and the cluster not validated.
+func TestAWSListener(t *testing.T) {
+	want := golden(t, "testdata/aws.json")
+	got := []*listenerv3.Listener{AWSListener("/run/netns/redoma-beta", "beta", DefaultAWSPort)}
+	if diff := cmp.Diff(want, got, protocmp.Transform()); diff != "" {
+		t.Errorf("AWS listener differs from testdata/aws.json (-golden +lds):\n%s", diff)
+	}
+	if err := got[0].ValidateAll(); err != nil {
+		t.Error(err)
+	}
+	for range 20 {
+		if !proto.Equal(got[0], AWSListener("/run/netns/redoma-beta", "beta", DefaultAWSPort)) {
+			t.Fatal("the AWS listener differs from one build to the next")
+		}
+	}
+	if p := AWSListener("/run/netns/redoma-beta", "beta", 8999).GetAddress().GetSocketAddress().GetPortValue(); p != 8999 {
+		t.Errorf("port %d, want the one asked for", p)
+	}
+}
+
+// TestTunnelListener: testdata/tunnel.json, written by hand from the
+// design: the tunnel's unix socket, 0666 (the directory keeps others out),
+// every connection carried as bytes to the endpoint's cluster.
+func TestTunnelListener(t *testing.T) {
+	const host = "rolesanywhere.us-east-1.amazonaws.com"
+	want := golden(t, "testdata/tunnel.json")
+	got := []*listenerv3.Listener{TunnelListener(host, "/run/redoma/xds/tunnel/"+host+".sock")}
+	if diff := cmp.Diff(want, got, protocmp.Transform()); diff != "" {
+		t.Errorf("tunnel listener differs from testdata/tunnel.json (-golden +lds):\n%s", diff)
+	}
+	if err := got[0].ValidateAll(); err != nil {
+		t.Error(err)
+	}
+}

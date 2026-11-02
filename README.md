@@ -195,7 +195,8 @@ see `docs/broker-identity.md`. The Delegated Identity API stays the default.
 the `anthropic` cluster for the model listeners and the `egress_dfp`
 cluster for the egress proxies. Envoy runs as root with the supplementary
 groups `redoma-sds` and `redoma-relay`, sees `/run/netns`, and reads
-`/etc/redoma/secrets/anthropic-key.yaml`. Envoy keeps its listeners while
+`/etc/redoma/secrets/anthropic-key.yaml`. When an agent has AWS settings, Envoy
+also serves the tunnels to Roles Anywhere (see "AWS credentials"). Envoy keeps its listeners while
 `redoma xds` restarts, and redoma knows to wait for a replaced namespace to
 be released before binding it again.
 
@@ -207,6 +208,8 @@ one directory per user of it, each with its own owner and mode:
 | Directory | Owner, mode | Holds |
 |---|---|---|
 | `/run/redoma/xds` | `redoma-sds`, 0750 (`redoma-xds`'s `RuntimeDirectory`) | `xds.sock` (Envoy's ADS), `register.sock` (the OCI hook's), `state.json`, `registrations.json` |
+| `/run/redoma/xds/aws` | `redoma-sds`, 0750 | one socket per agent with AWS settings, which Envoy dials (see "AWS credentials") |
+| `/run/redoma/xds/tunnel` | `redoma-sds`, 0770 | the sockets Envoy serves for the tunnels to Roles Anywhere |
 | `/run/redoma/relay` | `redoma-relay`, group `redoma-relay`, 0750 (`redoma-relay`'s) | `relay.sock`, the agents' socket, which Envoy dials |
 | `/run/redoma/lead` | `redoma-relay`, group `redoma-lead`, 0750 (`redoma-relay`'s) | `lead.sock`, the lead's socket (`redoma msg`, `redoma mcp`) |
 | `/run/redoma/envoy` | the host's Envoy unit, root 0700 | Envoy's admin socket, if the host gives it one |
@@ -229,6 +232,79 @@ point Claude Code at the model listener with any placeholder key:
 Workload identity federation (an agent's own JWT-SVID exchanged for a
 short-lived API token, so no static key is held on the host) is the next
 credential mode; it is not implemented yet.
+
+### AWS credentials
+
+An agent can get AWS credentials of its own, for any AWS service, through
+the standard container credentials provider of the AWS SDKs and the AWS
+CLI, with nothing else to set up in the container. They are session
+credentials of an IAM role, issued by IAM Roles Anywhere for the agent's
+X.509 SVID. The SVID and its key never enter the container: `redoma xds`
+holds them, asks Roles Anywhere for the session, and hands the container
+only the session's access key, secret and token.
+
+An agent opts in with a file, `/etc/redoma/aws/<name>.conf`, in the format
+of `redoma.conf`:
+
+```ini
+trust_anchor_arn = arn:<partition>:rolesanywhere:<region>:<account>:trust-anchor/<id>
+profile_arn = arn:<partition>:rolesanywhere:<region>:<account>:profile/<id>
+role_arn = arn:<partition>:iam::<account>:role/<name>
+# optional, 15m to 12h; 1h by default
+#session_duration = 1h
+```
+
+The three must be in one partition and account, and the trust anchor and
+the profile in one region, which is where the sessions are asked for. The
+trust anchor holds the CA that issues the agents' SVIDs (SPIRE's). The
+role's trust policy should require the agent's SPIFFE ID, for example a
+condition that `aws:PrincipalTag/x509SAN/URI` equals
+`spiffe://<trust domain>/agent/<name>`, so that another agent's SVID is
+refused. The file is read every second. An unknown key, a missing ARN or a
+malformed one makes every credential request of the agent a 503 until it
+is fixed. An agent without the file gets nothing new.
+
+Run the agent's container with:
+
+```sh
+-e AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1:9911/v1/credentials
+```
+
+The port is `redoma xds --aws-credentials-port` (9911 by default). Only
+`GET /v1/credentials` is served:
+
+- 200 with `AccessKeyId`, `SecretAccessKey`, `Token` and `Expiration`
+  (RFC 3339, UTC);
+- 404 for any other path or method;
+- 429 past 8 requests in flight for one agent;
+- 503 when there is no session, its `Redoma-Reason` header saying why:
+  `config_invalid`, `no_svid` (SPIRE has not issued the agent's SVID yet),
+  `session_pending` (being asked for: retry), `session_refused` (Roles
+  Anywhere refused the SVID for that anchor, profile and role) or
+  `rolesanywhere_unavailable`.
+
+The listener is the agent's identity: the request carries none.
+
+The SDKs allow about a second per attempt, so `redoma xds` asks for a
+session as soon as the agent's SVID arrives, keeps it in memory, and asks
+for the next one 10 minutes before it ends. Requests are answered from
+memory.
+
+`redoma xds` has no network of its own. It reaches Roles Anywhere through
+the host Envoy:
+
+- `redoma xds` serves Envoy a plain TCP tunnel to
+  `rolesanywhere.<region>.amazonaws.com:443` for each region the agents'
+  files name, and no tunnel while no file names one. The tunnel's socket
+  is in `/run/redoma/xds/tunnel`.
+- The TLS is `redoma xds`'s own, end to end, verified against the system's
+  CA certificates, so Envoy carries only ciphertext.
+- The host's Envoy must be able to resolve and reach
+  `rolesanywhere.<region>.amazonaws.com` on port 443, and to create sockets
+  in `/run/redoma/xds/tunnel` (an Envoy in a container mounts
+  `/run/redoma/xds` writable).
+- While Envoy is down no new session can be asked for; the sessions in
+  memory are served until they expire.
 
 ## The runtime image
 

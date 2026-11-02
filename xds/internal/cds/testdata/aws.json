@@ -1,0 +1,28 @@
+{
+ "resources": [
+  {
+   "@type": "type.googleapis.com/envoy.config.cluster.v3.Cluster",
+   "name": "agent_beta_aws",
+   "type": "STATIC",
+   "connect_timeout": "1s",
+   "load_assignment": {
+    "cluster_name": "agent_beta_aws",
+    "endpoints": [
+     {
+      "lb_endpoints": [
+       {
+        "endpoint": {
+         "address": {
+          "pipe": {
+           "path": "/run/redoma/xds/aws/beta.sock"
+          }
+         }
+        }
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}
