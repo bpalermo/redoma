@@ -70,6 +70,7 @@ go_test(
         "@com_github_envoyproxy_go_control_plane_envoy//config/listener/v3:listener",
         "@com_github_envoyproxy_go_control_plane_envoy//config/rbac/v3:rbac",
         "@com_github_envoyproxy_go_control_plane_envoy//config/route/v3:route",
+        "@com_github_envoyproxy_go_control_plane_envoy//extensions/access_loggers/stream/v3:stream",
         "@com_github_envoyproxy_go_control_plane_envoy//extensions/clusters/dynamic_forward_proxy/v3:dynamic_forward_proxy",
         "@com_github_envoyproxy_go_control_plane_envoy//extensions/common/dynamic_forward_proxy/v3:dynamic_forward_proxy",
         "@com_github_envoyproxy_go_control_plane_envoy//extensions/filters/http/dynamic_forward_proxy/v3:dynamic_forward_proxy",
