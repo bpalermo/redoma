@@ -147,6 +147,13 @@ func (pl policy) checkMount(m map[string]json.RawMessage, what string) error {
 		}
 		return nil
 	}
+	return pl.checkBind(m, what, source, options)
+}
+
+// checkBind is checkMount's of a bind: its source absolute, resolving on
+// the host, and reaching nothing forbidden, as written or as resolved; an
+// upstream's then held to its own rules.
+func (pl policy) checkBind(m map[string]json.RawMessage, what, source string, options []string) error {
 	if !filepath.IsAbs(source) {
 		return fmt.Errorf("the container binds %q, not an absolute path (the runtime would take it relative to the bundle)", source)
 	}
