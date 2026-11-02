@@ -582,8 +582,11 @@ annotated both is refused.
   `--userns=auto` allocates, and no host id in use lives); no privilege
   to gain and no capability past an agent's; and an agent's mounts, plus
   its own credential directory, `/run/redoma-mcp/<name>`, and nothing else
-  of `/run/redoma-mcp`, that directory (or a file in it) read-only (`ro`,
-  and no `rw` anywhere in the options: a later one wins). No
+  of `/run/redoma-mcp`, that directory (or a file in it, as written or as
+  resolved) read-only: only the options of `credentialOptions` (bind,
+  rbind, ro, rro, idmap, nosuid, nodev, noexec, rprivate), `ro` or `rro`
+  among them. An allowlist, because runtimes apply options in order and
+  recursively (`rrw` wins over `ro` in any position). No
   bind may be idmapped (`idmap`/`ridmap` options, or the mount's own
   mappings) except that directory: through one, the upstream's root owns
   what host root owns. `/etc/subuid` and `/etc/subgid` must be root's and
