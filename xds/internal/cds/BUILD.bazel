@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "aws.go",
         "cds.go",
+        "mcp.go",
         "tunnel.go",
     ],
     importpath = "github.com/bpalermo/redoma/xds/internal/cds",

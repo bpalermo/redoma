@@ -142,9 +142,14 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
   - `awscreds`: an agent's AWS settings (`<etc>/aws/<name>.conf`) and the
     service that serves the opted-in agents' session credentials, one unix
     socket per agent;
-  - `lds`: an agent's listeners, model and egress, its relay listener and
-    its AWS credentials listener, and the tunnels to Roles Anywhere;
-  - `cds`: an agent's relay and AWS credentials clusters, and the tunnels';
+  - `lds`: an agent's listeners, model and egress, its relay listener,
+    its AWS credentials listener and its MCP listener (`mcp.go`: header
+    removal, the MCP filter, RBAC from its allowlists, routes per
+    upstream), an MCP upstream's egress listener, and the tunnels to Roles
+    Anywhere; `mcp_test.go` evaluates the RBAC policy with a model of
+    Envoy's matchers;
+  - `cds`: an agent's relay and AWS credentials clusters, the tunnels',
+    and each MCP upstream's, bound in the upstream's namespace;
   - `identity`: the Delegated Identity API client and the Broker API's
     (X.509 SVIDs, the bundle, JWT SVIDs), `Workload`, redoma xds's own SVID
     in Broker mode, and `identitytest`, the Delegated API's fake;
