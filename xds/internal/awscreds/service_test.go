@@ -685,12 +685,15 @@ func TestSocketRetryBackoff(t *testing.T) {
 	s.Set("a", testProfile(role), nil, chain, key)
 	time.Sleep(600 * time.Millisecond)
 
+	// Sampled, and the error switched, while no attempt can run: an
+	// attempt that already failed with the old error logs at debug level.
 	mu.Lock()
 	n := len(at)
 	var gaps []time.Duration
 	for i := 1; i < len(at); i++ {
 		gaps = append(gaps, at[i].Sub(at[i-1]))
 	}
+	e, w := log.count(slog.LevelError), log.count(slog.LevelWarn)
 	failWith = errors.New("permission denied")
 	mu.Unlock()
 	// 0, 10, 30, 70, then every 40ms: about 15 in 600ms. A fixed 10ms is
@@ -703,7 +706,7 @@ func TestSocketRetryBackoff(t *testing.T) {
 			t.Errorf("attempt %d came %s after the last: no backoff", i+2, g)
 		}
 	}
-	if e, w := log.count(slog.LevelError), log.count(slog.LevelWarn); e != 1 || w != 0 {
+	if e != 1 || w != 0 {
 		t.Errorf("%d errors and %d warnings for one failure repeated, want 1 and 0", e, w)
 	}
 
@@ -733,5 +736,34 @@ func TestSocketRetryBackoff(t *testing.T) {
 	defer mu.Unlock()
 	if len(at) != before {
 		t.Errorf("%d more attempts after the socket opened", len(at)-before)
+	}
+}
+
+// TestRemoveStopsTheSocketRetry: a removed agent's next attempt to open its
+// socket is stopped, not left to fire later holding the agent's state.
+func TestRemoveStopsTheSocketRetry(t *testing.T) {
+	s := newService(t, newSessions(time.Hour))
+	s.ListenRetry, s.ListenRetryMax = time.Hour, time.Hour
+	s.listen = func(string) (net.Listener, error) { return nil, errors.New("address in use") }
+	var mu sync.Mutex
+	var timers []*time.Timer
+	s.afterFunc = func(d time.Duration, f func()) *time.Timer {
+		tm := time.AfterFunc(d, f)
+		mu.Lock()
+		timers = append(timers, tm)
+		mu.Unlock()
+		return tm
+	}
+	chain, key := svid(t)
+	s.Set("a", testProfile(role), nil, chain, key)
+	s.Remove("a")
+	mu.Lock()
+	defer mu.Unlock()
+	if len(timers) != 1 {
+		t.Fatalf("%d retries scheduled, want 1", len(timers))
+	}
+	// An hour away, so it cannot have fired: Stop finds it stopped already.
+	if timers[0].Stop() {
+		t.Error("the retry of a removed agent's socket was still pending")
 	}
 }

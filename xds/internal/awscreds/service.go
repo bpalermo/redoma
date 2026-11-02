@@ -127,6 +127,8 @@ type Service struct {
 
 	// listen opens a socket: listen unless a test replaces it.
 	listen func(path string) (net.Listener, error)
+	// afterFunc is time.AfterFunc unless a test replaces it.
+	afterFunc func(time.Duration, func()) *time.Timer
 
 	mu     sync.Mutex
 	agents map[string]*state
@@ -161,6 +163,10 @@ type state struct {
 	// the last that succeeded, and listenErr is the last one's error.
 	listenFailures int
 	listenErr      string
+	// listenTimer is the next attempt to open the socket, if one is due;
+	// stopped by close, so a removed agent's state (its SVID's key among
+	// it) is not kept reachable until it fires.
+	listenTimer *time.Timer
 }
 
 // fetch is a session request in flight; done is closed when it returns.
@@ -204,6 +210,9 @@ func (s *Service) Start() error {
 	}
 	if s.listen == nil {
 		s.listen = listen
+	}
+	if s.afterFunc == nil {
+		s.afterFunc = time.AfterFunc
 	}
 	if s.RefreshMin <= 0 {
 		s.RefreshMin = DefaultRefreshMin
@@ -341,9 +350,10 @@ func (s *Service) serve(st *state) {
 		st.listenFailures++
 		wait := min(s.ListenRetry<<min(st.listenFailures-1, 16), s.ListenRetryMax)
 		s.logListenFailure(st, err, wait)
-		time.AfterFunc(wait, func() {
+		st.listenTimer = s.afterFunc(wait, func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
+			st.listenTimer = nil
 			if s.agents[id] == st && ctx.Err() == nil && st.srv == nil {
 				s.serve(st)
 			}
@@ -388,9 +398,14 @@ func (s *Service) close(st *state) {
 	st.cancel()
 	s.mu.Lock()
 	st.stopTimer()
+	if st.listenTimer != nil {
+		st.listenTimer.Stop()
+		st.listenTimer = nil
+	}
+	srv := st.srv
 	s.mu.Unlock()
-	if st.srv != nil {
-		st.srv.Close()
+	if srv != nil {
+		srv.Close()
 	}
 	if err := os.Remove(s.Socket(st.id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		s.Log.Error("removing the agent's AWS credentials socket", "agent", st.id, "err", err)
