@@ -950,8 +950,9 @@ linux/amd64 and linux/arm64 (an index of both):
     is the index it built (the sha256 of its bytes), signs that digest
     (never a tag) with cosign, keyless (Fulcio and Rekor, this run's OIDC
     identity; the installer action and cosign's version pinned), checks
-    that the signature verifies as a consumer's `cosign verify` would
-    (README.md), and attests the index's build provenance
+    that the signature verifies with the exact identity the release's
+    notes print (this workflow at this tag, not a `v*` pattern), and
+    attests the index's build provenance
     (`actions/attest-build-provenance`, kept in GitHub's attestation store,
     not pushed to the registry). A failure after the push leaves an image with no
     release; a re-run pushes the same digest again.
