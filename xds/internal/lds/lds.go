@@ -74,7 +74,8 @@ func ListenerName(repo, kind string) string {
 
 // Listeners returns the agent's two listeners, model then egress, bound in the
 // namespace at netns. auth is how the model listener injects the credential;
-// hosts are the host names it may open CONNECT tunnels to, on port 443.
+// hosts are the host names it may open CONNECT tunnels to, on port 443, and
+// the suffix wildcards ("*.example.com") Envoy matches below a domain.
 func Listeners(netns, repo string, auth modelauth.Mode, hosts []string) []*listenerv3.Listener {
 	return []*listenerv3.Listener{
 		modelListener(netns, repo, auth),

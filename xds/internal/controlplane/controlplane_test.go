@@ -224,7 +224,8 @@ func TestNoListenersWithoutNamespace(t *testing.T) {
 }
 
 // TestEgressAllowlistChanges: an edited allowlist is picked up at the next
-// scan, and one that cannot be parsed allows nothing.
+// scan, a suffix wildcard included, and one that cannot be parsed allows
+// nothing.
 func TestEgressAllowlistChanges(t *testing.T) {
 	e := newEnv(t)
 	e.startAgent(t, "a", "github.com\n")
@@ -237,7 +238,7 @@ func TestEgressAllowlistChanges(t *testing.T) {
 			return nil
 		}
 		want := r.(*listenerv3.Listener)
-		for _, l := range [][]string{{"github.com"}, {"github.com", "example.com"}, nil} {
+		for _, l := range [][]string{{"github.com"}, {"github.com", "example.com"}, {"github.com", "*.example.com"}, nil} {
 			if pb.Equal(want, lds.Listeners(activedir.Namespace(e.src.NetnsDir, "a"), "a", modelauth.APIKey, l)[1]) {
 				return append([]string{"match"}, l...)
 			}
@@ -252,6 +253,11 @@ func TestEgressAllowlistChanges(t *testing.T) {
 	})
 
 	write(t, filepath.Join(e.cfg.EtcDir, "egress", "a.txt"), "github.com\n*.example.com\n")
+	e.eventually(t, "*.example.com instead", func(v view) bool {
+		return slices.Equal(domains(v), []string{"match", "github.com", "*.example.com"})
+	})
+
+	write(t, filepath.Join(e.cfg.EtcDir, "egress", "a.txt"), "github.com\n*.com\n")
 	v := e.eventually(t, "nothing allowed", func(v view) bool { return slices.Equal(domains(v), []string{"match"}) })
 	if !slices.Contains(v.listeners, "agent_a_model") {
 		t.Error("a bad allowlist took the model listener down")

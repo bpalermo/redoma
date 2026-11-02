@@ -41,6 +41,7 @@ go_test(
     name = "lds_test",
     srcs = [
         "bootstrap_test.go",
+        "egress_test.go",
         "lds_test.go",
         "relay_test.go",
     ],
@@ -56,6 +57,7 @@ go_test(
         "@com_github_envoyproxy_go_control_plane_envoy//config/bootstrap/v3:bootstrap",
         "@com_github_envoyproxy_go_control_plane_envoy//config/cluster/v3:cluster",
         "@com_github_envoyproxy_go_control_plane_envoy//config/listener/v3:listener",
+        "@com_github_envoyproxy_go_control_plane_envoy//config/route/v3:route",
         "@com_github_envoyproxy_go_control_plane_envoy//extensions/clusters/dynamic_forward_proxy/v3:dynamic_forward_proxy",
         "@com_github_envoyproxy_go_control_plane_envoy//extensions/filters/http/dynamic_forward_proxy/v3:dynamic_forward_proxy",
         "@com_github_envoyproxy_go_control_plane_envoy//extensions/filters/network/http_connection_manager/v3:http_connection_manager",
