@@ -186,7 +186,9 @@ codeload.github.com
 *.githubusercontent.com
 ```
 
-Lines are lower case, with no port, scheme or trailing dot. Only a leading
+Lines are lower case, with no port, scheme or trailing dot, and must be
+fully qualified names, which is the administrator's to ensure: redoma
+cannot check it (see below). A one-label name is refused. Only a leading
 `*.` is a wildcard, and the domain after it needs two labels or more:
 `*`, `*.com`, `*example.com` and `a.*.example.com` are refused. A line
 that is not valid, in either file, fails the agent's whole list: it may
@@ -205,9 +207,13 @@ name that resolves to a loopback or private address reaches that address
 on the Envoy host's side, port 443. redoma refuses one-label
 domains but does not know which domains are public suffixes (`co.uk`, a
 hosting provider's shared domain): that judgment is the administrator's.
-The egress DNS cache resolves a name as written, never with the host's DNS
-search domains appended, so a name below a wildcard's domain that does not
-resolve gets no tunnel rather than one to a name under a search domain.
+The egress DNS cache resolves every egress name as written, never with the
+host's DNS search domains appended: an exact host as much as a name below a
+wildcard's domain. So every entry must be a fully qualified name. A short
+name the host would complete through a search domain (`build.corp`,
+meaning `build.corp.example.org`) passes the line check like any other, but
+resolves to nothing, and its tunnels fail; a name that does not resolve
+gets no tunnel rather than one to a name under a search domain.
 
 ### SPIRE
 
