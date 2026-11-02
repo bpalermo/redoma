@@ -112,6 +112,10 @@ func TestReadUpstreamRefuses(t *testing.T) {
 		{"a tag and a digest", "image = example.org/u:v1@" + digest + "\nport = 1\n", "by digest"},
 		{"a tag and a digest, with a registry port", "image = example.org:5000/u:v1@" + digest + "\nport = 1\n", "by digest"},
 		{"a port past the first component", "image = example.org/a:1/b@" + digest + "\nport = 1\n", "by digest"},
+		{"a tag read as a port", "image = name:3@" + digest + "\nport = 1\n", "by digest"},
+		{"a registry port and no repository", "image = example.org:5000@" + digest + "\nport = 1\n", "by digest"},
+		{"arg a comment", base + "arg = # note\n", "starts a comment only at the start of a line"},
+		{"env a comment", base + "env = #A=b\n", "starts a comment only at the start of a line"},
 		{"a short digest", "image = example.org/u@sha256:abc\nport = 1\n", "by digest"},
 		{"a long digest", "image = example.org/u@" + digest + "0\nport = 1\n", "by digest"},
 		{"an upper-case digest", "image = example.org/u@" + strings.ToUpper(digest) + "\nport = 1\n", "by digest"},
@@ -223,6 +227,8 @@ func TestReadUpstreamErrorsHoldNoValue(t *testing.T) {
 	base := "image = example.org/u@" + digest + "\nport = 8082\n"
 	for _, l := range []string{
 		"env = API-KEY=s3cr3t",
+		"env = API_KEY s3cr3t",
+		"env = s3cr3t",
 		"env = 1X=s3cr3t",
 		"env = API_KEY=s3cr3t",
 		"arg = --token=s3cr3t",

@@ -381,7 +381,9 @@ and does not hold.
 
 1. Give `containers` subordinate ids in `/etc/subuid` and `/etc/subgid`,
    in ranges no host user or group uses (`--userns=auto` allocates from
-   them).
+   them), and never 0 or redoma's ids (961, 963, 964). Both files, and
+   `/etc`, must be root's and writable by no one else: the OCI hook
+   refuses every agent and every upstream otherwise.
 2. Write `/etc/redoma/mcp/<name>.conf` (the image by digest, its arguments,
    `token_file`, its egress hosts, the headers to strip) and an allowlist,
    `/etc/redoma/mcp/<name>/<agent>.conf`, per agent that may use it. Both
@@ -390,7 +392,7 @@ and does not hold.
    its own user's, writable by no one else, on a path of directories only
    root and that user can write. Add the `redoma-mcp-token@<name>.path`
    and `.service` drop-ins that name it and, unless the minter is root,
-   its uid (`REDOMA_MCP_TOKEN_OWNER`), and
+   its uid (`REDOMA_MCP_TOKEN_OWNER`), then `systemctl daemon-reload` and
    `systemctl enable --now redoma-mcp-token@<name>.path`.
 4. `systemctl enable --now redoma-mcp@<name>`.
 5. Start the agent's shim with `--mcp-upstream=<name>`.

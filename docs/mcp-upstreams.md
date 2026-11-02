@@ -245,14 +245,21 @@ at v1.40.2), so Envoy's standard and distroless builds carry it.
   session's event stream) and DELETE (the session's end) before reading
   any body, and nothing on the path can see a body that comes without a
   `content-length`: Envoy's HTTP/1 codec removes `transfer-encoding`
-  before the filters run, and HTTP/2 sends DATA with neither header (the
-  integration test shows a chunked GET passing a header check). A body on
-  them would reach the server unparsed. So RBAC allows GET and DELETE on
-  the method alone, and the route answers both itself with a 405 (`Allow:
-  POST`), which MCP's Streamable HTTP lets a server send for either; they
-  never reach the server. An upstream must therefore work without a
-  server-sent stream on GET and without a client's DELETE, which a
-  stateless HTTP mode does (Grafana's and GitHub's both are).
+  before the filters run, and HTTP/2 sends DATA with neither header (a
+  chunked GET passed such a check in the integration test, before Envoy
+  answered GET itself). A body on them would reach the server unparsed.
+  So RBAC allows GET and DELETE on the method alone, and the route answers
+  both itself with a 405 (`Allow: POST`), which MCP's Streamable HTTP lets
+  a server send for either; they never reach the server. (A DELETE
+  without `Mcp-Session-Id` is the MCP filter's 400 before that.) An
+  upstream must therefore work without a server-sent stream on GET and
+  without a client's DELETE, which a stateless HTTP mode does (Grafana's
+  and GitHub's both are).
+- **What the 405 costs a client.** No stream outside a request: the server
+  can send a notification or a request of its own (progress, a log line,
+  a sampling or elicitation request) only within the response to one of
+  the client's POSTs, never on its own. A client that needs those outside
+  a call cannot have them through redoma.
 - **Argument constraints.** An extraction rule makes an argument visible to
   RBAC, so a tool can be allowed only with, say, `owner` = `example-org`
   and `repo` = `example-repo`, or a `branch` that starts with
@@ -375,9 +382,11 @@ which the server re-reads when it changes.
     and the source come from a drop-in the host writes, so redoma names no
     path under anyone's home.
 
-  When the minter has not written yet, the copy fails, the upstream's
-  start fails on the missing token and is retried, and the minter's first
-  write makes the copy that lets it start.
+  When the minter has not written yet, the copy fails, and the upstream's
+  start fails on the missing token. systemd starts it again every 5
+  seconds (`Restart=on-failure`, `RestartSec=5`) with no start limit
+  (`StartLimitIntervalSec=0`), so it never stays failed: the first start
+  after the minter's first write finds the copy that write made.
 - **The copier trusts its source no further than the minter.** The source
   is a path the minter chooses, possibly under a user's home, and the
   copier is root, so it refuses to be pointed at any other file. It walks
@@ -949,7 +958,10 @@ subordinate ids of the user `containers` (podman-run(1) of Podman 4.9,
   or a service's id. No bind of an upstream may be idmapped but its own
   credential directory's, which is read-only: an idmapped bind of any
   other host directory would let the upstream's root own what host root
-  owns there.
+  owns there. Podman's `:ro` is `ro`, not the recursive `rro`, so a file
+  system mounted below the credential directory would stay writable: the
+  hook refuses an upstream whose credential directory has one. It holds
+  plain files.
 - **`--network none` is proven differently.** For an agent the hook reads
   "a network namespace with no path and no user namespace" as proof of
   `--network none`; with a user namespace, Podman creates the network
@@ -1016,7 +1028,9 @@ It is built only when hosts need the agents' own commits published.
 
 Envoy's access log on the MCP listeners is the audit record, one JSON line
 per request: the listener (the agent); the request's method, path and
-request id; the cluster it reached (which upstream instance, under
+request id (Envoy's own: the listener takes the agent for an external
+client, so an `x-request-id` the agent sends is replaced); the cluster it
+reached (which upstream instance, under
 `route_for`); the MCP filter's whole metadata (the MCP `method`,
 `params.name` and every extracted argument); the response code and its
 details (`rbac_access_denied_matched_policy[none]` when RBAC refused it,

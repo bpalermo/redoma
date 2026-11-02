@@ -685,11 +685,34 @@ func TestGrafanaUpstream(t *testing.T) {
 			if code != http.StatusOK && code != http.StatusBadRequest {
 				t.Errorf("%s: %d", raw, code)
 			}
+			searched := false
 			for _, r := range e.grafana.since(n) {
 				if r.path == "/api/datasources" {
 					t.Errorf("%s ran list_datasources", raw)
 				}
+				searched = searched || r.path == "/api/search"
 			}
+			// A 200 proves the call reached the server: the tool it ran
+			// is the one Envoy checked.
+			if code == http.StatusOK && !searched {
+				t.Errorf("%s: 200, but search_dashboards never asked Grafana", raw)
+			}
+		}
+	})
+
+	// The audit log's request_id is Envoy's, not the agent's: the agent is
+	// an external client, so the x-request-id it sends is replaced.
+	t.Run("the request id is Envoy's", func(t *testing.T) {
+		n := e.reached.count()
+		if code, _ := e.rpc(t, "tools/list", map[string]any{}, map[string]string{"X-Request-Id": "agent-chosen-id"}); code != http.StatusOK {
+			t.Fatalf("tools/list: %d", code)
+		}
+		got := e.reached.all()[n:]
+		if len(got) != 1 {
+			t.Fatalf("%d requests reached the server, want 1", len(got))
+		}
+		if id := got[0].header.Get("X-Request-Id"); id == "" || id == "agent-chosen-id" {
+			t.Errorf("the server got x-request-id %q, want one Envoy generated", id)
 		}
 	})
 

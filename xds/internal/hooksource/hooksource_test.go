@@ -2,6 +2,7 @@ package hooksource
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"log/slog"
@@ -464,6 +465,67 @@ func TestRegistrationsSurviveARestart(t *testing.T) {
 	}
 	if ev := e2.next(t); !ev.Synced {
 		t.Fatalf("second event %+v, want Synced (alpha's namespace is gone)", ev)
+	}
+}
+
+// TestUpstreamsAreRecordedApart: an upstream's registration is recorded
+// in StateFile.upstreams, never in StateFile, which an older redoma xds
+// (after a downgrade) reads alone and would take for an agent's; a restart
+// finds both again, and a record in the wrong file is ignored.
+func TestUpstreamsAreRecordedApart(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "registrations.json")
+	e := newEnv(t, state)
+	e.registered(t, cidA, "beta", 7)
+	path := register.UpstreamNetnsPath("/run/netns", cidB)
+	e.stat.set(path, agent.NetnsID{Dev: 4, Ino: 8})
+	if got := answer(t, e.call(t, upstreamReq(cidB, "grafana"))); got != "" {
+		t.Fatalf("register: %s", got)
+	}
+	e.next(t)
+	e.stop()
+
+	read := func(file string) map[string]registration {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]registration
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	if agents, ups := read(state), read(state+".upstreams"); len(agents) != 1 || agents[cidA].Agent != "beta" || len(ups) != 1 || !ups[cidB].Upstream || ups[cidB].Agent != "grafana" {
+		t.Fatalf("agents' file %+v, upstreams' %+v", agents, ups)
+	}
+
+	// A record in the wrong file is ignored: an upstream in the agents'.
+	mixed := read(state)
+	mixed[cidB] = read(state + ".upstreams")[cidB]
+	raw, err := json.Marshal(mixed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(state, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(state+".upstreams", []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e2 := &env{l: bufconn.Listen(1 << 16), events: make(chan agent.Event, 32), stat: e.stat}
+	e2.src = &Source{
+		Listener: e2.l, Allowlist: e.src.Allowlist, AllowlistOwner: uint32(os.Getuid()), AllowlistRoot: e.src.AllowlistRoot, NetnsDir: "/run/netns", StateFile: state,
+		Interval: time.Hour, BoundTimeout: time.Second, Log: slog.New(slog.DiscardHandler),
+		PeerUID: func(net.Conn) (uint32, error) { return 0, nil }, Stat: e.stat.stat,
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = e2.src.Run(ctx, func(ev agent.Event) { e2.events <- ev }) }()
+	if ev := e2.next(t); ev.Synced || ev.Agent.ID != "beta" || ev.Agent.Upstream {
+		t.Fatalf("first event %+v, want the agent beta", ev)
+	}
+	if ev := e2.next(t); !ev.Synced {
+		t.Fatalf("second event %+v, want Synced (the misplaced upstream ignored)", ev)
 	}
 }
 

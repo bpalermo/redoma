@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/bpalermo/redoma/common/atomicfile"
+	"github.com/bpalermo/redoma/common/register"
 	"github.com/bpalermo/redoma/xds/internal/mcpconf"
 )
 
@@ -60,7 +61,7 @@ func PodmanArgs(u *mcpconf.Upstream) []string {
 		"--log-driver", "passthrough",
 	}
 	if u.TokenFile != "" {
-		args = append(args, "--volume", filepath.Dir(u.TokenFile)+":"+SecretsDir(u.Name)+":ro,idmap")
+		args = append(args, "--volume", filepath.Dir(u.TokenFile)+":"+SecretsDir(u.Name)+":"+register.UpstreamCredentialVolumeOptions)
 	}
 	for _, e := range u.Env {
 		args = append(args, "--env", e)
