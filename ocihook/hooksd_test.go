@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bpalermo/redoma/common/allowlist"
 	"github.com/bpalermo/redoma/common/config"
 	"github.com/bpalermo/redoma/common/register"
 )
@@ -100,5 +101,52 @@ func TestHookDefinitions(t *testing.T) {
 	}
 	if register.NetnsPrefix != "redoma-oci-" {
 		t.Errorf("NetnsPrefix %q changed: update AGENTS.md", register.NetnsPrefix)
+	}
+}
+
+// TestUpstreamHookDefinitions: the upstream's definitions run the same
+// binary at createRuntime (checks and the mount), poststart (the register,
+// once only lo is there) and poststop, only for containers with the
+// upstream annotation, with timeouts longer than the binary's own.
+func TestUpstreamHookDefinitions(t *testing.T) {
+	for file, stage := range map[string]string{
+		"redoma-upstream-create-runtime.json": "createRuntime",
+		"redoma-upstream-poststart.json":      "poststart",
+		"redoma-upstream-poststop.json":       "poststop",
+	} {
+		d := readDef(t, file)
+		arg := map[string]string{"createRuntime": "create-runtime", "poststart": "poststart", "poststop": "poststop"}[stage]
+		if d.Version != "1.0.0" || !slices.Equal(d.Stages, []string{stage}) || !slices.Equal(d.Hook.Args, []string{"redoma", "oci-hook", arg}) || d.Hook.Path != "/usr/bin/redoma" {
+			t.Errorf("%s: %+v", file, d)
+		}
+		if len(d.When.Annotations) != 1 || d.When.Annotations[`^redoma/upstream$`] == "" {
+			t.Errorf("%s: when %v, want the upstream annotation only", file, d.When.Annotations)
+		}
+		if d.Hook.Timeout == nil {
+			t.Fatalf("%s: no timeout", file)
+		}
+	}
+	// poststart waits for the control plane as long as --timeout (30s).
+	if limit := time.Duration(*readDef(t, "redoma-upstream-poststart.json").Hook.Timeout) * time.Second; limit <= 30*time.Second+5*time.Second {
+		t.Errorf("poststart timeout %v leaves the binary no room", limit)
+	}
+	// createRuntime and poststart filter on the same value, and it accepts
+	// exactly the names allowlist.ValidName does (the binary refuses any
+	// other too). poststop runs for any value: it only cleans up.
+	value := readDef(t, "redoma-upstream-create-runtime.json").When.Annotations[`^redoma/upstream$`]
+	if got := readDef(t, "redoma-upstream-poststart.json").When.Annotations[`^redoma/upstream$`]; got != value {
+		t.Errorf("poststart matches %q, createRuntime %q", got, value)
+	}
+	match := regexp.MustCompile(value)
+	for _, name := range []string{
+		"grafana", "github-pr", "a", "0", strings.Repeat("a", 41), strings.Repeat("a", 42),
+		"Bad_Name", "Grafana", "../x", "x/../other", "/run/redoma-mcp/other", "_default", "-a", "a b", "a.b", "", "a\n",
+	} {
+		if match.MatchString(name) != allowlist.ValidName(name) {
+			t.Errorf("the hook definitions match %q = %v, allowlist.ValidName = %v", name, match.MatchString(name), allowlist.ValidName(name))
+		}
+	}
+	if register.UpstreamNetnsPrefix != "redoma-mcp-" {
+		t.Errorf("UpstreamNetnsPrefix %q changed: update docs/mcp-upstreams.md", register.UpstreamNetnsPrefix)
 	}
 }

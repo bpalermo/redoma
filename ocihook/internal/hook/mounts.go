@@ -53,6 +53,20 @@ type policy struct {
 	// ownRootfs is the container's own rootfs as its storage records it
 	// (containerRootfs), not as its spec says: "" when it is not known.
 	ownRootfs string
+	// allowed is a directory inside a forbidden path the container may have
+	// mounted, it or what is inside it, and nothing above it: an MCP
+	// upstream's own credential directory. "" for an agent.
+	allowed string
+}
+
+// exempt says that p, a host path, is allowed, or inside it, and f, the
+// forbidden path it relates to, is above allowed: f is forbidden for what
+// it holds besides allowed.
+func (pl policy) exempt(p, f string) bool {
+	if pl.allowed == "" || !strings.HasPrefix(pl.allowed, f+"/") {
+		return false
+	}
+	return p == pl.allowed || strings.HasPrefix(p, pl.allowed+"/")
 }
 
 func newPolicy(forbidden []string, graphroot, container string, masked []string, ownRootfs string) policy {
@@ -71,7 +85,7 @@ func (pl policy) reach(p string) string {
 		return ""
 	}
 	for _, f := range pl.forbidden {
-		if related(p, f) {
+		if related(p, f) && !pl.exempt(p, f) {
 			return f
 		}
 	}
@@ -133,7 +147,73 @@ func (pl policy) checkMount(m map[string]json.RawMessage, what string) error {
 			return fmt.Errorf("the container mounts %s, which reaches %s: an agent never sees the host's control plane, SPIRE or Podman", source, f)
 		}
 	}
+	if pl.allowed != "" {
+		return pl.checkUpstreamBind(m, what, source, real, options)
+	}
 	return nil
+}
+
+// checkUpstreamBind holds an MCP upstream's bind to its own rules.
+//
+// An idmapped bind (an idmap or ridmap option, or mappings of the mount's
+// own) lets the upstream's root, an unprivileged host id, own what host
+// root owns under it: only its credential directory may be one, as written
+// and as resolved.
+//
+// A bind of that directory, or of anything in it, as written or as
+// resolved, must be read-only, so the container cannot leave entries where
+// the root copier writes. It may carry only credentialOptions, ro or rro
+// among them: runc and crun apply options in order, and recursively
+// (rrw, with mount_setattr, after the ro remount), so a rule that looks
+// for ro and refuses known writable spellings misses the next one.
+func (pl policy) checkUpstreamBind(m map[string]json.RawMessage, what, source, real string, options []string) error {
+	var uidMappings, gidMappings []json.RawMessage
+	if err := field(m, "uidMappings", what, &uidMappings); err != nil {
+		return fmt.Errorf("the container's spec: %w", err)
+	}
+	if err := field(m, "gidMappings", what, &gidMappings); err != nil {
+		return fmt.Errorf("the container's spec: %w", err)
+	}
+	mapped := len(uidMappings) > 0 || len(gidMappings) > 0 || slices.ContainsFunc(options, isIdmapOption)
+	clean := filepath.Clean(source)
+	if mapped && !(pl.inAllowed(clean) && pl.inAllowed(real)) {
+		return fmt.Errorf("the container binds %s idmapped: only an MCP upstream's own credential directory may be", source)
+	}
+	if !pl.inAllowed(clean) && !pl.inAllowed(real) {
+		return nil
+	}
+	for _, o := range options {
+		if !credentialOption(o) {
+			return fmt.Errorf("the container binds its credential directory %s with the option %q: only %v (and idmap=...) may be given, so it stays read-only", source, o, credentialOptions)
+		}
+	}
+	if !slices.Contains(options, "ro") && !slices.Contains(options, "rro") {
+		return fmt.Errorf("the container binds its credential directory %s writable: it is read-only (ro or rro)", source)
+	}
+	return nil
+}
+
+// credentialOptions are the only options a bind of an upstream's
+// credential directory may carry: the bind, read-only, idmap, the
+// restrictions, and the propagation Podman 4.9 sets (rprivate).
+var credentialOptions = []string{"bind", "rbind", "ro", "rro", "idmap", "nosuid", "nodev", "noexec", "rprivate"}
+
+// credentialOption says that o is one of credentialOptions, or idmap with
+// its mappings (idmap=uids=...;gids=...).
+func credentialOption(o string) bool {
+	return slices.Contains(credentialOptions, o) || strings.HasPrefix(o, "idmap=")
+}
+
+// inAllowed says that p is the upstream's credential directory, or in it.
+func (pl policy) inAllowed(p string) bool {
+	return p == pl.allowed || strings.HasPrefix(p, pl.allowed+"/")
+}
+
+// isIdmapOption is a mount option that idmaps the mount: idmap or ridmap,
+// with or without its mappings (idmap=uids=...;gids=...).
+func isIdmapOption(o string) bool {
+	name, _, _ := strings.Cut(o, "=")
+	return name == "idmap" || name == "ridmap"
 }
 
 // mountEntry is one line of a mountinfo: the device, the path within the
@@ -274,7 +354,7 @@ func (pl policy) reaches(c mountEntry, p place, nullDev, rootfs string) bool {
 		return false
 	}
 	hostPath := filepath.Clean(p.host.point + "/" + strings.TrimPrefix(c.root, p.host.root))
-	return !pl.own.MatchString(hostPath)
+	return !pl.own.MatchString(hostPath) && !pl.exempt(hostPath, p.forbidden)
 }
 
 // isMasked says that point, in the container (under rootfs before the

@@ -44,6 +44,9 @@ pkg_files(
     srcs = [
         "//ocihook:hooks.d/redoma-create-runtime.json",
         "//ocihook:hooks.d/redoma-poststop.json",
+        "//ocihook:hooks.d/redoma-upstream-create-runtime.json",
+        "//ocihook:hooks.d/redoma-upstream-poststart.json",
+        "//ocihook:hooks.d/redoma-upstream-poststop.json",
     ],
     attributes = pkg_attributes(mode = "0644"),
     prefix = "usr/share/containers/oci/hooks.d",

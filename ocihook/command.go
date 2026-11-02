@@ -2,9 +2,13 @@
 // rootful container annotated redoma/agent=<name> (the settings file's
 // agent_annotation) with redoma xds, so the host Envoy binds the agent's
 // listeners in the container's network namespace and serves the agent's
-// SPIFFE identity. See ocihook/hooks.d for the hook definitions.
+// SPIFFE identity; and a rootful container annotated redoma/upstream=<name>
+// as a host MCP upstream's server (docs/mcp-upstreams.md), registered at
+// poststart once its namespace has no interface but lo. See ocihook/hooks.d
+// for the hook definitions.
 //
 //	redoma oci-hook create-runtime   (createRuntime stage)
+//	redoma oci-hook poststart        (poststart stage, upstreams only)
 //	redoma oci-hook poststop         (poststop stage)
 //
 // The runtime passes the container's state as JSON on stdin.
@@ -36,6 +40,7 @@ type flags struct {
 	socket     string
 	netnsDir   string
 	annotation string
+	upstream   string
 	timeout    time.Duration
 }
 
@@ -44,10 +49,10 @@ type flags struct {
 func Command() *cobra.Command {
 	var f flags
 	cmd := &cobra.Command{
-		Use:       "oci-hook create-runtime|poststop",
-		Short:     "The OCI hook: register an annotated container as an agent, and unregister it",
+		Use:       "oci-hook create-runtime|poststart|poststop",
+		Short:     "The OCI hook: register an annotated container as an agent or an MCP upstream, and unregister it",
 		Args:      cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
-		ValidArgs: []string{"create-runtime", "poststop"},
+		ValidArgs: []string{"create-runtime", "poststart", "poststop"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			conf, err := config.FromCommand(cmd)
 			if err != nil {
@@ -66,6 +71,7 @@ func Command() *cobra.Command {
 	fl.StringVar(&f.socket, "socket", "/run/redoma/xds/register.sock", "redoma xds's registration socket")
 	fl.StringVar(&f.netnsDir, "netns-dir", "/run/netns", "where the container's network namespace is mounted; the host Envoy must see mounts there")
 	fl.StringVar(&f.annotation, "annotation", "", "the annotation naming the agent (default: the settings file's agent_annotation)")
+	fl.StringVar(&f.upstream, "upstream-annotation", "redoma/upstream", "the annotation naming an MCP upstream's container")
 	fl.DurationVar(&f.timeout, "timeout", 30*time.Second, "how long createRuntime waits for Envoy's listeners before failing the start")
 	return cmd
 }
@@ -79,10 +85,11 @@ func Command() *cobra.Command {
 // from the agents.
 func newHook(f flags, conf config.Config) *hook.Hook {
 	return &hook.Hook{
-		Annotation: f.annotation,
-		NetnsDir:   f.netnsDir,
-		Timeout:    f.timeout,
-		Mount:      hook.SystemMounter{},
+		Annotation:         f.annotation,
+		UpstreamAnnotation: f.upstream,
+		NetnsDir:           f.netnsDir,
+		Timeout:            f.timeout,
+		Mount:              hook.SystemMounter{},
 		Dial: func(ctx context.Context) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "unix", f.socket)
@@ -117,6 +124,8 @@ func run(ctx context.Context, h *hook.Hook, stage string, stdin io.Reader) error
 	switch stage {
 	case "create-runtime":
 		return h.CreateRuntime(ctx, st)
+	case "poststart":
+		return h.Poststart(ctx, st)
 	case "poststop":
 		return h.Poststop(ctx, st)
 	default:

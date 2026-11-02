@@ -9,13 +9,16 @@ go_library(
         "pidfd.go",
         "process.go",
         "spec.go",
+        "upstream.go",
     ],
     importpath = "github.com/bpalermo/redoma/ocihook/internal/hook",
     visibility = ["//ocihook:__subpackages__"],
     deps = [
+        "//common/allowlist",
         "//common/forbidden",
         "//common/pidfd",
         "//common/register",
+        "@org_golang_x_sys//unix",
     ],
 )
 
@@ -27,6 +30,7 @@ go_test(
         "mounts_test.go",
         "pidfd_test.go",
         "process_test.go",
+        "upstream_test.go",
     ],
     # The sources, which TestSpecKeysCoverWhatIsRead scans for the keys read.
     data = glob(
