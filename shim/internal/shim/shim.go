@@ -47,6 +47,14 @@ type Config struct {
 	// Self is this binary, which claude runs as its MCP server
 	// (redoma-shim mcp).
 	Self string
+	// MCPUpstreams are the host MCP upstreams claude is offered
+	// (docs/mcp-upstreams.md), each an http entry of its --mcp-config at
+	// MCPListener: http://<MCPListener>/mcp/<name>. Offering grants
+	// nothing: the host Envoy's allowlist decides every call.
+	MCPUpstreams []string
+	// MCPListener is the agent's MCP listener, the host Envoy's in this
+	// namespace (127.0.0.1:8081).
+	MCPListener string
 	// Relay is the relay's client, through the Envoy listener.
 	Relay relayv1.RelayClient
 	// Bridge is where the MCP server reaches the shim.

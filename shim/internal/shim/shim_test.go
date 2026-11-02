@@ -342,6 +342,51 @@ func TestTurn(t *testing.T) {
 	}
 }
 
+// TestMCPUpstreamsOffered: each --mcp-upstream is an http entry of claude's
+// --mcp-config at the MCP listener's /mcp/<name>, beside the shim's own
+// server, and all its tools are in --allowedTools; with none, only the
+// shim's.
+func TestMCPUpstreamsOffered(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	s := &Shim{cfg: Config{Self: "/usr/bin/redoma-shim", Bridge: l, MCPListener: "127.0.0.1:8081", MCPUpstreams: []string{"grafana", "github-pr"}}}
+	var cfg struct {
+		MCPServers map[string]struct {
+			Type, URL, Command string
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(s.mcpConfig()), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.MCPServers) != 3 || cfg.MCPServers["redoma"].Type != "stdio" || cfg.MCPServers["redoma"].Command != "/usr/bin/redoma-shim" {
+		t.Errorf("servers %+v", cfg.MCPServers)
+	}
+	for name, url := range map[string]string{"grafana": "http://127.0.0.1:8081/mcp/grafana", "github-pr": "http://127.0.0.1:8081/mcp/github-pr"} {
+		if got := cfg.MCPServers[name]; got.Type != "http" || got.URL != url {
+			t.Errorf("%s: %+v, want http at %s", name, got, url)
+		}
+	}
+	if got := s.allowedTools(); got != tools+",mcp__grafana,mcp__github-pr" {
+		t.Errorf("allowedTools = %q", got)
+	}
+	args := strings.Join(s.args(""), " ")
+	if !strings.Contains(args, "--allowedTools "+tools+",mcp__grafana,mcp__github-pr") {
+		t.Errorf("claude's arguments %q lack the upstreams' tools", args)
+	}
+
+	none := &Shim{cfg: Config{Self: "x", Bridge: l, MCPListener: "127.0.0.1:8081"}}
+	cfg.MCPServers = nil
+	if err := json.Unmarshal([]byte(none.mcpConfig()), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.MCPServers) != 1 || none.allowedTools() != tools {
+		t.Errorf("no upstream: servers %+v, tools %q", cfg.MCPServers, none.allowedTools())
+	}
+}
+
 // TestOneTurnAtATime: tasks run in order, the second after the first ends.
 func TestOneTurnAtATime(t *testing.T) {
 	e := newEnv(t)

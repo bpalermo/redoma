@@ -784,6 +784,9 @@ to `--max-backoff` 30s) and heartbeats every 30s.
   `claude -p --output-format stream-json --verbose --mcp-config <the shim's>
   --allowedTools mcp__redoma__ask_lead,mcp__redoma__send_message
   [--resume=<session>] [--claude-arg ...]`, run in `--workdir` (`/work`) with
+  each `--mcp-upstream=<name>` an `http` entry of the `--mcp-config` at
+  `http://<--mcp-listener>/mcp/<name>` and `mcp__<name>` in
+  `--allowedTools` (docs/mcp-upstreams.md),
   the task's text on its standard input. Each line of its output is a
   TurnEvent (a line over 192 KiB in parts, all but the last `partial`); the
   last event has `done`, and `error` when claude failed, was cancelled, or
