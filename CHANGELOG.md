@@ -6,9 +6,9 @@ here with what to do about it.
 
 ## 0.2.0
 
-Not released yet: its candidates are tagged v0.2.0-rc.<n>, from
-v0.2.0-rc.1, and their packages are versioned 0.2.0~rc.<n>. A host on
-0.1.0, or on any of its candidates, acts on every entry below.
+The release is tagged v0.2.0, its candidates v0.2.0-rc.<n> from
+v0.2.0-rc.1, their packages versioned 0.2.0~rc.<n>. A host on 0.1.0, or
+on any of its candidates, acts on every entry below.
 
 ### New: AWS credentials for the agents that opt in
 
