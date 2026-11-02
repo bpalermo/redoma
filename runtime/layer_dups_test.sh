@@ -35,8 +35,10 @@ expect "an empty layer" "" ""
 expect "an empty layer, one blank line" $'\n' ""
 
 # A grep that fails (2: an error, not "no line selected") fails layer_dups,
-# and so the check, instead of passing as an empty layer would.
+# and so the check, instead of passing as an empty layer would. The caller
+# here has no pipefail: layer_dups must not rely on its caller's.
 if (
+	set +o pipefail
 	# Called by layer_dups, in place of the grep binary.
 	# shellcheck disable=SC2329
 	grep() {
