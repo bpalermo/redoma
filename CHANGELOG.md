@@ -11,7 +11,12 @@ here with what to do about it.
 The egress listeners' DNS cache now resolves with c-ares without the host's
 DNS search domains (`no_default_search_domain`), so a name an agent picks
 below an allowlist wildcard never resolves as a name under a search
-domain. Envoy refuses two configs of one cache name, and the bootstrap's
+domain. This holds for every egress name, exact entries included: an
+allowlist entry that only resolved with a search domain appended (say
+`git.corp`, resolving as `git.corp.example.org`) stops working. Write
+every entry as the fully qualified name.
+
+Envoy refuses two configs of one cache name, and the bootstrap's
 `egress_dfp` cluster carries a copy of the cache: until both match, Envoy
 refuses every new or changed egress listener (an agent that already has
 one keeps it; one that starts gets none).
