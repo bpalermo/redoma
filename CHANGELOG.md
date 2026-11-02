@@ -4,9 +4,16 @@ Changes that a host running redoma must act on, newest first. Until 1.0, a
 release may break what an earlier one set up; each such change is listed
 here with what to do about it.
 
-## Unreleased
+## 0.1.0
 
-### Breaking: every runtime directory moves under /run/redoma
+The first release. What a host acts on depends on the release candidate it
+runs:
+
+- v0.1.0-rc.1, rc.2 or rc.3: the move of the runtime directories below
+  (it shipped in rc.4).
+- v0.1.0-rc.4: nothing; it already has every change of this release.
+
+### Breaking (rc.4): every runtime directory moves under /run/redoma
 
 The runtime directories are now subdirectories of one `/run/redoma` (root,
 0755). Each keeps its owner, group and mode; systemd makes the parent.
@@ -64,4 +71,10 @@ Agents can instead keep running through the upgrade if, between steps 2
 and 4, `/run/redoma/xds/` is made (owner and group `redoma-sds`, 0750) and
 `state.json` and `registrations.json` are moved into it from
 `/run/redoma-xds/`, keeping their owner and mode, before `redoma-xds`
-starts. Stopping the agents is simpler and is the recommended way.
+starts. In Broker mode this also needs systemd 254 or later: the agents'
+pidfds live in the unit's file descriptor store, and only
+`FileDescriptorStorePreserve=yes` keeps the store across the stop in step
+2 and the start in step 4. An older systemd ignores the setting and drops
+the store at the stop; each running agent then keeps its listeners but gets
+no SVID until its container is restarted. Delegated mode does not use the
+pidfds. Stopping the agents is simpler and is the recommended way.

@@ -272,12 +272,16 @@ sudo podman build -t localhost/redoma-runtime:dev .
 ```
 
 To check the base's signature and provenance by the digest you pinned:
-it was signed by this repository's release workflow, on a release tag, and
-nothing else.
+it was signed by this repository's release workflow, at the tag of the
+release that names the digest, and nothing else. The identity below is
+v0.1.0's; for another release, put its tag in place of `v0.1.0` (its
+notes print the command with both filled in). The `cosign verify` needs
+cosign v3 or later: the release signs with cosign v3, whose signature is a
+Sigstore bundle that an older cosign does not look for by default.
 
 ```sh
 cosign verify quay.io/redoma/redoma-base@sha256:<digest> \
-  --certificate-identity-regexp '^https://github\.com/bpalermo/redoma/\.github/workflows/release\.yml@refs/tags/v.*$' \
+  --certificate-identity https://github.com/bpalermo/redoma/.github/workflows/release.yml@refs/tags/v0.1.0 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 gh attestation verify oci://quay.io/redoma/redoma-base@sha256:<digest> -R bpalermo/redoma
 ```
