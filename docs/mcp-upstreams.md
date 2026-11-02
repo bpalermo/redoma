@@ -104,9 +104,13 @@ upstream container (own netns, --network none)                             |
   agent name: a container carrying both annotations is refused, and the two
   namespaces of names are kept apart in `agent.Merge`.
 - The shim gains `--mcp-upstream=<name>` (repeatable): an `http` entry
-  named `<name>` in its `--mcp-config`, so the tools appear to claude as
-  `mcp__<name>__*`, and that pattern in `--allowedTools`. This only decides
-  what claude is offered; it grants nothing.
+  named `<name>` in its `--mcp-config`, at
+  `http://<--mcp-listener>/mcp/<name>` (`127.0.0.1:8081` by default), so
+  the tools appear to claude as `mcp__<name>__<tool>`, and `mcp__<name>`
+  (every tool of that server) in `--allowedTools`. A name must be an
+  upstream's (the agent name rule), once, and never `redoma`, the shim's
+  own server. This only decides what claude is offered; it grants
+  nothing.
 - Two systemd template units in the package:
   - `redoma-mcp@.service` runs one upstream container from its
     configuration file (image by digest, arguments, environment, the

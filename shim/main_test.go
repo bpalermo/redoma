@@ -29,3 +29,18 @@ func TestListenBridge(t *testing.T) {
 		t.Errorf("mode %v, want a socket with 0600", fi.Mode())
 	}
 }
+
+// TestCheckUpstreams: --mcp-upstream takes upstream names, each once, and
+// never the shim's own server's.
+func TestCheckUpstreams(t *testing.T) {
+	for _, ok := range [][]string{nil, {"grafana"}, {"grafana", "github-pr"}} {
+		if err := checkUpstreams(ok); err != nil {
+			t.Errorf("%q: %v", ok, err)
+		}
+	}
+	for _, bad := range [][]string{{"Grafana"}, {"a/b"}, {"../x"}, {""}, {"_default"}, {"redoma"}, {"grafana", "grafana"}} {
+		if err := checkUpstreams(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

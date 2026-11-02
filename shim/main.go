@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	relayv1 "github.com/bpalermo/redoma/api/redoma/relay/v1"
+	"github.com/bpalermo/redoma/common/allowlist"
 	"github.com/bpalermo/redoma/common/version"
 	"github.com/bpalermo/redoma/shim/internal/bridge"
 	"github.com/bpalermo/redoma/shim/internal/mcp"
@@ -58,6 +59,9 @@ func main() {
 	flag.StringVar(&cfg.Workdir, "workdir", "/work", "where claude runs")
 	flag.StringVar(&cfg.Claude, "claude", "claude", "the claude binary")
 	flag.Var(&claudeArgs, "claude-arg", "one more argument for every claude turn (repeatable)")
+	var upstreams list
+	flag.Var(&upstreams, "mcp-upstream", "a host MCP upstream claude is offered, by name (repeatable): an http entry of its --mcp-config at the MCP listener's /mcp/<name>, its tools allowed without asking; the host's allowlist decides every call")
+	flag.StringVar(&cfg.MCPListener, "mcp-listener", "127.0.0.1:8081", "the agent's MCP listener (the host Envoy's, in this namespace)")
 	flag.DurationVar(&cfg.AckEvery, "ack-every", 200*time.Millisecond, "how often what the relay sent is saved and acked")
 	flag.DurationVar(&cfg.HeartbeatEvery, "heartbeat", 30*time.Second, "how often a heartbeat goes to the relay")
 	flag.DurationVar(&cfg.MinBackoff, "min-backoff", 500*time.Millisecond, "the first wait before a reconnect")
@@ -69,6 +73,11 @@ func main() {
 		return
 	}
 	cfg.ClaudeArgs = claudeArgs
+	if err := checkUpstreams(upstreams); err != nil {
+		fmt.Fprintln(os.Stderr, "redoma-shim:", err)
+		os.Exit(2)
+	}
+	cfg.MCPUpstreams = upstreams
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	cfg.Log = log
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -77,6 +86,25 @@ func main() {
 		log.Error("redoma-shim failed", "err", err)
 		os.Exit(1)
 	}
+}
+
+// checkUpstreams refuses an --mcp-upstream that is not an upstream's name
+// (an agent name's rule, as the host's), one given twice, and redoma, the
+// shim's own server.
+func checkUpstreams(names []string) error {
+	seen := map[string]bool{}
+	for _, n := range names {
+		switch {
+		case !allowlist.ValidName(n):
+			return fmt.Errorf("--mcp-upstream %q is not an upstream name (lower-case letters, digits and -)", n)
+		case n == "redoma":
+			return errors.New("--mcp-upstream redoma: that name is the shim's own MCP server")
+		case seen[n]:
+			return fmt.Errorf("--mcp-upstream %s given twice", n)
+		}
+		seen[n] = true
+	}
+	return nil
 }
 
 func run(ctx context.Context, cfg shim.Config, relay string) error {

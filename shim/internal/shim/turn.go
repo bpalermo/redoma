@@ -57,18 +57,42 @@ func (s *Shim) runTask(t *turn) error {
 	return err
 }
 
+// mcpConfig is claude's --mcp-config: the shim's own server (redoma), and
+// an http entry per MCP upstream, named after it, so its tools are
+// mcp__<name>__<tool> to claude.
 func (s *Shim) mcpConfig() string {
-	b, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"redoma": map[string]any{
+	servers := map[string]any{"redoma": map[string]any{
 		"type":    "stdio",
 		"command": s.cfg.Self,
 		"args":    []string{"mcp"},
 		"env":     map[string]string{bridge.EnvAddr: bridge.Addr(s.cfg.Bridge)},
-	}}})
+	}}
+	for _, name := range s.cfg.MCPUpstreams {
+		servers[name] = map[string]any{"type": "http", "url": MCPURL(s.cfg.MCPListener, name)}
+	}
+	b, _ := json.Marshal(map[string]any{"mcpServers": servers})
 	return string(b)
 }
 
+// MCPURL is where claude reaches upstream name: the agent's MCP listener,
+// at /mcp/<name>.
+func MCPURL(listener, name string) string {
+	return "http://" + listener + "/mcp/" + name
+}
+
+// allowedTools is claude's --allowedTools: the shim's tools, and every tool
+// of each MCP upstream (mcp__<name>, all of that server's). It only spares
+// claude asking: what an upstream's tool may do is the host's allowlist.
+func (s *Shim) allowedTools() string {
+	out := tools
+	for _, name := range s.cfg.MCPUpstreams {
+		out += ",mcp__" + name
+	}
+	return out
+}
+
 func (s *Shim) args(resume string) []string {
-	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--mcp-config", s.mcpConfig(), "--allowedTools", tools}
+	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--mcp-config", s.mcpConfig(), "--allowedTools", s.allowedTools()}
 	if resume != "" {
 		// One argument: a value can never be taken for a flag.
 		args = append(args, "--resume="+resume)

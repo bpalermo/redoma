@@ -15,7 +15,9 @@ the server in a container of its own holding its own credential
 host without `/etc/redoma/mcp`.
 
 - New: `/etc/redoma/mcp/<name>.conf` and per-agent allowlists
-  `/etc/redoma/mcp/<name>/<agent>.conf`; `redoma mcp-upstream`; the units
+  `/etc/redoma/mcp/<name>/<agent>.conf`; `redoma mcp-upstream`;
+  `redoma-shim --mcp-upstream=<name>` (repeatable) and `--mcp-listener`,
+  which offer an upstream to claude; the units
   `redoma-mcp@.service`, `redoma-mcp-token@.path` and
   `redoma-mcp-token@.service`; three hook definitions for containers
   annotated `redoma/upstream=<name>`. The credential's copy takes only
