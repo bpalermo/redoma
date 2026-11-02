@@ -202,14 +202,7 @@ func (u *Upstream) setScalar(key, value string) error {
 		}
 		u.Image = value
 	case keyPort:
-		p, err := strconv.ParseUint(value, 10, 16)
-		if err != nil || p == 0 {
-			return fmt.Errorf("port %q is not 1-65535", value)
-		}
-		if slices.Contains(ReservedPorts, uint32(p)) {
-			return fmt.Errorf("port %d is one of redoma's own listener ports %v", p, ReservedPorts)
-		}
-		u.Port = uint32(p)
+		return u.setPort(value)
 	case keyPath:
 		if !strings.HasPrefix(value, "/") || strings.ContainsAny(value, " \t?#") {
 			return fmt.Errorf("path %q is not an absolute URL path", value)
@@ -233,6 +226,19 @@ func (u *Upstream) setScalar(key, value string) error {
 	default:
 		return fmt.Errorf("unknown key %q", key)
 	}
+	return nil
+}
+
+// setPort takes the server's port: 1-65535, and none of redoma's own.
+func (u *Upstream) setPort(value string) error {
+	p, err := strconv.ParseUint(value, 10, 16)
+	if err != nil || p == 0 {
+		return fmt.Errorf("port %q is not 1-65535", value)
+	}
+	if slices.Contains(ReservedPorts, uint32(p)) {
+		return fmt.Errorf("port %d is one of redoma's own listener ports %v", p, ReservedPorts)
+	}
+	u.Port = uint32(p)
 	return nil
 }
 
