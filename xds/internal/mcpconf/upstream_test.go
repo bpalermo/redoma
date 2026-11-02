@@ -6,7 +6,9 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -107,7 +109,33 @@ func TestReadUpstreamRefuses(t *testing.T) {
 		{"no image", "port = 8082\n", "no image"},
 		{"no port", "image = example.org/u@" + digest + "\n", "no port"},
 		{"a tag", "image = example.org/u:v1\nport = 1\n", "by digest"},
-		{"a tag and a digest", "image = example.org/u:v1@sha256:abc\nport = 1\n", "by digest"},
+		{"a tag and a digest", "image = example.org/u:v1@" + digest + "\nport = 1\n", "by digest"},
+		{"a tag and a digest, with a registry port", "image = example.org:5000/u:v1@" + digest + "\nport = 1\n", "by digest"},
+		{"a port past the first component", "image = example.org/a:1/b@" + digest + "\nport = 1\n", "by digest"},
+		{"a short digest", "image = example.org/u@sha256:abc\nport = 1\n", "by digest"},
+		{"a long digest", "image = example.org/u@" + digest + "0\nport = 1\n", "by digest"},
+		{"an upper-case digest", "image = example.org/u@" + strings.ToUpper(digest) + "\nport = 1\n", "by digest"},
+		{"port of the egress listener", "image = example.org/u@" + digest + "\nport = 3128\n", "redoma's own listener ports"},
+		{"port of the relay listener", "image = example.org/u@" + digest + "\nport = 7070\n", "redoma's own listener ports"},
+		{"port of the model listener", "image = example.org/u@" + digest + "\nport = 8080\n", "redoma's own listener ports"},
+		{"port of the MCP listener", "image = example.org/u@" + digest + "\nport = 8081\n", "redoma's own listener ports"},
+		{"port of the AWS listener", "image = example.org/u@" + digest + "\nport = 9911\n", "redoma's own listener ports"},
+		{"arg token value", base + "arg = --token=s3cr3t\n", "looks like a secret"},
+		{"arg token, value apart", base + "arg = --token\narg = s3cr3t\n", "looks like a secret"},
+		{"arg api key", base + "arg = --api-key=s3cr3t\n", "looks like a secret"},
+		{"arg single dash", base + "arg = -password=s3cr3t\n", "looks like a secret"},
+		{"arg any case", base + "arg = --Server-Auth-Token=s3cr3t\n", "looks like a secret"},
+		{"arg credentials", base + "arg = --credentials=s3cr3t\n", "looks like a secret"},
+		{"arg skip verify", base + "arg = --tls-skip-verify\n", "TLS verification off"},
+		{"arg skip verify, underscore", base + "arg = --Skip_Verify=true\n", "TLS verification off"},
+		{"arg insecure", base + "arg = --insecure\n", "TLS verification off"},
+		{"arg insecure file", base + "arg = --insecure-file=/x\n", "TLS verification off"},
+		{"env insecure", base + "env = GIT_SSL_INSECURE=1\n", "TLS verification off"},
+		{"env skip verify", base + "env = TLS_SKIP_VERIFY=1\n", "TLS verification off"},
+		{"env node reject unauthorized", base + "env = NODE_TLS_REJECT_UNAUTHORIZED=0\n", "TLS verification off"},
+		{"arg trailing comment", base + "arg = --flag # note\n", "starts a comment only at the start of a line"},
+		{"env trailing comment", base + "env = A=b\t# note\n", "starts a comment only at the start of a line"},
+		{"agent header trailing comment", base + "agent_header.X-A = v # note\n", "starts a comment only at the start of a line"},
 		{"port zero", "image = example.org/u@" + digest + "\nport = 0\n", "1-65535"},
 		{"port too big", "image = example.org/u@" + digest + "\nport = 65536\n", "port"},
 		{"unknown key", base + "colour = blue\n", `unknown key "colour"`},
@@ -161,6 +189,80 @@ func TestReadUpstreamRefuses(t *testing.T) {
 				t.Errorf("error %q does not name the file", err)
 			}
 		})
+	}
+}
+
+// What the arg and env checks let through: a flag that names a file, a
+// value that is not a flag, a # with no space before it.
+func TestReadUpstreamAllows(t *testing.T) {
+	base := "image = example.org:5000/a/b_c.d@" + digest + "\nport = 8082\n"
+	for _, l := range []string{
+		"arg = --token-file=/run/secrets/u/token",
+		"arg = --tls-key-file=/run/secrets/u/key",
+		"arg = --Key_Path=/run/secrets/u/key",
+		"arg = --api-key-path",
+		"arg = -t",
+		"arg = streamable-http",
+		"arg = token",
+		"arg = --enabled-tools=search,datasource",
+		"arg = --color=#fff",
+		"env = API_TOKEN_FILE=/run/secrets/u/token",
+		"env = A=b#c",
+	} {
+		d := testDir(t)
+		write(t, d.UpstreamPath("u"), base+l+"\n")
+		if _, err := d.ReadUpstream("u"); err != nil {
+			t.Errorf("%s: %v", l, err)
+		}
+	}
+}
+
+// An error never quotes a value that may be a credential: a refused arg
+// names its flag, a refused env its name.
+func TestReadUpstreamErrorsHoldNoValue(t *testing.T) {
+	base := "image = example.org/u@" + digest + "\nport = 8082\n"
+	for _, l := range []string{
+		"env = API-KEY=s3cr3t",
+		"env = 1X=s3cr3t",
+		"env = API_KEY=s3cr3t",
+		"arg = --token=s3cr3t",
+		"arg = --tls-skip-verify=s3cr3t",
+		"env = GIT_SSL_INSECURE=s3cr3t",
+	} {
+		d := testDir(t)
+		write(t, d.UpstreamPath("u"), base+l+"\n")
+		_, err := d.ReadUpstream("u")
+		if err == nil || strings.Contains(err.Error(), "s3cr3t") {
+			t.Errorf("%s: err = %v; want an error without the value", l, err)
+		}
+	}
+}
+
+// A FIFO where a file should be fails at once, from the check before the
+// open; it never blocks the scan, even in a directory someone else could
+// write.
+func TestReadUpstreamRefusesAFIFO(t *testing.T) {
+	for _, mode := range []os.FileMode{0o755, 0o777} {
+		d := testDir(t)
+		if err := syscall.Mkfifo(d.UpstreamPath("u"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(filepath.Join(d.Etc, "mcp"), mode); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() {
+			_, err := d.ReadUpstream("u")
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Errorf("directory %v: a FIFO: err = nil", mode)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("directory %v: ReadUpstream blocked on a FIFO", mode)
+		}
 	}
 }
 

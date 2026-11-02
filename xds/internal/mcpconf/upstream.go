@@ -91,12 +91,18 @@ const (
 )
 
 var (
-	// image is a reference by digest: no tag, sha256.
-	image = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:-]*[a-z0-9]@sha256:[0-9a-f]{64}$`)
+	// image is a reference by digest, sha256, and no tag: a ':' only for
+	// the registry's port, in the first component.
+	image = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]+)?(/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)*@sha256:[0-9a-f]{64}$`)
 	// envName is a variable's name.
 	envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	// secretName is a variable whose name says it holds a secret.
 	secretName = regexp.MustCompile(`(?i)token|key|secret|password|credential`)
+	// flag is an argument that is a flag, -x, --x or --x=value: its name.
+	flag = regexp.MustCompile(`^--?([^=]+)`)
+	// noVerify is a flag or variable whose name says it turns TLS
+	// verification off.
+	noVerify = regexp.MustCompile(`(?i)insecure|skip[-_]verify|^node_tls_reject_unauthorized$`)
 	// headerName is an HTTP header field name (RFC 9110 token), no pseudo-
 	// header.
 	headerName = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
@@ -111,6 +117,12 @@ var keptHeaders = []string{
 	"last-event-id", "mcp-method", "mcp-name", "mcp-param-",
 	"mcp-protocol-version", "mcp-session-id", "te", "transfer-encoding",
 }
+
+// ReservedPorts are redoma's own listener ports, which an upstream's port
+// may not be: the egress listener's in the upstream's own namespace (3128),
+// and the agents' relay, model, MCP and AWS credentials (its default)
+// listeners'.
+var ReservedPorts = []uint32{3128, 7070, 8080, 8081, 9911}
 
 // ReadUpstream reads upstream's file. A missing file is nil and no error.
 func (d Dir) ReadUpstream(upstream string) (*Upstream, error) {
@@ -194,6 +206,9 @@ func (u *Upstream) setScalar(key, value string) error {
 		if err != nil || p == 0 {
 			return fmt.Errorf("port %q is not 1-65535", value)
 		}
+		if slices.Contains(ReservedPorts, uint32(p)) {
+			return fmt.Errorf("port %d is one of redoma's own listener ports %v", p, ReservedPorts)
+		}
 		u.Port = uint32(p)
 	case keyPath:
 		if !strings.HasPrefix(value, "/") || strings.ContainsAny(value, " \t?#") {
@@ -225,8 +240,8 @@ func (u *Upstream) setScalar(key, value string) error {
 func (u *Upstream) add(key, value string, seen map[string]bool) error {
 	switch key {
 	case keyArg:
-		if value == "" {
-			return errors.New("arg is empty")
+		if err := checkArg(value); err != nil {
+			return err
 		}
 		u.Args = append(u.Args, value)
 	case keyEnv:
@@ -260,7 +275,12 @@ func (u *Upstream) add(key, value string, seen map[string]bool) error {
 func (u *Upstream) setEnv(value string, seen map[string]bool) error {
 	name, _, ok := strings.Cut(value, "=")
 	if !ok || !envName.MatchString(name) {
-		return fmt.Errorf("env %q is not NAME=value", value)
+		// The name alone: a credential written with a typo in its name
+		// must not reach the log.
+		return fmt.Errorf("env %q is not NAME=value", name)
+	}
+	if noVerify.MatchString(name) {
+		return fmt.Errorf("env %s turns the backend's TLS verification off", name)
 	}
 	if seen["env "+name] {
 		return fmt.Errorf("env %s given twice", name)
@@ -271,6 +291,35 @@ func (u *Upstream) setEnv(value string, seen map[string]bool) error {
 		return fmt.Errorf("env %s looks like a secret: a credential reaches the server only as a file, so its name must end in _FILE or _PATH", name)
 	}
 	u.Env = append(u.Env, value)
+	return nil
+}
+
+// checkArg refuses an empty argument, a flag that turns TLS verification
+// off, and a flag whose name says it takes a secret unless it names a file
+// (-file, -path, _file, _path): the credential reaches the server only as a
+// file, and an argument is on the container's command line. The error
+// names the flag, never its value.
+func checkArg(value string) error {
+	if value == "" {
+		return errors.New("arg is empty")
+	}
+	m := flag.FindStringSubmatch(value)
+	if m == nil {
+		return nil
+	}
+	name := m[1]
+	if noVerify.MatchString(name) {
+		return fmt.Errorf("arg %s turns the backend's TLS verification off", m[0])
+	}
+	lower := strings.ToLower(name)
+	for _, s := range []string{"-file", "-path", "_file", "_path"} {
+		if strings.HasSuffix(lower, s) {
+			return nil
+		}
+	}
+	if secretName.MatchString(name) {
+		return fmt.Errorf("arg %s looks like a secret: a credential reaches the server only as a file, so the flag must name one (-file, -path, _file or _path)", m[0])
+	}
 	return nil
 }
 

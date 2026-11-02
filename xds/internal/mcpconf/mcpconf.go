@@ -90,18 +90,21 @@ type line struct {
 	key, value string
 }
 
+// trailingComment is a value with what reads like a trailing comment: a #
+// after a space or tab.
+var trailingComment = regexp.MustCompile(`[ \t]#`)
+
 // readLines reads a trusted file into its lines: blank lines and lines
 // starting with # skipped, `[section]` lines kept with an empty value. A
-// missing file is nil lines and fs.ErrNotExist.
+// # is a comment only at the start of a line: a value with ` #` in it is
+// refused, not passed on with the comment. A missing file is nil lines and
+// fs.ErrNotExist.
 func (d Dir) readLines(path string) ([]line, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	f, err := d.open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	if err := d.trusted(path, f); err != nil {
-		return nil, err
-	}
 	raw, err := io.ReadAll(io.LimitReader(f, maxSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -127,19 +130,48 @@ func (d Dir) readLines(path string) ([]line, error) {
 		if !ok || key == "" {
 			return nil, fmt.Errorf("%s:%d: not `key = value`", path, i+1)
 		}
+		if trailingComment.MatchString(value) {
+			return nil, fmt.Errorf("%s:%d: a # after a space in the value; # starts a comment only at the start of a line", path, i+1)
+		}
 		lines = append(lines, line{n: i + 1, key: key, value: value})
 	}
 	return lines, nil
 }
 
-// trusted refuses a file another user than Owner could have changed: the
-// file itself, opened without following a symlink, and every directory from
-// its own up to Etc.
-func (d Dir) trusted(path string, f *os.File) error {
-	fi, err := f.Stat()
+// open opens a trusted file. It checks the path before opening it, so a
+// FIFO or device in a directory someone else could write is refused, not
+// opened, and opens it without following a symlink and without blocking;
+// the file opened must be the one checked.
+func (d Dir) open(path string) (*os.File, error) {
+	before, err := os.Lstat(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	if err := d.trusted(path, before); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	after, err := f.Stat()
+	if err == nil && !os.SameFile(before, after) {
+		err = fmt.Errorf("%s changed while it was read", path)
+	}
+	if err == nil {
+		err = d.owned(path, after)
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// trusted refuses a file another user than Owner could have changed: the
+// file itself (fi, from Lstat: a symlink is not a regular file), and every
+// directory from its own up to Etc.
+func (d Dir) trusted(path string, fi os.FileInfo) error {
 	if !fi.Mode().IsRegular() {
 		return fmt.Errorf("%s: not a regular file", path)
 	}
