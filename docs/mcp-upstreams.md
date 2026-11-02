@@ -115,7 +115,8 @@ upstream container (own netns, --network none)                             |
     upstream serves every agent that has it.
   - `redoma-mcp-token@.path` and `redoma-mcp-token@.service` copy the
     upstream's credential from where the host's minter writes it into
-    `/run/redoma-mcp/<upstream>/token`, atomically, whenever it changes.
+    `/run/redoma-mcp/<upstream>/token`, atomically, whenever it changes
+    and before each start of the upstream.
 
 ## What was verified
 
@@ -169,11 +170,25 @@ at v1.40.2), so Envoy's standard and distroless builds carry it.
   `"name"` makes the call fail; it cannot make the server call a tool other
   than the one Envoy checked. Arguments are a different matter: some of
   that server's tools decode them with `mapstructure.WeakDecode`, which
-  matches keys case-insensitively. An argument constraint therefore holds
-  only for tools whose own decoding is case-exact, which the upgrade
-  checklist verifies per allowed tool (see "Upgrading an upstream"). Each
-  upstream's parser is part of its trust, which is one reason the server's
-  own limits stay the first layer (see "Layered limits").
+  matches keys case-insensitively.
+  **mcp-grafana v2.2.0 is such a server for every tool:** it decodes a
+  tool's arguments with `encoding/json` (`tools.go:177-191`), which matches
+  keys case-insensitively, the last one winning. A call with
+  `{"uid": "allowed", "UID": "other"}` passes a constraint on `uid` and
+  reaches `other`; the integration test shows it, and fails if a release
+  changes it. So, for Grafana, an argument constraint is no boundary, and a
+  narrower data scope is Grafana's to enforce (see "Its token").
+- **The rule that follows.** An argument constraint is a boundary only if
+  the server decodes that argument case-sensitively and refuses or ignores
+  a duplicate of it in another case. That is a property of each tool's
+  code, not of the protocol, so an upstream's design must prove it for
+  every argument its allowlists constrain, tool by tool, citing the code
+  (GitHub's included, see "GitHub"), and the upgrade checklist proves it
+  again at every release (see "Upgrading an upstream"). Until it is
+  proven, a constraint on that argument is advisory, and the allowlist's
+  real limit is its tool names. Each upstream's parser is part of its
+  trust, which is one reason the server's own limits stay the first layer
+  (see "Layered limits").
 - **Risk, stated plainly.** A bug in this filter could do one of two things:
   - **Pass a call RBAC should have refused.** The server's own ceiling and
     the backend's permissions for the upstream's credential still hold.
@@ -221,10 +236,22 @@ at v1.40.2), so Envoy's standard and distroless builds carry it.
   (`resources/*`, `prompts/*`, `sampling/*`), another tool, an unparsed
   body. The filter's `REJECT_NO_MCP` mode has already refused anything that
   is not MCP.
+- **The path, exactly.** Each permission also matches the request's
+  `:path` header exactly, `/mcp/<upstream>`. `:path` includes the query
+  string, so a request with any query is a 403: MCP's Streamable HTTP
+  needs none, and a query would be a second channel, besides the headers,
+  through which the agent could configure a server.
+- **A body only on POST.** GET (the session's event stream) and DELETE
+  (the session's end) are allowed on the method, because the MCP filter
+  passes them before reading any body. So RBAC allows them only without a
+  body: no `content-length` other than 0 and no `transfer-encoding`. An
+  HTTP/2 request can still send DATA without either header, so that a
+  server ignores a GET or DELETE body is a step of the upgrade checklist.
 - **Argument constraints.** An extraction rule makes an argument visible to
-  RBAC, so a tool can be allowed only with, say, `datasourceUid` =
-  `prometheus-main`, or `owner` = `example-org` and `repo` =
-  `example-repo`, or a `branch` that starts with `agent/example/`. They are
+  RBAC, so a tool can be allowed only with, say, `owner` = `example-org`
+  and `repo` = `example-repo`, or a `branch` that starts with
+  `agent/example/`. Each holds only where the upstream decodes that
+  argument case-exactly ("The rule that follows", above). They are
   exact or prefix string matches on scalar arguments, and an argument a
   constraint names must be present: a call without it is refused. A list
   argument cannot be constrained (the parser skips arrays), so a tool whose
@@ -234,8 +261,7 @@ at v1.40.2), so Envoy's standard and distroless builds carry it.
   list of tools with the constraints that apply to them. A call is allowed
   when any set allows it; RBAC expresses the sets as OR-ed permissions. So
   one file can allow, for example, reads on the agent's own repository and
-  on another, and writes on its own only; or the query tools on two
-  datasources and the dashboard tools on any.
+  on another, and writes on its own only.
 - **What RBAC cannot check** is anything that needs the backend's state.
   Envoy sees the arguments, not what they point at. A constraint on
   `owner` and `repo` keeps a comment in the allowed repositories. It cannot
@@ -312,9 +338,17 @@ which the server re-reads when it changes.
   missing.
 - The server is told the in-container path in its `arg` or `env` lines
   (Grafana: `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE=/run/secrets/grafana/token`).
-  Those lines may name the path, never a value: an `env` whose name says it
-  holds a secret (it contains `TOKEN`, `KEY`, `SECRET`, `PASSWORD` or
-  `CREDENTIAL`) must end in `_FILE` or `_PATH`, or the file is invalid.
+  Those lines may name the path, never a value, and both kinds are
+  checked. A name says it holds a secret when it contains `token`, `key`,
+  `secret`, `password` or `credential`, in any case:
+  - an `env` with such a name must end in `_FILE` or `_PATH`;
+  - an `arg` that is a flag (`-x`, `--x`, `--x=value`) with such a name
+    must end in `-file`, `-path`, `_file` or `_path`, given with its
+    value or without (a value in the next `arg` line is the same value).
+
+  Either refusal makes the file invalid. The check is by name, so a flag
+  that takes a secret under another name is not caught, and stays a step
+  of the upgrade checklist.
 - **What an upstream must provide.** A way to hold its credential from a
   file, re-read on change, in its shared HTTP mode. Grafana's server does
   (below). One that does not needs an upstream change first; a sidecar
@@ -322,13 +356,34 @@ which the server re-reads when it changes.
   injection by another name and is a last resort.
 - **Delivery.** The host's own minter (a timer that mints or copies a
   short-lived token; redoma does not ship one) writes the token to a path
-  of its choosing, replacing it by rename. `redoma-mcp-token@<upstream>.path`
-  watches that path (`PathChanged=`, from a drop-in the host writes, so
-  redoma names no path under anyone's home) and starts
-  `redoma-mcp-token@<upstream>.service`, which copies the file to
-  `/run/redoma-mcp/<upstream>/token.tmp` (directory root's, 0700) and
-  renames it to `token`. The root copy keeps `/run/redoma-mcp` out of every
-  user session's reach.
+  of its choosing, replacing it by rename. `redoma-mcp-token@<upstream>.service`
+  copies that file to `/run/redoma-mcp/<upstream>/token.tmp` (directory
+  root's, 0700) and renames it to `token`. The root copy keeps
+  `/run/redoma-mcp` out of every user session's reach. It runs:
+  - **at every start of the upstream:** `redoma-mcp@<upstream>.service`
+    wants it and starts after it, so the first copy after a boot (`/run`
+    is a tmpfs, and the token is gone) is made before the server starts;
+  - **at every change:** `redoma-mcp-token@<upstream>.path` watches the
+    minter's path (`PathChanged=`, which fires only on a change, never for
+    a file that already exists when the path unit starts). Both the path
+    and the source come from a drop-in the host writes, so redoma names no
+    path under anyone's home.
+
+  When the minter has not written yet, the copy fails, the upstream's
+  start fails on the missing token and is retried, and the minter's first
+  write makes the copy that lets it start.
+- **The copier trusts its source no further than the minter.** The source
+  is a path the minter chooses, possibly under a user's home, and the
+  copier is root, so it refuses to be pointed at any other file. It walks
+  the path from `/` one component at a time without following a symlink
+  (`openat` with `O_NOFOLLOW`), and every directory on the way must be
+  owned by root or the minter's uid and writable by no one else. The file
+  itself, opened with `O_NOFOLLOW` and `O_NONBLOCK` (a FIFO cannot hang
+  it), must be a regular file owned by the minter's uid, which is root
+  unless the drop-in names another (`REDOMA_MCP_TOKEN_OWNER`), writable by
+  no one else, and at most 64 KiB. A minter that swaps the file for a
+  symlink, or a directory on its path for one, gets a refusal, not a copy
+  of a file root can read.
 - **Rotation** is the minter's: write a new token before the old one
   expires. The server reads the new file at its next request (Grafana) or
   on change; no restart. A missing or expired token is the backend's 401,
@@ -348,6 +403,18 @@ container's hardening is what keeps the token from leaking anywhere but its
 backend: `--network none` with an egress listener that allows only the
 backend's hosts, `--userns=auto`, all capabilities dropped,
 `no-new-privileges`, a read-only root, and the image pinned by digest.
+
+**Who validates the backend's TLS.** The server alone. The egress listener
+is a CONNECT tunnel to the allowed hosts and does not terminate TLS, so the
+backend's certificate is checked by the server, against its image's
+roots. A server that skipped that check would send its credential to
+whatever answered on the tunnelled host. So an `arg` or `env` whose name
+says it turns verification off (it contains `insecure`, `skip-verify` or
+`skip_verify`, or is `NODE_TLS_REJECT_UNAUTHORIZED`, in any case) makes the
+upstream's `.conf` invalid, and how a release verifies its backend, and
+which flags or variables change its roots, is a step of the upgrade
+checklist.
+
 Exfiltration is then possible only through the backend itself (written
 into a comment, a dashboard, an annotation), which is why each upstream's
 credential has the least the backend allows, and its write tools are off
@@ -401,6 +468,7 @@ unless needed.
 --disable-assistant --disable-rendering --disable-snapshot --disable-plugin
 --disable-provisioning
 --loki-guardrail-mode=enforce --prometheus-guardrail-mode=enforce
+--usage-stats=disabled
 ```
 
 - `--disable-write` (`main.go:241`) removes every create, update and delete
@@ -410,8 +478,16 @@ unless needed.
   is Envoy's RBAC and the tool check's.
 - `--disable-api` matters: `grafana_api_request` is a raw API passthrough
   that would bypass every tool-level limit.
+- The `--disable-*` flags each remove a category whether or not
+  `--enabled-tools` names it, so the ceiling holds even if a release
+  enables a category by default; they are all passed, here and in the
+  example below.
 - The guardrail modes refuse queries that are too expensive, with advice
   to narrow them, rather than letting an agent run an unbounded scan.
+- `--usage-stats=disabled`: the server reports anonymous usage statistics
+  to a Grafana endpoint by default. The egress listener would refuse it
+  (that host is not the upstream's backend), but the server would keep
+  trying; the flag outranks the environment's settings.
 
 ### Its tools
 
@@ -436,9 +512,12 @@ unless needed.
   `grafana_api_request`. `generate_deeplink` with `shorten=true` creates a
   short URL, a write; it stays read-only by not passing
   `--enable-write-tools=generate_deeplink`.
-- **Constraints.** The query tools take a scalar `datasourceUid`, so a set
-  can confine an agent to some datasources. Query text (`expr`, `logql`)
-  is free text and not constrained.
+- **Constraints do not confine it.** The query tools take a scalar
+  `datasourceUid`, but the server decodes arguments case-insensitively (see
+  "A parser differential"), so a set constrained to some datasources is
+  advisory: a case-variant key reaches any datasource the token can read.
+  Allowlists for Grafana name tools, which RBAC does hold; which data an
+  agent reads is the token's.
 
 ### Its token
 
@@ -446,10 +525,13 @@ A dedicated Grafana service account with the **Viewer** role, its token
 with an expiry. Viewer is the backend's layer: even a write tool that were
 registered and allowed would be refused by Grafana. What Viewer still
 exposes is every datasource's data, logs included, and logs can carry
-secrets, which then enter the model's context. Narrow the data, not the
-role: per-agent `datasourceUid` sets, Loki's enforced matchers
-(`--loki-enforced-matchers`, which needs `--disable-api`), folder
-permissions on the service account.
+secrets, which then enter the model's context. Narrow the data on
+Grafana's side, where it holds: the service account's datasource and
+folder permissions (where the Grafana edition has them), Loki's enforced
+matchers (`--loki-enforced-matchers`, which needs `--disable-api`), or,
+for agents that must see different data, a second upstream instance with
+its own service account, each agent's allowlist naming only its
+instance.
 
 ### Its configuration
 
@@ -466,30 +548,35 @@ arg = --endpoint-path=/mcp
 arg = --disable-write
 arg = --enabled-tools=search,datasource,prometheus,loki,dashboard,alerting,navigation,tempo,pyroscope,annotations
 arg = --disable-api
+arg = --disable-admin
+arg = --disable-incident
+arg = --disable-oncall
 arg = --disable-sql
 arg = --disable-assistant
+arg = --disable-rendering
+arg = --disable-snapshot
+arg = --disable-plugin
+arg = --disable-provisioning
 arg = --loki-guardrail-mode=enforce
 arg = --prometheus-guardrail-mode=enforce
-env = GRAFANA_URL=https://grafana.example.com
+arg = --usage-stats=disabled
+env = GRAFANA_URL=https://grafana.example.org
 env = GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE=/run/secrets/grafana/token
 token_file = /run/redoma-mcp/grafana/token
-egress = grafana.example.com
+egress = grafana.example.org
 strip_header_prefix = x-grafana-
 max_request_bytes = 1048576
 ```
 
 ```
 # /etc/redoma/mcp/grafana/example.conf
-[set]
-tool = query_prometheus
-tool = list_prometheus_metric_names
-tool = list_prometheus_label_values
-constrain = * arguments.datasourceUid = prometheus-main
-[set]
-tool = query_loki_logs
-tool = list_loki_label_values
-constrain = * arguments.datasourceUid = loki-main
-[set]
+# Tools only: for this server a datasourceUid constraint is advisory (see
+# "Constraints do not confine it").
+tool_unconstrained = query_prometheus
+tool_unconstrained = list_prometheus_metric_names
+tool_unconstrained = list_prometheus_label_values
+tool_unconstrained = query_loki_logs
+tool_unconstrained = list_loki_label_values
 tool_unconstrained = search_dashboards
 tool_unconstrained = get_dashboard_summary
 tool_unconstrained = list_datasources
@@ -557,16 +644,77 @@ reach an approval tool with the person's token, because that instance never
 registers one. A `route_for` target must be an upstream whose own `.conf`
 exists; its tool check must list the tool.
 
+**`route_for` and sessions.** A `tools/call` routed to the second instance
+carries the `Mcp-Session-Id` the first instance gave the client. A
+stateless server (Grafana's, `main.go:1383-1387`, and GitHub's,
+`pkg/http/handler.go:261`, run their SDK's handler stateless) ignores it; a server that keeps sessions does not know it, and
+refuses the call. So `route_for` is for servers whose HTTP mode is
+stateless, which the upgrade checklist confirms for both instances.
+
+### The person's token, and what GitHub does not stop
+
+- **Its scope:** a fine-grained token on the agents' repositories only,
+  with Pull requests read and write, Contents read and Metadata read.
+  Nothing else. Contents read means it cannot push, change files or merge
+  (a merge writes contents).
+- **GitHub is no backstop against an approval in that person's name.**
+  Pull requests write allows commenting on, editing and closing pull
+  requests, and approving or requesting changes on pull requests other
+  people opened; GitHub refuses an approval only of the person's own. What
+  stops an approval on this route is the instance's `--tools` ceiling
+  (`create_pull_request` alone), the route's exact match, and RBAC, each
+  enough on its own.
+- **The shared instance's credential and a merge.** A credential with
+  contents and pull requests write can merge a pull request that is
+  approved and green: the default branch's ruleset refuses a merge only
+  while a review or a required check is missing. So for such a pull
+  request GitHub is no backstop, and layers 1 and 2 alone stop the merge:
+  `merge_pull_request` is not registered, and RBAC does not allow it.
+- **An approval on the shared instance** is stopped the same way: Pull
+  requests write allows submitting a review, so GitHub would not refuse
+  it, and the review tools are neither registered nor allowed.
+
+### Its argument constraints, proven per tool
+
+The example below constrains `owner`, `repo`, `head` and `base`. Each is a
+boundary only where the tool reads it case-exactly ("The rule that
+follows"). At v2.0.3:
+
+- `create_pull_request` reads `owner` and `repo` with `RequiredParam` and
+  `head` and `base` with `OptionalParam` (`pkg/github/pullrequests.go:769-804`),
+  both an exact lookup in the arguments' map (`pkg/github/params.go:128-140`,
+  `:200-211`). A `"Repo"` key next to `"repo"` is another key, never read.
+- The tools that decode their arguments with `mapstructure.WeakDecode`,
+  case-insensitively (`pull_request_review_write`, the Copilot tools, the
+  discussion and notification tools), are never allowed, so no constraint
+  rests on them.
+- Every other tool the example allows is proven the same way, with its
+  code cited here, before GitHub is enabled (Rollout, step 3), and again
+  at every release.
+
 ### Never allowed, for GitHub
 
-Merging and updating a branch from its base; reviews (writing,
-submitting, deleting, commenting in one, resolving threads); statuses and
-check runs; anything under Actions; repository administration, creating,
-deleting or forking repositories; deleting files or branches; Copilot
-assignments and reviews; `search_*` (free-text queries no constraint can
-narrow). Replying in an existing review thread,
-`add_reply_to_pull_request_comment`, is a comment, not a review, and may be
-allowed.
+Tool names at v2.0.3; an operator writing `--tools` leaves every one out:
+
+- merging, auto-merge, updating a branch from its base
+  (`merge_pull_request`, `update_pull_request_branch`);
+- reviews: writing, submitting, deleting or commenting in one, and
+  resolving its threads (`pull_request_review_write`,
+  `create_pull_request_review`, `submit_pending_pull_request_review`,
+  `delete_pending_pull_request_review`, `add_comment_to_pending_review`,
+  `add_pull_request_review_comment`, `resolve_review_thread`,
+  `unresolve_review_thread`). Replying in an existing thread,
+  `add_reply_to_pull_request_comment`, is a comment, not a review, and may
+  be allowed;
+- statuses and check runs;
+- anything under Actions;
+- repository administration, creating, deleting or forking repositories
+  (`create_repository`, `delete_repository`, `fork_repository`,
+  `create_repository_ruleset`);
+- deleting files or branches (`delete_file`);
+- Copilot assignments and reviews (`assign_copilot_to_issue`,
+  `assign_copilot_to_issue_with_intent`, `request_copilot_review`);
+- `search_*`: free-text queries no constraint can narrow.
 
 ### Its configuration
 
@@ -644,7 +792,10 @@ design make such text safe. They grant or refuse nothing.
 
 Files under `/etc/redoma/mcp/`, all root's and writable by no one else,
 like `agents.txt`, and strict: an unknown key, a key given twice (list keys
-excepted) or a value that does not parse invalidates the file. What an
+excepted) or a value that does not parse invalidates the file. `#` starts
+a comment only at the start of a line: a value with a `#` after a space or
+tab, which reads like a trailing comment, invalidates the file rather than
+passing the comment on as part of the value. What an
 invalid file does depends on which it is, and none widens access ("An error
 never widens access"; see "Who enables what").
 
@@ -656,10 +807,10 @@ never widens access"; see "Who enables what").
 | Key | Meaning |
 |---|---|
 | `image` | the image, by digest (`<repository>@sha256:<64 hex>`); a tag is refused |
-| `port` | the server's port on 127.0.0.1 in its namespace |
+| `port` | the server's port on 127.0.0.1 in its namespace; never one of redoma's own listener ports (3128, 7070, 8080, 8081, 9911) |
 | `path` | the server's MCP path; Envoy rewrites `/mcp/<upstream>` to it (default `/`) |
-| `arg` (list) | the server's arguments, in order |
-| `env` (list) | `NAME=value`; a secret-named variable must end in `_FILE` or `_PATH` |
+| `arg` (list) | the server's arguments, in order; a secret-named flag must end in `-file`, `-path`, `_file` or `_path`, and none may turn TLS verification off |
+| `env` (list) | `NAME=value`; a secret-named variable must end in `_FILE` or `_PATH`, and none may turn TLS verification off |
 | `token_file` | the credential's host path, under `/run/redoma-mcp/<upstream>/`; its directory is mounted read-only at `/run/secrets/<upstream>/` |
 | `egress` (list) | the hosts on 443 its egress listener allows, in the egress allowlists' syntax (suffix wildcards included) |
 | `tool_check` | `refuse` (default), `warn` or `off` |
@@ -683,7 +834,12 @@ And `_default.conf`, every agent's, whose sets come first:
   their own.
 
 A call is allowed when any set allows it. An argument a constraint names
-must be present.
+must be present. Every `tool` line must be reached by at least one
+`constrain` line of its set (by name, or by a `*` that follows it); a
+`tool` line that none reaches, such as one after the set's `constrain = *`
+lines, invalidates the file rather than allowing the tool with any
+arguments. A tool allowed without constraints is always written
+`tool_unconstrained`, an explicit choice.
 
 ### Who enables what
 
@@ -769,9 +925,12 @@ subordinate ids of the user `containers` (podman-run(1) of Podman 4.9,
   `/etc/subgid`, with a range that holds no host uid or gid in use: not
   root's, not redoma's services' (961, 963, 964), not any agent's.
 - **The credential across the user namespace.** The token is a host-root
-  0600 file; the server runs as its namespace's root, an unprivileged host
-  uid. The unit mounts the directory with `:idmap`, so the file reads as
-  the container root's. If a host's kernel or Podman cannot idmap that
+  0600 file. The unit mounts the directory with `:idmap`, so the file reads
+  as the container root's, and runs the server as that root, `--user=0:0`,
+  whatever user its image names (mcp-grafana's image sets `USER` to uid
+  1000, which could not read the token). Inside `--userns=auto` that root
+  is an unprivileged host uid, with no capability. If a host's kernel or
+  Podman cannot idmap that
   mount, the fallback is a fixed `--userns` mapping for upstreams and a
   copier that `chown`s to the mapped uid.
 - **The hook** refuses an agent whose uid, gid or any `additionalGids`
@@ -807,7 +966,15 @@ written checklist, gone through before the digest moves:
   not), and whether it now routes or authorizes on a header such as
   `Mcp-Param-*` rather than the body;
 - the parser its dispatch and each allowed tool's argument decoding use
-  (case, duplicate keys) against Envoy's;
+  (case, duplicate keys) against Envoy's, for every argument a constraint
+  names ("The rule that follows");
+- that it ignores a body on GET and DELETE, and any query string;
+- that its HTTP mode is still stateless, where `route_for` sends a tool
+  to another instance;
+- that it verifies its backend's TLS certificate, against which roots,
+  and which flags or variables turn that off or change the roots;
+- whether a flag takes a secret under a name the `arg` check does not
+  catch;
 - what a renamed or new tool does, before any allowlist names it.
 
 ## Pushing
@@ -835,12 +1002,15 @@ It is built only when hosts need the agents' own commits published.
 
 ## Audit
 
-Envoy's access log on the MCP listeners is the audit record, one line per
-request: the listener (the agent), the upstream and cluster, the MCP
-method and `params.name` and any extracted arguments from the MCP filter's
-metadata, the RBAC result, status, duration and bytes, and a request id.
-Bodies are not logged. The backend's own audit log names the upstream's
-credential for each call.
+Envoy's access log on the MCP listeners is the audit record, one JSON line
+per request: the listener (the agent); the request's method, path and
+request id; the cluster it reached (which upstream instance, under
+`route_for`); the MCP filter's whole metadata (the MCP `method`,
+`params.name` and every extracted argument); the response code and its
+details (`rbac_access_denied_matched_policy[none]` when RBAC refused it,
+which tells that 403 from one the server sent); flags, duration and
+bytes. Bodies are not logged. The backend's own audit log names the
+upstream's credential for each call.
 
 ## Rollout
 
@@ -848,10 +1018,10 @@ credential for each call.
    routes, clusters, egress listeners and the tool check in `redoma xds`;
    the hook's upstream registration; `redoma-mcp@.service` and
    `redoma-mcp-token@.{path,service}`; the shim's `--mcp-upstream`.
-2. Grafana as the first upstream: read tools, for one agent, with
-   `datasourceUid` sets.
-3. GitHub, once its HTTP mode holds a token file: read tools first, then
-   writes, then `github-pr`.
+2. Grafana as the first upstream: read tools, for one agent.
+3. GitHub, once its HTTP mode holds a token file and every argument its
+   allowlists constrain is proven case-exact ("Its argument constraints,
+   proven per tool"): read tools first, then writes, then `github-pr`.
 4. Publishing, and a read-only git upstream (open question 2).
 
 **Migrating an agent from an in-container credential:**
@@ -900,7 +1070,12 @@ Under `bazel test //...`, with no network:
   the alpha MCP filter takes every listener down, an accepted risk.
 - **No `ext_proc` fallback.** A bug in the MCP filter is fixed in Envoy.
 - **CI secrets on same-repository branches** are a deployment's hardening
-  choice, out of redoma's scope.
+  choice, out of redoma's scope. The threat: a pull request from a branch
+  of the same repository runs the base repository's workflows, with its
+  secrets, on the branch's code, and refusing changes to workflow files
+  does not stop changes to the scripts and tests those workflows run.
+  Publishing to a fork instead makes CI treat it as a fork's, without
+  secrets.
 - **Routes are published whenever the agent is,** not only during a turn.
 - **Uids come from `--userns=auto`**, with the credential directory
   idmapped into it.
