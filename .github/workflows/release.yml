@@ -1,8 +1,9 @@
 name: release
 
 # A tag v<VERSION> pushed to this repository publishes a GitHub Release with
-# the Debian packages, redoma_<version>_amd64.deb and redoma_<version>_arm64.deb,
-# and their SHA256SUMS, each with a build provenance attestation. A tag v<VERSION>-rc.<n> publishes a release
+# the Debian packages, redoma_<version>_amd64.deb and
+# redoma_<version>_arm64.deb, and their SHA256SUMS, each with a build
+# provenance attestation. A tag v<VERSION>-rc.<n> publishes a release
 # candidate the same way, as a prerelease, its packages versioned
 # <VERSION>~rc.<n> (AGENTS.md, "The package") and named
 # redoma_<VERSION>-rc.<n>_<arch>.deb, a name GitHub keeps.
@@ -263,17 +264,19 @@ jobs:
           REF: ${{ steps.check.outputs.image }}@${{ steps.check.outputs.digest }}
         run: cosign sign --yes "${REF}"
 
-      # The signature verifies as a consumer would verify it: this
-      # repository's release workflow, on a release tag.
+      # The signature verifies as the release's notes tell a consumer to
+      # verify it: by this repository's release workflow, at exactly this
+      # tag (the same identity the notes print).
       - name: the signature verifies
         env:
           REF: ${{ steps.check.outputs.image }}@${{ steps.check.outputs.digest }}
-          IDENTITY: '^https://github\.com/bpalermo/redoma/\.github/workflows/release\.yml@refs/tags/v.*$'
+          TAG: ${{ github.ref_name }}
           ISSUER: https://token.actions.githubusercontent.com
         run: |
-          cosign verify "${REF}" --certificate-identity-regexp "${IDENTITY}" \
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${TAG}"
+          cosign verify "${REF}" --certificate-identity "${identity}" \
             --certificate-oidc-issuer "${ISSUER}" >/dev/null
-          echo "${REF}: signed by ${IDENTITY}"
+          echo "${REF}: signed by ${identity}"
 
       # The SLSA build provenance of the index's digest, in GitHub's
       # attestation store (`gh attestation verify`), not pushed to Quay: it
@@ -366,11 +369,11 @@ jobs:
             echo "${IMAGE}:${TAG#v}@${DIGEST}"
             echo '```'
             echo
-            echo "Its signature, made keyless with cosign by this repository's release workflow on a release tag:"
+            echo "Its signature, made keyless with cosign v3 by this repository's release workflow at the tag ${TAG} (verify it with cosign v3 or later):"
             echo
             echo '```sh'
             echo "cosign verify ${IMAGE}@${DIGEST} \\"
-            echo "  --certificate-identity-regexp '^https://github\.com/bpalermo/redoma/\.github/workflows/release\.yml@refs/tags/v.*\$' \\"
+            echo "  --certificate-identity https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${TAG} \\"
             echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
             echo '```'
             echo
