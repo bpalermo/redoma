@@ -56,6 +56,10 @@ func (t Tunnels) Client() *http.Client {
 	}
 	return &http.Client{
 		Timeout: 30 * time.Second,
+		// A redirect is the answer, never followed: following a 307 or 308
+		// would send the signed body and the certificate headers to wherever
+		// it points.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
 				host, port, err := net.SplitHostPort(addr)

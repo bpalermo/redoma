@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -176,5 +177,46 @@ func TestIsEndpoint(t *testing.T) {
 	}
 	if !IsEndpoint(Host("aws", "eu-west-3")) || !IsEndpoint(Host("aws-cn", "cn-northwest-1")) {
 		t.Error("Host makes a host IsEndpoint refuses")
+	}
+}
+
+// TestTunnelNoRedirect: a redirect is the answer, never followed, so the
+// signed body and the certificate headers are never sent anywhere else.
+func TestTunnelNoRedirect(t *testing.T) {
+	for _, code := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		ca := newTestCA(t)
+		var mu sync.Mutex
+		var paths []string
+		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			paths = append(paths, r.URL.Path)
+			mu.Unlock()
+			http.Redirect(w, r, "/elsewhere", code)
+		}))
+		srv.TLS = &tls.Config{Certificates: []tls.Certificate{ca.serverCert(t, host)}}
+		srv.StartTLS()
+		t.Cleanup(srv.Close)
+		dial := func(ctx context.Context, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", srv.Listener.Addr().String())
+		}
+		c := Tunnels{Dir: "/run/redoma/xds/tunnel", Roots: ca.pool, Dial: dial}.Client()
+		req, err := http.NewRequest(http.MethodPost, "https://"+host+"/sessions", strings.NewReader(`{"x":1}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("X-Amz-X509", "leaf")
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatalf("%d: %v", code, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != code {
+			t.Errorf("status %d, want the %d itself", resp.StatusCode, code)
+		}
+		mu.Lock()
+		if len(paths) != 1 || paths[0] != "/sessions" {
+			t.Errorf("%d: requests %q, want /sessions only", code, paths)
+		}
+		mu.Unlock()
 	}
 }

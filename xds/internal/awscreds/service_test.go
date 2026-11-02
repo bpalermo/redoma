@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -148,6 +149,14 @@ func wantReason(t *testing.T, w *httptest.ResponseRecorder, status int, reason s
 	if w.Code != status || w.Header().Get(HeaderReason) != reason {
 		t.Errorf("%d %s=%q (%s), want %d %q", w.Code, HeaderReason, w.Header().Get(HeaderReason), w.Body.String(), status, reason)
 	}
+	// The body is what the SDKs read an endpoint's error from.
+	var body struct{ Code, Message string }
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.Code != reason || body.Message == "" {
+		t.Errorf("body %q, want {code: %q, message}", w.Body.String(), reason)
+	}
+	if w.Header().Get("Content-Type") != "application/json" {
+		t.Errorf("Content-Type %q", w.Header().Get("Content-Type"))
+	}
 }
 
 // TestPrewarmThenServeFromMemory: the SVID's arrival asks for a session at
@@ -232,6 +241,7 @@ func TestSetAgainDoesNotAsk(t *testing.T) {
 func TestRefreshBeforeExpiry(t *testing.T) {
 	sess := newSessions(DefaultRefreshBefore + 200*time.Millisecond)
 	s := newService(t, sess)
+	s.RefreshMin = 10 * time.Millisecond
 	chain, key := svid(t)
 	s.Set("a", testProfile(role), nil, chain, key)
 	waitCalls(t, sess, 1)
@@ -451,6 +461,7 @@ func TestSocket(t *testing.T) {
 func TestRemoveStopsTheRefresh(t *testing.T) {
 	sess := newSessions(DefaultRefreshBefore + 100*time.Millisecond)
 	s := newService(t, sess)
+	s.RefreshMin = 10 * time.Millisecond
 	chain, key := svid(t)
 	s.Set("a", testProfile(role), nil, chain, key)
 	waitCalls(t, sess, 1)
@@ -478,5 +489,141 @@ func TestWithRolesAnywhere(t *testing.T) {
 	}
 	if len(f.Chain()) != 1 {
 		t.Errorf("X-Amz-X509-Chain carried %d certificates, want the intermediate", len(f.Chain()))
+	}
+}
+
+// TestShortSessionNoLoop: a session shorter than RefreshBefore is not asked
+// for again in a loop: the next one waits half of what is left, and at
+// least RefreshMin.
+func TestShortSessionNoLoop(t *testing.T) {
+	for _, life := range []time.Duration{3 * time.Minute, 30 * time.Second, time.Second, -time.Minute} {
+		sess := newSessions(life)
+		s := newService(t, sess)
+		chain, key := svid(t)
+		s.Set("a", testProfile(role), nil, chain, key)
+		waitCalls(t, sess, 1)
+		waitFetched(t, s, "a")
+		time.Sleep(300 * time.Millisecond)
+		if n := sess.count(); n != 1 {
+			t.Errorf("a session of %s: %d requests in 300ms, want 1", life, n)
+		}
+	}
+}
+
+// TestExpiredNeverServed: a session with less than a minute left, or none,
+// is never handed out.
+func TestExpiredNeverServed(t *testing.T) {
+	for _, life := range []time.Duration{30 * time.Second, -time.Minute} {
+		sess := newSessions(life)
+		s := newService(t, sess)
+		s.RequestWait = 200 * time.Millisecond
+		chain, key := svid(t)
+		s.Set("a", testProfile(role), nil, chain, key)
+		waitCalls(t, sess, 1)
+		waitFetched(t, s, "a")
+		if w := get(t, s, "a", http.MethodGet, CredentialsPath); w.Code == http.StatusOK {
+			t.Errorf("a session of %s served: %s", life, w.Body.String())
+		}
+	}
+}
+
+// TestFailedRefreshKeepsServing: a refresh that fails leaves the session in
+// memory, which is served until its end.
+func TestFailedRefreshKeepsServing(t *testing.T) {
+	sess := newSessions(DefaultRefreshBefore + 200*time.Millisecond)
+	s := newService(t, sess)
+	s.RefreshMin = 10 * time.Millisecond
+	chain, key := svid(t)
+	s.Set("a", testProfile(role), nil, chain, key)
+	waitCalls(t, sess, 1)
+	waitFetched(t, s, "a")
+	sess.setNext(func() (rolesanywhere.Credentials, error) {
+		return rolesanywhere.Credentials{}, errors.New("dial unix: connection refused")
+	})
+	waitCalls(t, sess, 2)
+	waitFetched(t, s, "a")
+	if w := get(t, s, "a", http.MethodGet, CredentialsPath); w.Code != http.StatusOK {
+		t.Errorf("after a failed refresh: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// TestProfileChangeWhileAsking: a profile set while a session request is in
+// flight asks for the new profile's session as soon as that one returns,
+// without waiting for a request.
+func TestProfileChangeWhileAsking(t *testing.T) {
+	sess := newSessions(time.Hour)
+	hold := make(chan struct{})
+	sess.setHold(hold)
+	s := newService(t, sess)
+	chain, key := svid(t)
+	s.Set("a", testProfile(role), nil, chain, key)
+	waitCalls(t, sess, 1)
+	s.Set("a", testProfile(other), nil, chain, key)
+	sess.setHold(nil)
+	close(hold)
+	waitCalls(t, sess, 2)
+	waitFetched(t, s, "a")
+	sess.mu.Lock()
+	roles := sess.roles
+	sess.mu.Unlock()
+	if len(roles) != 2 || roles[1] != other {
+		t.Errorf("roles asked for %q", roles)
+	}
+	if w := get(t, s, "a", http.MethodGet, CredentialsPath); w.Code != http.StatusOK {
+		t.Errorf("%d %s", w.Code, w.Body.String())
+	}
+}
+
+// TestFirstRetryIsPrompt: a first request that fails (a tunnel Envoy has
+// not bound yet) is retried within moments, not seconds later.
+func TestFirstRetryIsPrompt(t *testing.T) {
+	sess := newSessions(time.Hour)
+	failed := false
+	sess.setNext(func() (rolesanywhere.Credentials, error) {
+		if !failed {
+			failed = true
+			return rolesanywhere.Credentials{}, errors.New("dial unix: no such file or directory")
+		}
+		return rolesanywhere.Credentials{AccessKeyID: "ASIAEXAMPLE", SecretAccessKey: "secret", SessionToken: "token", Expiration: time.Now().Add(time.Hour)}, nil
+	})
+	s := newService(t, sess)
+	chain, key := svid(t)
+	start := time.Now()
+	s.Set("a", testProfile(role), nil, chain, key)
+	waitCalls(t, sess, 2)
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("retried after %s", d)
+	}
+}
+
+// TestSocketRetried: a socket that could not be opened is tried again.
+func TestSocketRetried(t *testing.T) {
+	s := newService(t, newSessions(time.Hour))
+	probe, err := net.Listen("unix", s.Socket("probe"))
+	if err != nil {
+		sockettest.SkipIfRefused(t, err)
+		t.Fatal(err)
+	}
+	probe.Close()
+	s.ListenRetry = 20 * time.Millisecond
+	// A directory that is not empty where the socket goes: it cannot be
+	// replaced until it is gone.
+	blocker := s.Socket("a")
+	if err := os.MkdirAll(filepath.Join(blocker, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chain, key := svid(t)
+	s.Set("a", testProfile(role), nil, chain, key)
+	time.Sleep(100 * time.Millisecond)
+	if err := os.RemoveAll(blocker); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if fi, err := os.Stat(blocker); err == nil && fi.Mode()&os.ModeSocket != 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the socket was not opened again")
+		}
 	}
 }

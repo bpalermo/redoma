@@ -65,6 +65,16 @@ const (
 	ReasonAgentBusy = "agent_busy"
 )
 
+// messages explain the reasons, in the error body.
+var messages = map[string]string{
+	ReasonConfigInvalid:  "the agent's AWS settings do not read or validate",
+	ReasonNoSVID:         "the agent has no SVID yet",
+	ReasonSessionPending: "a session is being asked for; retry",
+	ReasonSessionRefused: "IAM Roles Anywhere refused the agent's SVID for this trust anchor, profile and role",
+	ReasonUnavailable:    "IAM Roles Anywhere did not answer",
+	ReasonAgentBusy:      "too many requests in flight for this agent",
+}
+
 // Defaults of Service.
 const (
 	DefaultPerAgentLimit = 8
@@ -76,9 +86,17 @@ const (
 	// it would have to replace at once.
 	minRemaining = time.Minute
 	// A failed session request is retried after retryMin, doubling up to
-	// retryMax.
-	retryMin = 5 * time.Second
+	// retryMax. The first retry is prompt: the usual first failure is a
+	// tunnel Envoy has not bound yet, which it does within moments.
+	retryMin = time.Second
 	retryMax = time.Minute
+	// DefaultRefreshMin is the least a refresh is scheduled after a session
+	// came: one shorter than RefreshBefore (a short session_duration, a
+	// clock ahead) must not be asked for again in a loop.
+	DefaultRefreshMin = 5 * time.Second
+	// DefaultListenRetry is how long after a socket failed to open it is
+	// tried again.
+	DefaultListenRetry = 5 * time.Second
 )
 
 // Sessions asks for sessions (rolesanywhere.Client).
@@ -99,6 +117,8 @@ type Service struct {
 	RefreshBefore time.Duration
 	RequestWait   time.Duration
 	CallTimeout   time.Duration
+	ListenRetry   time.Duration
+	RefreshMin    time.Duration
 	Now           func() time.Time
 
 	mu     sync.Mutex
@@ -164,6 +184,12 @@ func (s *Service) Start() error {
 	}
 	if s.CallTimeout <= 0 {
 		s.CallTimeout = DefaultCallTimeout
+	}
+	if s.ListenRetry <= 0 {
+		s.ListenRetry = DefaultListenRetry
+	}
+	if s.RefreshMin <= 0 {
+		s.RefreshMin = DefaultRefreshMin
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -275,17 +301,32 @@ func (s *Service) Agents() []string {
 	return slices.Sorted(maps.Keys(s.agents))
 }
 
-// open makes agent id's state and opens its socket. A socket that cannot be
-// opened is logged; Envoy's requests then fail, and the agent's SDK
-// retries. Called with s.mu held.
+// open makes agent id's state and opens its socket. Called with s.mu held.
 func (s *Service) open(id string) *state {
 	ctx, cancel := context.WithCancel(s.ctx)
 	st := &state{id: id, ctx: ctx, cancel: cancel, slots: make(chan struct{}, s.PerAgentLimit)}
 	s.agents[id] = st
+	s.serve(st)
+	return st
+}
+
+// serve opens the agent's socket and serves it. A socket that cannot be
+// opened is logged and tried again after ListenRetry, for as long as the
+// agent is there; meanwhile Envoy's requests fail and the agent's SDK
+// retries. Called with s.mu held.
+func (s *Service) serve(st *state) {
+	id, ctx := st.id, st.ctx
 	l, err := listen(s.Socket(id))
 	if err != nil {
-		s.Log.Error("the agent's AWS credentials socket", "agent", id, "err", err)
-		return st
+		s.Log.Error("the agent's AWS credentials socket; trying again", "agent", id, "err", err, "retry_in", s.ListenRetry)
+		time.AfterFunc(s.ListenRetry, func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.agents[id] == st && ctx.Err() == nil && st.srv == nil {
+				s.serve(st)
+			}
+		})
+		return
 	}
 	st.srv = &http.Server{
 		Handler:           s.handler(st),
@@ -299,7 +340,6 @@ func (s *Service) open(id string) *state {
 		}
 	}()
 	s.Log.Info("AWS credentials socket", "agent", id, "socket", s.Socket(id))
-	return st
 }
 
 func (s *Service) close(st *state) {
@@ -352,7 +392,15 @@ func (s *Service) startFetch(st *state) {
 		if st.fetch == f {
 			st.fetch = nil
 		}
-		if s.agents[st.id] != st || st.gen != gen {
+		if s.agents[st.id] != st {
+			return
+		}
+		if st.gen != gen {
+			// The profile changed while this was in flight: what it brought
+			// is another role's. Ask for the new profile's session now.
+			if s.due(st) {
+				s.startFetch(st)
+			}
 			return
 		}
 		if err != nil {
@@ -364,8 +412,18 @@ func (s *Service) startFetch(st *state) {
 		}
 		st.creds, st.failures, st.lastErr = &creds, 0, nil
 		s.Log.Info("AWS session", "agent", st.id, "role", profile.RoleARN, "expires", creds.Expiration, "latency", s.Now().Sub(start))
-		s.schedule(st, creds.Expiration.Sub(s.Now())-s.RefreshBefore)
+		s.schedule(st, refreshIn(creds.Expiration.Sub(s.Now()), s.RefreshBefore, s.RefreshMin))
 	}()
+}
+
+// refreshIn is when to ask for the next session, with left of this one:
+// before its end, or halfway through what is left when that is no more
+// than before; never sooner than floor.
+func refreshIn(left, before, floor time.Duration) time.Duration {
+	if left > before {
+		return max(left-before, floor)
+	}
+	return max(left/2, floor)
 }
 
 // schedule asks for a session again after wait. Called with s.mu held.
@@ -413,9 +471,17 @@ func (s *Service) handler(st *state) http.Handler {
 	})
 }
 
+// refuse answers status, the reason in HeaderReason and in a JSON body of
+// the shape the AWS SDKs read an endpoint's error from, {"code","message"}.
 func (s *Service) refuse(w http.ResponseWriter, st *state, status int, reason string) {
 	w.Header().Set(HeaderReason, reason)
-	http.Error(w, reason, status)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}{reason, messages[reason]})
 	s.Log.Warn("AWS credentials refused", "agent", st.id, "status", status, "reason", reason)
 }
 
