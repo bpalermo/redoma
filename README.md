@@ -162,10 +162,49 @@ redoma:
   must be owned by root and writable by no one else; otherwise no name is
   allowed.
 - `egress/_default.txt` and `egress/<name>.txt`: the hosts an agent's
-  egress proxy opens tunnels to (port 443), one host name per line, `#`
-  comments; every agent gets the defaults, then its own.
+  egress proxy opens tunnels to (port 443), one host name or suffix
+  wildcard per line, `#` comments; every agent gets the defaults, then its
+  own (see "Egress allowlists").
 - `secrets/anthropic-key.yaml`: the model API key, an SDS file Envoy reads
   (`examples/anthropic-key.yaml`); readable by Envoy's user alone.
+
+### Egress allowlists
+
+An agent's egress proxy answers HTTP CONNECT to port 443 of the hosts its
+allowlists name, and a 403 to anything else. A line is either:
+
+- a host name, `github.com`: that host alone, not its subdomains;
+- a suffix wildcard, `*.githubusercontent.com`: every name one label or more
+  below the domain (`raw.githubusercontent.com`,
+  `a.b.githubusercontent.com`), but not the domain itself; list it on a
+  line of its own when the agent needs it.
+
+```
+# /etc/redoma/egress/<name>.txt
+github.com
+codeload.github.com
+*.githubusercontent.com
+```
+
+Lines are lower case, with no port, scheme or trailing dot. Only a leading
+`*.` is a wildcard, and the domain after it needs two labels or more:
+`*`, `*.com`, `*example.com` and `a.*.example.com` are refused. A line
+that is not valid, in either file, fails the agent's whole list: it may
+tunnel nowhere until the file is fixed, and `redoma xds` logs why. A
+request matches case-insensitively, port 443 only; a trailing dot in it
+matches nothing.
+
+Prefer exact hosts. A wildcard lets the agent pick any name below the
+domain, so it reaches everything anyone serves there: a wildcard over a
+shared service domain, such as a cloud provider's storage endpoints for a
+whole region, lets the agent reach other people's buckets too, including
+one it can write to and exfiltrate through. redoma refuses one-label
+domains but does not know which domains are public suffixes (`co.uk`, a
+hosting provider's shared domain): that judgment is the administrator's.
+Envoy's resolver may also append the host's DNS search domains to a name
+that does not resolve, so a wildcard can reach names under those domains:
+run Envoy where `/etc/resolv.conf` has no `search` line, or keep to exact
+hosts.
 
 ### SPIRE
 

@@ -4,6 +4,25 @@ Changes that a host running redoma must act on, newest first. Until 1.0, a
 release may break what an earlier one set up; each such change is listed
 here with what to do about it.
 
+## Unreleased
+
+### New: suffix wildcards in the egress allowlists
+
+A line of `/etc/redoma/egress/_default.txt` or `<name>.txt` may now be a
+suffix wildcard, `*.example.com`: every name one label or more below
+example.com, on port 443, not example.com itself (README.md, "Egress
+allowlists"). Exact host names behave as before. Only a leading `*.` over
+a domain of two labels or more is a wildcard; any other `*`, like any
+other bad line, fails the agent's whole list.
+
+Nothing to do for allowlists without one. Before adding one, weigh the
+risk: the agent may pick any name below the domain, so a wildcard over a
+shared service domain (a cloud provider's storage endpoints for a region,
+a hosting provider's shared domain) lets it reach anyone's resources
+there, including ones it can exfiltrate to. Prefer exact hosts. And run
+Envoy where `/etc/resolv.conf` has no `search` line: Envoy's resolver may
+append the search domains to a name that does not resolve.
+
 ## 0.2.0
 
 The release is tagged v0.2.0, its candidates v0.2.0-rc.<n> from

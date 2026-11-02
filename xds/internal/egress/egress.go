@@ -1,8 +1,16 @@
 // Package egress reads an agent's egress allowlist: <etc>/egress/<repo>.txt,
-// one host name per line, `#` starting a comment, after the defaults every
-// agent gets, <etc>/egress/_default.txt, in the same format. The hosts are
-// the ones the agent's CONNECT listener opens tunnels to, on port 443. The
-// host's administrator writes the files; this package only reads them.
+// one host name or suffix wildcard per line, `#` starting a comment, after
+// the defaults every agent gets, <etc>/egress/_default.txt, in the same
+// format. The hosts are the ones the agent's CONNECT listener opens tunnels
+// to, on port 443. The host's administrator writes the files; this package
+// only reads them.
+//
+// A suffix wildcard, `*.example.com`, allows every name one label or more
+// below example.com (a.example.com, a.b.example.com), not example.com
+// itself. Only a leading `*.` is a wildcard, and the domain after it must be
+// well formed and have two labels or more, so `*.com` is refused. Whether
+// that domain is a public suffix (co.uk, a cloud provider's shared domains)
+// is not checked: that is the administrator's to judge.
 package egress
 
 import (
@@ -23,19 +31,50 @@ import (
 const Default = "_default"
 
 // hostName is what a host name may be: lower-case labels and a TLD of two
-// letters or more. Anything else (a port, a wildcard, a URL) is refused.
+// letters or more. Anything else (a port, a URL) is refused; a line with a
+// "*" is a wildcard's to judge (isWildcard).
 var hostName = regexp.MustCompile(`^[a-z0-9.-]+\.[a-z]{2,}$`)
+
+// label is one label of a wildcard's domain: lower-case letters, digits and
+// inner hyphens, 63 bytes at most; tld is its last label.
+var (
+	label = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+	tld   = regexp.MustCompile(`^[a-z]{2,63}$`)
+)
+
+// wildcardHint is what a line with a "*" that is no wildcard is told.
+const wildcardHint = `a wildcard is "*." before a domain of two labels or more, such as *.example.com`
+
+// isWildcard reports whether h is a suffix wildcard: "*." then a domain of
+// two labels or more, each a well-formed label, the last a top-level
+// domain's.
+func isWildcard(h string) bool {
+	domain, ok := strings.CutPrefix(h, "*.")
+	if !ok || len(domain) > 253 {
+		return false
+	}
+	labels := strings.Split(domain, ".")
+	if len(labels) < 2 || !tld.MatchString(labels[len(labels)-1]) {
+		return false
+	}
+	for _, l := range labels {
+		if !label.MatchString(l) {
+			return false
+		}
+	}
+	return true
+}
 
 // Path is the allowlist of repo under etcDir.
 func Path(etcDir, repo string) string {
 	return filepath.Join(etcDir, "egress", repo+".txt")
 }
 
-// Hosts returns repo's allowed hosts: the defaults' in file order, then
-// repo's own in file order, each host once. A missing file adds no hosts:
-// with neither, the agent may tunnel nowhere. A line that is not a host
-// name, in either file, fails the whole list, so a typo never widens or
-// silently narrows it.
+// Hosts returns repo's allowed host names and wildcards: the defaults' in
+// file order, then repo's own in file order, each once. A missing file adds
+// none: with neither, the agent may tunnel nowhere. A line that is neither a
+// host name nor a wildcard, in either file, fails the whole list, so a typo
+// never widens or silently narrows it.
 func Hosts(etcDir, repo string) ([]string, error) {
 	if repo == Default {
 		return nil, fmt.Errorf("%q names the defaults' file, not an agent", repo)
@@ -57,7 +96,8 @@ func Hosts(etcDir, repo string) ([]string, error) {
 	return hosts, nil
 }
 
-// read returns one file's host names in file order; a missing file has none.
+// read returns one file's host names and wildcards in file order; a missing
+// file has none.
 func read(path string) ([]string, error) {
 	f, err := os.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -76,7 +116,12 @@ func read(path string) ([]string, error) {
 		if h == "" {
 			continue
 		}
-		if !hostName.MatchString(h) {
+		switch {
+		case strings.Contains(h, "*"):
+			if !isWildcard(h) {
+				return nil, fmt.Errorf("%s: %q: %s", path, h, wildcardHint)
+			}
+		case !hostName.MatchString(h):
 			return nil, fmt.Errorf("%s: not a host name: %q", path, h)
 		}
 		hosts = append(hosts, h)
