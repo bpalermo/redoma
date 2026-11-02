@@ -14,6 +14,13 @@ the server in a container of its own holding its own credential
 (docs/mcp-upstreams.md; README.md, "MCP upstreams"). Nothing changes on a
 host without `/etc/redoma/mcp`.
 
+- New: the tool check (`tool_check = refuse | warn | off` in an
+  upstream's `.conf`, `refuse` by default). `redoma xds` asks each
+  registered upstream for its tools through the host Envoy, on a unix
+  socket in `--mcp-check-dir` (`/run/redoma/xds/mcp-check`, made 0770), and
+  under `refuse` publishes nothing of an upstream until it has answered;
+  a tool a file names that the server does not list invalidates that file.
+  Tools the server lists and no file names are logged.
 - New: `/etc/redoma/mcp/<name>.conf` and per-agent allowlists
   `/etc/redoma/mcp/<name>/<agent>.conf`; `redoma mcp-upstream`; the units
   `redoma-mcp@.service`, `redoma-mcp-token@.path` and

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -103,6 +105,42 @@ func (d Dir) ReadAllowlist(upstream, agent string) (*Allowlist, error) {
 		return nil, err
 	}
 	return &Allowlist{Sets: slices.Concat(defaults, own)}, nil
+}
+
+// ReadDefaults returns upstream's defaults' allowlist, _default.conf alone:
+// nil and no error without the file.
+func (d Dir) ReadDefaults(upstream string) (*Allowlist, error) {
+	if !ValidUpstream(upstream) {
+		return nil, fmt.Errorf("%q is not an upstream name", upstream)
+	}
+	sets, err := d.readSets(d.AllowlistPath(upstream, Default))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &Allowlist{Sets: sets}, nil
+}
+
+// Agents returns the name of every agent with an allowlist file for
+// upstream, <etc>/mcp/<upstream>/<agent>.conf, sorted; not the defaults',
+// nor a name that is not an agent's. Without the directory, none.
+func (d Dir) Agents(upstream string) ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(d.Etc, "mcp", upstream))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if name, ok := strings.CutSuffix(e.Name(), ".conf"); ok && !e.IsDir() && allowlist.ValidName(name) {
+			names = append(names, name)
+		}
+	}
+	return names, nil
 }
 
 // setBuilder is a set being read: its tools in file order, the line of

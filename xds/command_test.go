@@ -223,3 +223,20 @@ func TestAWSCredentials(t *testing.T) {
 		}
 	}
 }
+
+// TestGroupDir: the check sockets' directory is made 0770, and an existing
+// one more open is tightened.
+func TestGroupDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "mcp-check")
+	for range 2 {
+		if err := groupDir(dir); err != nil {
+			t.Fatal(err)
+		}
+		if fi, err := os.Stat(dir); err != nil || fi.Mode().Perm() != 0o770 {
+			t.Errorf("%v, %v; want 0770", fi.Mode(), err)
+		}
+		if err := os.Chmod(dir, 0o777); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
