@@ -1,0 +1,837 @@
+{"resources": [{
+ "@type": "type.googleapis.com/envoy.config.listener.v3.Listener",
+ "name": "agent_a_mcp",
+ "address": {
+  "socket_address": {
+   "address": "127.0.0.1",
+   "port_value": 8081,
+   "network_namespace_filepath": "/run/netns/redoma-a"
+  }
+ },
+ "filter_chains": [
+  {
+   "filters": [
+    {
+     "name": "envoy.filters.network.http_connection_manager",
+     "typed_config": {
+      "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+      "stat_prefix": "agent_a_mcp",
+      "route_config": {
+       "virtual_hosts": [
+        {
+         "name": "mcp",
+         "domains": [
+          "*"
+         ],
+         "routes": [
+          {
+           "match": {
+            "path": "/mcp/docs",
+            "dynamic_metadata": [
+             {
+              "filter": "envoy.filters.http.mcp",
+              "path": [
+               {
+                "key": "method"
+               }
+              ],
+              "value": {
+               "string_match": {
+                "exact": "tools/call"
+               }
+              }
+             },
+             {
+              "filter": "envoy.filters.http.mcp",
+              "path": [
+               {
+                "key": "params"
+               },
+               {
+                "key": "name"
+               }
+              ],
+              "value": {
+               "string_match": {
+                "exact": "publish"
+               }
+              }
+             }
+            ]
+           },
+           "route": {
+            "cluster": "mcp_docs-writer",
+            "prefix_rewrite": "/rpc",
+            "host_rewrite_literal": "127.0.0.1:8083",
+            "timeout": "0s"
+           }
+          },
+          {
+           "match": {
+            "path": "/mcp/docs",
+            "dynamic_metadata": [
+             {
+              "filter": "envoy.filters.http.mcp",
+              "path": [
+               {
+                "key": "method"
+               }
+              ],
+              "value": {
+               "string_match": {
+                "exact": "tools/call"
+               }
+              }
+             },
+             {
+              "filter": "envoy.filters.http.mcp",
+              "path": [
+               {
+                "key": "params"
+               },
+               {
+                "key": "name"
+               }
+              ],
+              "value": {
+               "string_match": {
+                "exact": "delete_page"
+               }
+              }
+             }
+            ]
+           },
+           "direct_response": {
+            "status": 503,
+            "body": {
+             "inline_string": "upstream docs-admin is not available\n"
+            }
+           }
+          },
+          {
+           "match": {
+            "path": "/mcp/docs"
+           },
+           "route": {
+            "cluster": "mcp_docs",
+            "prefix_rewrite": "/",
+            "host_rewrite_literal": "127.0.0.1:8082",
+            "timeout": "0s"
+           },
+           "request_headers_to_add": [
+            {
+             "header": {
+              "key": "x-mcp-tools",
+              "value": "publish,read_page"
+             },
+             "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
+            }
+           ]
+          },
+          {
+           "match": {
+            "path": "/mcp/grafana"
+           },
+           "route": {
+            "cluster": "mcp_grafana",
+            "prefix_rewrite": "/mcp",
+            "host_rewrite_literal": "127.0.0.1:8000",
+            "timeout": "0s"
+           }
+          },
+          {
+           "match": {
+            "prefix": "/"
+           },
+           "direct_response": {
+            "status": 404
+           }
+          }
+         ]
+        }
+       ]
+      },
+      "http_filters": [
+       {
+        "name": "envoy.filters.http.header_mutation",
+        "typed_config": {
+         "@type": "type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation",
+         "mutations": {
+          "request_mutations": [
+           {
+            "remove_on_match": {
+             "key_matcher": {
+              "prefix": "x-grafana-",
+              "ignore_case": true
+             }
+            }
+           },
+           {
+            "remove_on_match": {
+             "key_matcher": {
+              "prefix": "x-mcp-",
+              "ignore_case": true
+             }
+            }
+           },
+           {
+            "remove": "authorization"
+           },
+           {
+            "remove": "x-forwarded-user"
+           }
+          ]
+         }
+        }
+       },
+       {
+        "name": "envoy.filters.http.mcp",
+        "typed_config": {
+         "@type": "type.googleapis.com/envoy.extensions.filters.http.mcp.v3.Mcp",
+         "traffic_mode": "REJECT_NO_MCP",
+         "clear_route_cache": true,
+         "max_request_body_size": 2097152,
+         "parser_config": {
+          "methods": [
+           {
+            "method": "tools/call",
+            "extraction_rules": [
+             {
+              "path": "params.name"
+             },
+             {
+              "path": "params.arguments.datasourceUid"
+             },
+             {
+              "path": "params.arguments.logql"
+             },
+             {
+              "path": "params.arguments.space"
+             }
+            ]
+           }
+          ]
+         },
+         "reject_duplicate_keys": true
+        }
+       },
+       {
+        "name": "envoy.filters.http.rbac",
+        "typed_config": {
+         "@type": "type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC",
+         "rules": {
+          "policies": {
+           "allowlist": {
+            "permissions": [
+             {
+              "and_rules": {
+               "rules": [
+                {
+                 "url_path": {
+                  "path": {
+                   "exact": "/mcp/docs"
+                  }
+                 }
+                },
+                {
+                 "or_rules": {
+                  "rules": [
+                   {
+                    "or_rules": {
+                     "rules": [
+                      {
+                       "header": {
+                        "name": ":method",
+                        "string_match": {
+                         "exact": "GET"
+                        }
+                       }
+                      },
+                      {
+                       "header": {
+                        "name": ":method",
+                        "string_match": {
+                         "exact": "DELETE"
+                        }
+                       }
+                      }
+                     ]
+                    }
+                   },
+                   {
+                    "sourced_metadata": {
+                     "metadata_matcher": {
+                      "filter": "envoy.filters.http.mcp",
+                      "path": [
+                       {
+                        "key": "method"
+                       }
+                      ],
+                      "value": {
+                       "string_match": {
+                        "exact": "initialize"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "sourced_metadata": {
+                     "metadata_matcher": {
+                      "filter": "envoy.filters.http.mcp",
+                      "path": [
+                       {
+                        "key": "method"
+                       }
+                      ],
+                      "value": {
+                       "string_match": {
+                        "exact": "notifications/cancelled"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "sourced_metadata": {
+                     "metadata_matcher": {
+                      "filter": "envoy.filters.http.mcp",
+                      "path": [
+                       {
+                        "key": "method"
+                       }
+                      ],
+                      "value": {
+                       "string_match": {
+                        "exact": "notifications/initialized"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "sourced_metadata": {
+                     "metadata_matcher": {
+                      "filter": "envoy.filters.http.mcp",
+                      "path": [
+                       {
+                        "key": "method"
+                       }
+                      ],
+                      "value": {
+                       "string_match": {
+                        "exact": "ping"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "sourced_metadata": {
+                     "metadata_matcher": {
+                      "filter": "envoy.filters.http.mcp",
+                      "path": [
+                       {
+                        "key": "method"
+                       }
+                      ],
+                      "value": {
+                       "string_match": {
+                        "exact": "tools/list"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "and_rules": {
+                     "rules": [
+                      {
+                       "sourced_metadata": {
+                        "metadata_matcher": {
+                         "filter": "envoy.filters.http.mcp",
+                         "path": [
+                          {
+                           "key": "method"
+                          }
+                         ],
+                         "value": {
+                          "string_match": {
+                           "exact": "tools/call"
+                          }
+                         }
+                        }
+                       }
+                      },
+                      {
+                       "sourced_metadata": {
+                        "metadata_matcher": {
+                         "filter": "envoy.filters.http.mcp",
+                         "path": [
+                          {
+                           "key": "params"
+                          },
+                          {
+                           "key": "name"
+                          }
+                         ],
+                         "value": {
+                          "string_match": {
+                           "exact": "read_page"
+                          }
+                         }
+                        }
+                       }
+                      }
+                     ]
+                    }
+                   },
+                   {
+                    "and_rules": {
+                     "rules": [
+                      {
+                       "sourced_metadata": {
+                        "metadata_matcher": {
+                         "filter": "envoy.filters.http.mcp",
+                         "path": [
+                          {
+                           "key": "method"
+                          }
+                         ],
+                         "value": {
+                          "string_match": {
+                           "exact": "tools/call"
+                          }
+                         }
+                        }
+                       }
+                      },
+                      {
+                       "sourced_metadata": {
+                        "metadata_matcher": {
+                         "filter": "envoy.filters.http.mcp",
+                         "path": [
+                          {
+                           "key": "params"
+                          },
+                          {
+                           "key": "name"
+                          }
+                         ],
+                         "value": {
+                          "string_match": {
+                           "exact": "publish"
+                          }
+                         }
+                        }
+                       }
+                      },
+                      {
+                       "sourced_metadata": {
+                        "metadata_matcher": {
+                         "filter": "envoy.filters.http.mcp",
+                         "path": [
+                          {
+                           "key": "params"
+                          },
+                          {
+                           "key": "arguments"
+                          },
+                          {
+                           "key": "space"
+                          }
+                         ],
+                         "value": {
+                          "string_match": {
+                           "prefix": "agents/"
+                          }
+                         }
+                        }
+                       }
+                      }
+                     ]
+                    }
+                   }
+                  ]
+                 }
+                }
+               ]
+              }
+             },
+             {
+              "and_rules": {
+               "rules": [
+                {
+                 "url_path": {
+                  "path": {
+                   "exact": "/mcp/grafana"
+                  }
+                 }
+                },
+                {
+                 "or_rules": {
+                  "rules": [
+                   {
+                    "or_rules": {
+                     "rules": [
+                      {
+                       "header": {
+                        "name": ":method",
+                        "string_match": {
+                         "exact": "GET"
+                        }
+                       }
+                      },
+                      {
+                       "header": {
+                        "name": ":method",
+                        "string_match": {
+                         "exact": "DELETE"
+                        }
+                       }
+                      }
+                     ]
+                    }
+                   },
+                   {
+                    "sourced_metadata": {
+                     "metadata_matcher": {
+                      "filter": "envoy.filters.http.mcp",
+                      "path": [
+                       {
+                        "key": "method"
+                       }
+                      ],
+                      "value": {
+                       "string_match": {
+                        "exact": "initialize"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "sourced_metadata": {
+                     "metadata_matcher": {
+                      "filter": "envoy.filters.http.mcp",
+                      "path": [
+                       {
+                        "key": "method"
+                       }
+                      ],
+                      "value": {
+                       "string_match": {
+                        "exact": "notifications/cancelled"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "sourced_metadata": {
+                     "metadata_matcher": {
+                      "filter": "envoy.filters.http.mcp",
+                      "path": [
+                       {
+                        "key": "method"
+                       }
+                      ],
+                      "value": {
+                       "string_match": {
+                        "exact": "notifications/initialized"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "sourced_metadata": {
+                     "metadata_matcher": {
+                      "filter": "envoy.filters.http.mcp",
+                      "path": [
+                       {
+                        "key": "method"
+                       }
+                      ],
+                      "value": {
+                       "string_match": {
+                        "exact": "ping"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "sourced_metadata": {
+                     "metadata_matcher": {
+                      "filter": "envoy.filters.http.mcp",
+                      "path": [
+                       {
+                        "key": "method"
+                       }
+                      ],
+                      "value": {
+                       "string_match": {
+                        "exact": "tools/list"
+                       }
+                      }
+                     }
+                    }
+                   },
+                   {
+                    "and_rules": {
+                     "rules": [
+                      {
+                       "sourced_metadata": {
+                        "metadata_matcher": {
+                         "filter": "envoy.filters.http.mcp",
+                         "path": [
+                          {
+                           "key": "method"
+                          }
+                         ],
+                         "value": {
+                          "string_match": {
+                           "exact": "tools/call"
+                          }
+                         }
+                        }
+                       }
+                      },
+                      {
+                       "sourced_metadata": {
+                        "metadata_matcher": {
+                         "filter": "envoy.filters.http.mcp",
+                         "path": [
+                          {
+                           "key": "params"
+                          },
+                          {
+                           "key": "name"
+                          }
+                         ],
+                         "value": {
+                          "string_match": {
+                           "exact": "query_prometheus"
+                          }
+                         }
+                        }
+                       }
+                      },
+                      {
+                       "sourced_metadata": {
+                        "metadata_matcher": {
+                         "filter": "envoy.filters.http.mcp",
+                         "path": [
+                          {
+                           "key": "params"
+                          },
+                          {
+                           "key": "arguments"
+                          },
+                          {
+                           "key": "datasourceUid"
+                          }
+                         ],
+                         "value": {
+                          "string_match": {
+                           "exact": "prom-main"
+                          }
+                         }
+                        }
+                       }
+                      }
+                     ]
+                    }
+                   },
+                   {
+                    "and_rules": {
+                     "rules": [
+                      {
+                       "sourced_metadata": {
+                        "metadata_matcher": {
+                         "filter": "envoy.filters.http.mcp",
+                         "path": [
+                          {
+                           "key": "method"
+                          }
+                         ],
+                         "value": {
+                          "string_match": {
+                           "exact": "tools/call"
+                          }
+                         }
+                        }
+                       }
+                      },
+                      {
+                       "sourced_metadata": {
+                        "metadata_matcher": {
+                         "filter": "envoy.filters.http.mcp",
+                         "path": [
+                          {
+                           "key": "params"
+                          },
+                          {
+                           "key": "name"
+                          }
+                         ],
+                         "value": {
+                          "string_match": {
+                           "exact": "query_loki_logs"
+                          }
+                         }
+                        }
+                       }
+                      },
+                      {
+                       "sourced_metadata": {
+                        "metadata_matcher": {
+                         "filter": "envoy.filters.http.mcp",
+                         "path": [
+                          {
+                           "key": "params"
+                          },
+                          {
+                           "key": "arguments"
+                          },
+                          {
+                           "key": "datasourceUid"
+                          }
+                         ],
+                         "value": {
+                          "string_match": {
+                           "exact": "loki-main"
+                          }
+                         }
+                        }
+                       }
+                      },
+                      {
+                       "sourced_metadata": {
+                        "metadata_matcher": {
+                         "filter": "envoy.filters.http.mcp",
+                         "path": [
+                          {
+                           "key": "params"
+                          },
+                          {
+                           "key": "arguments"
+                          },
+                          {
+                           "key": "logql"
+                          }
+                         ],
+                         "value": {
+                          "string_match": {
+                           "prefix": "{app="
+                          }
+                         }
+                        }
+                       }
+                      }
+                     ]
+                    }
+                   },
+                   {
+                    "and_rules": {
+                     "rules": [
+                      {
+                       "sourced_metadata": {
+                        "metadata_matcher": {
+                         "filter": "envoy.filters.http.mcp",
+                         "path": [
+                          {
+                           "key": "method"
+                          }
+                         ],
+                         "value": {
+                          "string_match": {
+                           "exact": "tools/call"
+                          }
+                         }
+                        }
+                       }
+                      },
+                      {
+                       "sourced_metadata": {
+                        "metadata_matcher": {
+                         "filter": "envoy.filters.http.mcp",
+                         "path": [
+                          {
+                           "key": "params"
+                          },
+                          {
+                           "key": "name"
+                          }
+                         ],
+                         "value": {
+                          "string_match": {
+                           "exact": "search_dashboards"
+                          }
+                         }
+                        }
+                       }
+                      }
+                     ]
+                    }
+                   }
+                  ]
+                 }
+                }
+               ]
+              }
+             }
+            ],
+            "principals": [
+             {
+              "any": true
+             }
+            ]
+           }
+          }
+         }
+        }
+       },
+       {
+        "name": "envoy.filters.http.router",
+        "typed_config": {
+         "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"
+        }
+       }
+      ],
+      "stream_idle_timeout": "600s",
+      "access_log": [
+       {
+        "name": "envoy.access_loggers.stdout",
+        "typed_config": {
+         "@type": "type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog",
+         "log_format": {
+          "json_format": {
+           "agent": "a",
+           "authority": "%REQ(:AUTHORITY)%",
+           "bytes_in": "%BYTES_RECEIVED%",
+           "bytes_out": "%BYTES_SENT%",
+           "code": "%RESPONSE_CODE%",
+           "duration_ms": "%DURATION%",
+           "flags": "%RESPONSE_FLAGS%",
+           "listener": "mcp",
+           "mcp_method": "%DYNAMIC_METADATA(envoy.filters.http.mcp:method)%",
+           "mcp_tool": "%DYNAMIC_METADATA(envoy.filters.http.mcp:params:name)%",
+           "method": "%REQ(:METHOD)%",
+           "path": "%REQ(:PATH)%",
+           "start": "%START_TIME%"
+          }
+         }
+        }
+       }
+      ],
+      "normalize_path": true,
+      "merge_slashes": true,
+      "path_with_escaped_slashes_action": "REJECT_REQUEST"
+     }
+    }
+   ]
+  }
+ ]
+}]}

@@ -667,7 +667,7 @@ never widens access"; see "Who enables what").
 | `strip_header` (list) | exact request header names removed; `authorization` always is |
 | `agent_header.<Name>` | a header the route adds per agent; `{tools}` is the agent's tools, comma-separated |
 | `route_for.<tool>` | send `tools/call` of that tool to another upstream (an instance with its own credential) |
-| `max_request_bytes` | the MCP filter's body limit (default 1 MiB, at most 10 MiB) |
+| `max_request_bytes` | the MCP filter's body limit (default 1 MiB, at most 10 MiB); an agent's listener takes the largest of its upstreams', since a per-route override would replace the filter's whole configuration |
 
 ### `/etc/redoma/mcp/<upstream>/<agent>.conf`, an agent's allowlist
 

@@ -177,3 +177,23 @@ func TestTunnelClusterLeadsOnlyToTheEndpoint(t *testing.T) {
 		}
 	}
 }
+
+// TestMCPCluster: the upstream's server on its own namespace's loopback,
+// reached from a source address bound in that namespace.
+func TestMCPCluster(t *testing.T) {
+	c := MCPCluster("grafana", "/run/netns/redoma-mcp-abc", 8000)
+	if err := c.ValidateAll(); err != nil {
+		t.Fatal(err)
+	}
+	src := c.GetUpstreamBindConfig().GetSourceAddress()
+	if c.GetName() != "mcp_grafana" || src.GetNetworkNamespaceFilepath() != "/run/netns/redoma-mcp-abc" || src.GetAddress() != "127.0.0.1" {
+		t.Errorf("cluster %s, source %v", c.GetName(), src)
+	}
+	ep := c.GetLoadAssignment().GetEndpoints()[0].GetLbEndpoints()[0].GetEndpoint().GetAddress().GetSocketAddress()
+	if ep.GetAddress() != "127.0.0.1" || ep.GetPortValue() != 8000 || ep.GetNetworkNamespaceFilepath() != "" {
+		t.Errorf("endpoint %v", ep)
+	}
+	if c.GetType() != clusterv3.Cluster_STATIC || c.GetTransportSocket() != nil {
+		t.Errorf("type %v, transport socket %v: want STATIC, plain", c.GetType(), c.GetTransportSocket())
+	}
+}

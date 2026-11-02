@@ -18,6 +18,7 @@
 package lds
 
 import (
+	"maps"
 	"time"
 
 	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
@@ -106,12 +107,19 @@ func mustAny(m proto.Message) *anypb.Any {
 }
 
 func accessLog(repo, kind string) []*accesslogv3.AccessLog {
+	return accessLogFields(map[string]string{"agent": repo, "listener": kind})
+}
+
+// accessLogFields is a JSON access log of every request: the common fields,
+// and those given (who the listener is for, what it is).
+func accessLogFields(own map[string]string) []*accesslogv3.AccessLog {
 	fields := map[string]string{
-		"agent": repo, "listener": kind, "start": "%START_TIME%",
+		"start":  "%START_TIME%",
 		"method": "%REQ(:METHOD)%", "authority": "%REQ(:AUTHORITY)%", "path": "%REQ(:PATH)%",
 		"code": "%RESPONSE_CODE%", "flags": "%RESPONSE_FLAGS%", "duration_ms": "%DURATION%",
 		"bytes_in": "%BYTES_RECEIVED%", "bytes_out": "%BYTES_SENT%",
 	}
+	maps.Copy(fields, own)
 	format := &structpb.Struct{Fields: map[string]*structpb.Value{}}
 	for k, v := range fields {
 		format.Fields[k] = structpb.NewStringValue(v)
@@ -139,6 +147,11 @@ func hcm(repo, kind string, routes *routev3.RouteConfiguration, filters []*hcmv3
 		HttpFilters:    append(filters, httpFilter("envoy.filters.http.router", &routerv3.Router{})),
 	}
 	cfg.StreamIdleTimeout = idle
+	return hcmFilter(cfg)
+}
+
+// hcmFilter is cfg as a listener's network filter.
+func hcmFilter(cfg *hcmv3.HttpConnectionManager) *listenerv3.Filter {
 	return &listenerv3.Filter{
 		Name:       "envoy.filters.network.http_connection_manager",
 		ConfigType: &listenerv3.Filter_TypedConfig{TypedConfig: mustAny(cfg)},
@@ -237,6 +250,13 @@ func modelListener(netns, repo string, auth modelauth.Mode) *listenerv3.Listener
 }
 
 func egressListener(netns, repo string, hosts []string) *listenerv3.Listener {
+	name := ListenerName(repo, "egress")
+	return connectListener(name, netns, hosts, accessLog(repo, "egress"))
+}
+
+// connectListener is a CONNECT proxy on EgressPort in netns, named name,
+// tunnelling to port 443 of hosts and refusing everything else.
+func connectListener(name, netns string, hosts []string, log []*accesslogv3.AccessLog) *listenerv3.Listener {
 	var vhosts []*routev3.VirtualHost
 	if len(hosts) > 0 {
 		domains := make([]string, len(hosts))
@@ -273,10 +293,15 @@ func egressListener(netns, repo string, hosts []string) *listenerv3.Listener {
 		}),
 	}
 	return &listenerv3.Listener{
-		Name:    ListenerName(repo, "egress"),
+		Name:    name,
 		Address: address(netns, EgressPort),
 		FilterChains: []*listenerv3.FilterChain{{
-			Filters: []*listenerv3.Filter{hcm(repo, "egress", &routev3.RouteConfiguration{VirtualHosts: vhosts}, filters, nil)},
+			Filters: []*listenerv3.Filter{hcmFilter(&hcmv3.HttpConnectionManager{
+				StatPrefix:     name,
+				AccessLog:      log,
+				RouteSpecifier: &hcmv3.HttpConnectionManager_RouteConfig{RouteConfig: &routev3.RouteConfiguration{VirtualHosts: vhosts}},
+				HttpFilters:    append(filters, httpFilter("envoy.filters.http.router", &routerv3.Router{})),
+			})},
 		}},
 	}
 }
