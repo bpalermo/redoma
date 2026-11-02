@@ -57,6 +57,7 @@ import (
 	"github.com/bpalermo/redoma/xds/internal/activedir"
 	"github.com/bpalermo/redoma/xds/internal/agent"
 	"github.com/bpalermo/redoma/xds/internal/fdstore"
+	"github.com/bpalermo/redoma/xds/internal/mcpconf"
 )
 
 // Selectors are what a hook-registered agent's identity is subscribed by:
@@ -117,15 +118,22 @@ var _ agent.Source = (*Source)(nil)
 
 // registration is one container's claim, as recorded in StateFile.
 type registration struct {
-	Agent   string        `json:"agent"`
-	Netns   string        `json:"netns"`
-	NetnsID agent.NetnsID `json:"netns_id"`
+	// Agent is the name: an agent's, or an MCP upstream's when Upstream.
+	Agent    string        `json:"agent"`
+	Upstream bool          `json:"upstream,omitempty"`
+	Netns    string        `json:"netns"`
+	NetnsID  agent.NetnsID `json:"netns_id"`
 	// proc is the container's process, nil when the hook sent none or it
 	// was lost. Not recorded: Store keeps it.
 	proc *pidfd.FD
 }
 
 func (r registration) agent() agent.Agent {
+	if r.Upstream {
+		// No identity: an upstream's server authenticates no one, and only
+		// its egress listener is bound in its namespace.
+		return agent.Agent{ID: r.Agent, Netns: r.Netns, NetnsID: r.NetnsID, Upstream: true}
+	}
 	a := agent.Agent{ID: r.Agent, Netns: r.Netns, NetnsID: r.NetnsID, Selectors: Selectors(r.Agent)}
 	if r.proc != nil {
 		a.Process = r.proc
@@ -457,8 +465,11 @@ func (s *Source) register(ctx context.Context, req register.Request, file *os.Fi
 		file.Close()
 	}
 	if err != nil {
-		s.Log.Error("refused a hook registration", "container", req.Container, "agent", req.Agent, "err", err)
+		s.Log.Error("refused a hook registration", "container", req.Container, "agent", req.Agent, "upstream", req.Upstream, "err", err)
 		return err
+	}
+	if r.Upstream {
+		return s.registerUpstream(req.Container, r)
 	}
 	bound := make(chan error, 1)
 	if err := s.claim(req.Container, r, bound); err != nil {
@@ -489,6 +500,17 @@ func (s *Source) register(ctx context.Context, req register.Request, file *os.Fi
 	return err
 }
 
+// registerUpstream claims an MCP upstream's name for container. The
+// container already runs (the hook's poststart): there is no start to hold,
+// so nothing waits for Envoy.
+func (s *Source) registerUpstream(container string, r registration) error {
+	if err := s.claim(container, r, nil); err != nil {
+		return err
+	}
+	s.Log.Info("hook registration of an MCP upstream", "container", container, "upstream", r.Agent, "netns", r.Netns)
+	return nil
+}
+
 // process takes the pidfd a register came with: a pidfd, of a process
 // still alive.
 func process(file *os.File) (*pidfd.FD, error) {
@@ -505,6 +527,9 @@ func process(file *os.File) (*pidfd.FD, error) {
 
 // check validates a register request and reads the namespace's identity.
 func (s *Source) check(req register.Request) (registration, error) {
+	if req.Upstream != "" {
+		return s.checkUpstream(req)
+	}
 	if !activedir.ValidName(req.Agent) {
 		return registration{}, fmt.Errorf("not an agent name: %q", req.Agent)
 	}
@@ -525,8 +550,32 @@ func (s *Source) check(req register.Request) (registration, error) {
 	return registration{Agent: req.Agent, Netns: req.Netns, NetnsID: id}, nil
 }
 
+// checkUpstream validates the register of an MCP upstream's container. Its
+// name is in no allowlist: an upstream is no identity, and what it serves
+// is its configuration's, which redoma xds reads (mcpconf). It comes with
+// no pidfd.
+func (s *Source) checkUpstream(req register.Request) (registration, error) {
+	if req.Agent != "" {
+		return registration{}, fmt.Errorf("container %s claims both agent %q and upstream %q", req.Container, req.Agent, req.Upstream)
+	}
+	if req.Pidfd {
+		return registration{}, errors.New("an MCP upstream registers without a pidfd")
+	}
+	if !mcpconf.ValidUpstream(req.Upstream) {
+		return registration{}, fmt.Errorf("not an upstream name: %q", req.Upstream)
+	}
+	if want := register.UpstreamNetnsPath(s.NetnsDir, req.Container); req.Netns != want {
+		return registration{}, fmt.Errorf("the namespace of upstream container %s must be mounted at %s, not %q", req.Container, want, req.Netns)
+	}
+	id, err := s.Stat(req.Netns)
+	if err != nil {
+		return registration{}, fmt.Errorf("the container's namespace: %w", err)
+	}
+	return registration{Agent: req.Upstream, Upstream: true, Netns: req.Netns, NetnsID: id}, nil
+}
+
 // claim records r for container and starts it, unless another live
-// container holds the name.
+// container holds the name (an agent's and an upstream's names are apart).
 func (s *Source) claim(container string, r registration, bound chan<- error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -538,21 +587,29 @@ func (s *Source) claim(container string, r registration, bound chan<- error) err
 			// --network container:<other>, or a pod: not this container's alone.
 			return fmt.Errorf("the network namespace of container %s is container %s's (agent %q)", container, other, cur.Agent)
 		}
-		if cur.Agent != r.Agent {
+		if cur.Agent != r.Agent || cur.Upstream != r.Upstream {
 			continue
 		}
 		if s.live(cur) {
-			return fmt.Errorf("agent %q is registered by container %s", r.Agent, other)
+			return fmt.Errorf("%s %q is registered by container %s", kind(r), r.Agent, other)
 		}
 		s.drop(other)
 	}
-	if old, ok := s.regs[container]; ok && old.Agent != r.Agent {
+	if old, ok := s.regs[container]; ok && (old.Agent != r.Agent || old.Upstream != r.Upstream) {
 		// The same container under another name: that name goes.
 		s.drop(container)
 	}
 	s.put(container, r)
 	s.emit(agent.Event{Agent: r.agent(), Bound: bound})
 	return nil
+}
+
+// kind is what r registers, for messages.
+func kind(r registration) string {
+	if r.Upstream {
+		return "upstream"
+	}
+	return "agent"
 }
 
 // allowed reports whether name is a whole line of the allowlist, refusing

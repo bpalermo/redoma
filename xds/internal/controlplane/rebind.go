@@ -95,6 +95,10 @@ func (c *Controller) apply(ctx context.Context, e agent.Event) {
 		c.synced, c.dirty = true, true
 		return
 	}
+	if e.Agent.Upstream {
+		c.applyUpstream(e)
+		return
+	}
 	if _, ok := c.bound[e.Agent.ID]; ok {
 		c.failBound(e.Agent.ID, errors.New("the agent was stopped or replaced before Envoy bound its listeners"))
 	}

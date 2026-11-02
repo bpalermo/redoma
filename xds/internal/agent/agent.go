@@ -38,6 +38,23 @@ type Agent struct {
 	// it by: nil when its Source has none (a launcher's agent, or a
 	// registration whose pidfd was lost).
 	Process Process
+	// Upstream marks a host MCP upstream's container (docs/mcp-upstreams.md),
+	// not an agent: ID is the upstream's name, it has no identity and no
+	// selectors, and only its egress listener is bound in Netns. An upstream
+	// and an agent of the same name are two things (Key).
+	Upstream bool
+}
+
+// Key names what an Agent is among all a Source runs: its ID, in the
+// namespace of agents or in that of upstreams.
+type Key struct {
+	ID       string
+	Upstream bool
+}
+
+// Key is a's Key.
+func (a Agent) Key() Key {
+	return Key{ID: a.ID, Upstream: a.Upstream}
 }
 
 // Process is a process held by a pidfd (common/pidfd).
@@ -58,7 +75,7 @@ type NetnsID struct {
 // Equal reports whether a and b are the same agent in the same namespace
 // with the same selectors and the same process.
 func (a Agent) Equal(b Agent) bool {
-	return a.ID == b.ID && a.Netns == b.Netns && a.NetnsID == b.NetnsID && slices.Equal(a.Selectors, b.Selectors) && a.Process == b.Process
+	return a.ID == b.ID && a.Upstream == b.Upstream && a.Netns == b.Netns && a.NetnsID == b.NetnsID && slices.Equal(a.Selectors, b.Selectors) && a.Process == b.Process
 }
 
 // Event is an agent starting or stopping, or the end of the initial set.

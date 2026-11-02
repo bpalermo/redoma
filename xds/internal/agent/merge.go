@@ -34,11 +34,11 @@ type mergeState struct {
 	log  *slog.Logger
 	emit func(Event)
 	mu   sync.Mutex
-	// claims holds, per agent ID, each Source's latest start, Bound
-	// removed once it has been passed on or refused.
-	claims map[string]map[int]Event
-	// passed is, per agent ID, the Source whose claim was passed on last.
-	passed map[string]int
+	// claims holds, per agent or upstream (Key), each Source's latest
+	// start, Bound removed once it has been passed on or refused.
+	claims map[Key]map[int]Event
+	// passed is, per Key, the Source whose claim was passed on last.
+	passed map[Key]int
 	synced []bool
 	sent   bool
 }
@@ -49,8 +49,8 @@ func (m *merged) Run(ctx context.Context, emit func(Event)) error {
 	st := &mergeState{
 		log:    m.log,
 		emit:   emit,
-		claims: map[string]map[int]Event{},
-		passed: map[string]int{},
+		claims: map[Key]map[int]Event{},
+		passed: map[Key]int{},
 		synced: make([]bool, len(m.sources)),
 	}
 	errc := make(chan error, len(m.sources))
@@ -80,10 +80,10 @@ func (st *mergeState) forward(i int, e Event) {
 		}
 		return
 	}
-	id := e.Agent.ID
+	id := e.Agent.Key()
 	if !e.Removed && e.Bound != nil && st.heldBefore(id, i) {
-		st.log.Error("agent already registered by an earlier source; refusing", "agent", id, "netns", e.Agent.Netns)
-		e.Bound <- fmt.Errorf("agent %q is already registered by another registrar", id)
+		st.log.Error("agent already registered by an earlier source; refusing", "agent", id.ID, "upstream", id.Upstream, "netns", e.Agent.Netns)
+		e.Bound <- fmt.Errorf("agent %q is already registered by another registrar", id.ID)
 		return
 	}
 	if st.claims[id] == nil {
@@ -98,7 +98,7 @@ func (st *mergeState) forward(i int, e Event) {
 }
 
 // heldBefore reports whether a Source earlier than i claims id.
-func (st *mergeState) heldBefore(id string, i int) bool {
+func (st *mergeState) heldBefore(id Key, i int) bool {
 	for j := range st.claims[id] {
 		if j < i {
 			return true
@@ -109,14 +109,14 @@ func (st *mergeState) heldBefore(id string, i int) bool {
 
 // pass passes on id's winning claim, if it is not what was passed last
 // (or is Source i's new start of it), or the removal when none is left.
-func (st *mergeState) pass(id string, i int) {
+func (st *mergeState) pass(id Key, i int) {
 	claims := st.claims[id]
 	last, passed := st.passed[id]
 	if len(claims) == 0 {
 		delete(st.claims, id)
 		delete(st.passed, id)
 		if passed {
-			st.emit(Event{Agent: Agent{ID: id}, Removed: true})
+			st.emit(Event{Agent: Agent{ID: id.ID, Upstream: id.Upstream}, Removed: true})
 		}
 		return
 	}
@@ -130,7 +130,7 @@ func (st *mergeState) pass(id string, i int) {
 		return // the change was a later Source's claim, kept for later
 	}
 	if passed && best != last {
-		st.log.Warn("agent passes to another source's claim", "agent", id, "from", last, "to", best)
+		st.log.Warn("agent passes to another source's claim", "agent", id.ID, "upstream", id.Upstream, "from", last, "to", best)
 	}
 	e := claims[best]
 	st.emit(e)

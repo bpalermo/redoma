@@ -518,3 +518,82 @@ func TestSharedNamespaceBetweenContainers(t *testing.T) {
 	}
 	e.none(t)
 }
+
+func upstreamReq(container, name string) register.Request {
+	return register.Request{Op: register.OpRegister, Container: container, Upstream: name, Netns: register.UpstreamNetnsPath("/run/netns", container)}
+}
+
+// An MCP upstream registers without waiting for Envoy, with no identity,
+// under a name no allowlist lists, apart from an agent of the same name.
+func TestRegisterUpstream(t *testing.T) {
+	e := newEnv(t, "")
+	e.registered(t, cidA, "beta", 7)
+	path := register.UpstreamNetnsPath("/run/netns", cidB)
+	e.stat.set(path, agent.NetnsID{Dev: 4, Ino: 8})
+	if got := answer(t, e.call(t, upstreamReq(cidB, "beta"))); got != "" {
+		t.Fatalf("register: %s", got)
+	}
+	ev := e.next(t)
+	want := agent.Agent{ID: "beta", Netns: path, NetnsID: agent.NetnsID{Dev: 4, Ino: 8}, Upstream: true}
+	if !ev.Agent.Equal(want) || ev.Bound != nil || ev.Removed || ev.Agent.Selectors != nil || ev.Agent.Process != nil {
+		t.Fatalf("event %+v, want %+v, no Bound, no identity", ev, want)
+	}
+	e.none(t)
+
+	// Unregistering it removes the upstream, not the agent.
+	if got := answer(t, e.call(t, register.Request{Op: register.OpUnregister, Container: cidB})); got != "" {
+		t.Fatalf("unregister: %s", got)
+	}
+	ev = e.next(t)
+	if !ev.Removed || ev.Agent.Key() != (agent.Key{ID: "beta", Upstream: true}) {
+		t.Fatalf("event %+v, want the upstream removed", ev)
+	}
+	e.none(t)
+}
+
+func TestRegisterUpstreamRefusals(t *testing.T) {
+	e := newEnv(t, "")
+	e.stat.set(register.UpstreamNetnsPath("/run/netns", cidA), agent.NetnsID{Dev: 4, Ino: 7})
+	e.stat.set(register.NetnsPath("/run/netns", cidA), agent.NetnsID{Dev: 4, Ino: 7})
+	both := upstreamReq(cidA, "grafana")
+	both.Agent = "beta"
+	withPidfd := upstreamReq(cidA, "grafana")
+	withPidfd.Pidfd = true
+	agentPath := upstreamReq(cidA, "grafana")
+	agentPath.Netns = register.NetnsPath("/run/netns", cidA)
+	for name, tc := range map[string]struct {
+		req  register.Request
+		want string
+	}{
+		"both names":         {both, "both agent"},
+		"not a name":         {upstreamReq(cidA, "Bad_Name"), "not an upstream name"},
+		"the defaults' name": {upstreamReq(cidA, "_default"), "not an upstream name"},
+		"an agent's path":    {agentPath, "must be mounted at"},
+		"no namespace":       {upstreamReq(cidB, "grafana"), "namespace"},
+	} {
+		if got := answer(t, e.call(t, tc.req)); !strings.Contains(got, tc.want) {
+			t.Errorf("%s: %q, want %q", name, got, tc.want)
+		}
+	}
+	e.none(t)
+	// A pidfd announced over the socket is refused before (ReadRequest);
+	// check refuses it on its own too.
+	if _, err := e.src.check(withPidfd); err == nil || !strings.Contains(err.Error(), "without a pidfd") {
+		t.Errorf("a pidfd: %v", err)
+	}
+}
+
+// Two live containers never hold one upstream name.
+func TestRegisterUpstreamOnce(t *testing.T) {
+	e := newEnv(t, "")
+	e.stat.set(register.UpstreamNetnsPath("/run/netns", cidA), agent.NetnsID{Dev: 4, Ino: 7})
+	e.stat.set(register.UpstreamNetnsPath("/run/netns", cidB), agent.NetnsID{Dev: 4, Ino: 8})
+	if got := answer(t, e.call(t, upstreamReq(cidA, "grafana"))); got != "" {
+		t.Fatal(got)
+	}
+	e.next(t)
+	if got := answer(t, e.call(t, upstreamReq(cidB, "grafana"))); !strings.Contains(got, `upstream "grafana" is registered by container`) {
+		t.Errorf("a second container: %q", got)
+	}
+	e.none(t)
+}

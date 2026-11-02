@@ -25,3 +25,14 @@ func ValidContainer(id string) bool {
 func NetnsPath(netnsDir, container string) string {
 	return filepath.Join(netnsDir, NetnsPrefix+container)
 }
+
+// UpstreamNetnsPrefix starts the name of an MCP upstream container's
+// namespace: <netns dir>/redoma-mcp-<container ID>. Like NetnsPrefix, it
+// never collides with a launcher's redoma-<name> (at most 41 characters).
+const UpstreamNetnsPrefix = "redoma-mcp-"
+
+// UpstreamNetnsPath is where the hook bind-mounts an MCP upstream
+// container's network namespace.
+func UpstreamNetnsPath(netnsDir, container string) string {
+	return filepath.Join(netnsDir, UpstreamNetnsPrefix+container)
+}

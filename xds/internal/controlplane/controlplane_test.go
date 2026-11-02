@@ -46,6 +46,13 @@ func newEnv(t *testing.T) *env {
 // newEnvWith is newEnv with the config changed by mod, if set.
 func newEnvWith(t *testing.T, mod func(*Config)) *env {
 	t.Helper()
+	return newEnvSources(t, mod, nil)
+}
+
+// newEnvSources is newEnvWith with extra, if set, merged after the
+// launcher's Source.
+func newEnvSources(t *testing.T, mod func(*Config), extra agent.Source) *env {
+	t.Helper()
 	dir := t.TempDir()
 	log := slog.New(slog.DiscardHandler)
 	e := &env{
@@ -83,7 +90,11 @@ func newEnvWith(t *testing.T, mod func(*Config)) *env {
 	e.cache = cache.NewSnapshotCache(true, NodeHash{}, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	e.done = make(chan error, 1)
-	ctl := New(e.cfg, e.src, id, e.cache, log)
+	var source agent.Source = e.src
+	if extra != nil {
+		source = agent.Merge(log, e.src, extra)
+	}
+	ctl := New(e.cfg, source, id, e.cache, log)
 	go func() { e.done <- ctl.Run(ctx) }()
 	go ackLikeEnvoy(ctx, e.cache, ctl)
 	t.Cleanup(func() {

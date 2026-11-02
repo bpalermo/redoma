@@ -109,11 +109,19 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
   between them under `common/`.
 - `xds/internal/`:
   - `agent`: an agent (ID, namespace path, selectors) and `Source`, the
-    interface of whatever says which agents run;
+    interface of whatever says which agents run.
+    An `Agent` with `Upstream` set is an MCP upstream's container
+    (docs/mcp-upstreams.md): no identity, only its egress listener; an
+    upstream and an agent of one name are two `Key`s, kept apart in
+    `Merge`;
   - `activedir`: a launcher's `Source`, its active files and namespaces,
     rescanned every second (see "Launchers");
   - `hooksource`: the OCI hook's `Source`, registrations on a root-only
-    socket; `agent.Merge` runs both, one owner per agent name;
+    socket; `agent.Merge` runs both, one owner per agent name.
+    It also takes an MCP upstream's register (`register.Request.Upstream`,
+    the namespace at `/run/netns/redoma-mcp-<container ID>`): no
+    allowlist, no pidfd, and no wait for Envoy, since the hook sends it
+    from poststart;
   - `egress`: an agent's CONNECT allowlist, the hosts of
     `<etc>/egress/_default.txt` (every agent's) then those of
     `<etc>/egress/<name>.txt`, each host once. Both files take one host name
@@ -161,7 +169,10 @@ diff, and `MODULE.bazel.lock` current (`--config=ci` refuses a stale one).
     outlive a restart;
   - `hostcheck`: Broker mode's checks of the host at start (SPIRE's sockets
     under the hook's forbidden paths, the Workload API's directory);
-  - `controlplane`: the snapshot, kept in step with all of the above;
+  - `controlplane`: the snapshot, kept in step with all of the above; `mcp.go` publishes,
+    for each MCP upstream that is up (registered, its file valid), its
+    egress listener and cluster, and each agent with an allowlist file for
+    it a route in the agent's MCP listener;
   - `server`: ADS, LDS, CDS and SDS on the unix socket.
 - `ocihook/internal/hook`: the hook's createRuntime and poststop logic.
 - `relay/internal/`: `hub`, the relay's state and its two services; `mtls`,
