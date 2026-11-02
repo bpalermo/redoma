@@ -616,6 +616,11 @@ annotated both is refused.
 - **Agents against upstreams**: an agent may not mount anything of
   `/run/redoma-mcp`, and its uid, gid and additional gids may not be in
   the `containers` ranges.
+- **No idmapped mount** (`isMapped`: an `idmap` or `ridmap` option, or the
+  mount's own `uidMappings`/`gidMappings`), of any type: an agent never
+  has one, since its ids are the host's and an idmapped bind would let
+  them own what another id, root included, owns under a directory that is
+  not forbidden; an upstream only its credential directory's bind.
 
 ## Launchers
 

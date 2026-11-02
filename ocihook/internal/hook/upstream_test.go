@@ -160,6 +160,7 @@ func TestCreateRuntimeUpstreamRefusals(t *testing.T) {
 		{"an idmap with its mappings elsewhere", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/a"), `["rbind","idmap=uids=0-100000-65536;gids=0-100000-65536"]`, ""), upstreamAnnotation, "idmapped"},
 		{"a bind elsewhere with mappings", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/a"), `["rbind","ro"]`, mountMappings), upstreamAnnotation, "idmapped"},
 		{"a bind elsewhere with uid mappings only", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/a"), `["rbind","ro"]`, `"uidMappings":[{"containerID":0,"hostID":100000,"size":1}]`), upstreamAnnotation, "idmapped"},
+		{"an idmapped tmpfs", upstreamNamespaces, upstreamProcess, upstreamMappings, `[{"destination":"/x","type":"tmpfs","source":"tmpfs","options":["idmap"]}]`, upstreamAnnotation, "idmapped"},
 		{"a bind elsewhere with gid mappings only", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/srv/redoma/work/a"), `["rbind","ro"]`, `"gidMappings":[{"containerID":0,"hostID":100000,"size":1}]`), upstreamAnnotation, "idmapped"},
 		{"its own directory idmapped, writable", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","idmap"]`, ""), upstreamAnnotation, "writable"},
 		{"its own directory, writable", upstreamNamespaces, upstreamProcess, upstreamMappings, bindWith(T("/run/redoma-mcp/grafana"), `["rbind","rw"]`, ""), upstreamAnnotation, `"rw"`},
